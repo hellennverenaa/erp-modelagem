@@ -23,6 +23,16 @@ import { Inspecao } from '../entities/Inspecao';
 import { InspecaoPeca } from '../entities/InspecaoPeca';
 import { Divergencia } from '../entities/Divergencia';
 import { Retrabalho } from '../entities/Retrabalho';
+import { ConfigCategoria } from '../entities/ConfigCategoria';
+import { ConfigOpcao } from '../entities/ConfigOpcao';
+import { ValidacaoSetor } from '../entities/ValidacaoSetor';
+import { AprovacaoFinal } from '../entities/AprovacaoFinal';
+import { Email } from '../entities/Email';
+import { Anexo } from '../entities/Anexo';
+import { AuditLog } from '../entities/AuditLog';
+import { InsightQualidade } from '../entities/InsightQualidade';
+import { OcorrenciaProducao } from '../entities/OcorrenciaProducao';
+import { DossieModelo } from '../entities/DossieModelo';
 
 // Carrega as variáveis de ambiente do arquivo .env
 dotenv.config();
@@ -59,7 +69,17 @@ export const AppDataSource = new DataSource({
     Inspecao,
     InspecaoPeca,
     Divergencia,
-    Retrabalho
+    Retrabalho,
+    ConfigCategoria,
+    ConfigOpcao,
+    ValidacaoSetor,
+    AprovacaoFinal,
+    Email,
+    Anexo,
+    AuditLog,
+    InsightQualidade,
+    OcorrenciaProducao,
+    DossieModelo
   ],
   migrations: [],
   subscribers: [],
