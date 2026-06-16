@@ -44,6 +44,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASS,
   database: process.env.DB_NAME || 'erp_modelagem',
+  schema: process.env.DB_SCHEMA || 'public',
   // Sincronização automática em ambiente de desenvolvimento (útil para testes iniciais)
   synchronize: process.env.NODE_ENV === 'development',
   logging: process.env.NODE_ENV === 'development',
@@ -81,6 +82,6 @@ export const AppDataSource = new DataSource({
     OcorrenciaProducao,
     DossieModelo
   ],
-  migrations: [],
+  migrations: [__dirname + '/../migrations/**/*.{js,ts}'],
   subscribers: [],
 });
