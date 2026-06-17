@@ -11,21 +11,24 @@ import dossieRoutes from './dossie.routes';
 import configuracoesRoutes from './configuracoes.routes';
 import dashboardRoutes from './dashboard.routes';
 import adminRoutes from './admin.routes';
+import { verificaToken } from '../middlewares/auth.middleware';
 
 const router = Router();
 
-// Rotas públicas ou controladas individualmente por JWT
+// Rota pública de autenticação
 router.use('/auth', authRoutes);
-router.use('/lotes', lotesRoutes);
-router.use('/rastreamentos', rastreamentosRoutes);
-router.use('/checklists', checklistsRoutes);
-router.use('/inspecoes', inspecoesRoutes);
-router.use('/corte', corteRoutes);
-router.use('/apoio', apoioRoutes);
-router.use('/ocorrencias', ocorrenciasRoutes);
-router.use('/dossies', dossieRoutes);
-router.use('/configuracoes', configuracoesRoutes);
-router.use('/dashboard', dashboardRoutes);
-router.use('/admin', adminRoutes);
+
+// Rotas protegidas por JWT
+router.use('/lotes', verificaToken, lotesRoutes);
+router.use('/rastreamentos', verificaToken, rastreamentosRoutes);
+router.use('/checklists', verificaToken, checklistsRoutes);
+router.use('/inspecoes', verificaToken, inspecoesRoutes);
+router.use('/corte', verificaToken, corteRoutes);
+router.use('/apoio', verificaToken, apoioRoutes);
+router.use('/ocorrencias', verificaToken, ocorrenciasRoutes);
+router.use('/dossies', verificaToken, dossieRoutes);
+router.use('/configuracoes', verificaToken, configuracoesRoutes);
+router.use('/dashboard', verificaToken, dashboardRoutes);
+router.use('/admin', verificaToken, adminRoutes);
 
 export default router;

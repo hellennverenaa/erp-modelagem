@@ -6,7 +6,6 @@ import { AppDataSource } from './config/database';
 import { corsOptions } from './config/cors';
 import { globalLimiter, authLimiter, heavyLimiter } from './config/rateLimits';
 import { swaggerSetup } from './config/swagger';
-import { verificaToken } from './middlewares/auth.middleware';
 import apiRoutes from './routes';
 import { errorHandler } from './middlewares/errorHandler';
 
@@ -78,7 +77,7 @@ app.get('/health', (_req, res) => {
 });
 
 // ═══ CAMADA 7: ROTAS PROTEGIDAS (JWT obrigatório) ═══
-app.use('/api', verificaToken, apiRoutes);
+app.use('/api', apiRoutes);
 
 // ═══ CAMADA 8: TRATAMENTO DE ERROS CENTRALIZADO ═══
 app.use(errorHandler);
