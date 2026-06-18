@@ -1,5 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
+import { AppDataSource } from '../config/database';
+import { Usuario } from '../entities/Usuario';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware de Autenticação JWT — Integração com dass_auth_service
@@ -10,12 +12,14 @@ import { Request, Response, NextFunction } from 'express';
 
 // ═══ Interface do Payload JWT ═══
 export interface JwtPayload {
-  userId: string;         // UUID do usuario
-  perfilId: string;       // UUID do perfil (RBAC)
+  userId: string;         // UUID do usuario ou ID legado do Unix
+  perfilId: string;       // UUID do perfil (RBAC) do banco de dados local
   perfilNome: string;     // Ex: 'REVISORA', 'COORDENADOR_SETOR'
   plantaId: string;       // UUID da planta de lotação
   setorId?: string;       // UUID do setor (opcional)
   nomeCompleto: string;   // Nome para exibição
+  usuario?: string;       // Nome de usuário Unix (opcional)
+  username?: string;      // Nome de usuário Unix (opcional)
   iss: string;            // 'erp-modelagem' ou 'dass-auth'
   aud: string;            // 'erp-modelagem-users'
   exp: number;            // Expiração
@@ -37,12 +41,7 @@ if (!JWT_SECRET) {
   throw new Error('FATAL: JWT_SECRET não definido nas variáveis de ambiente.');
 }
 
-/**
- * Middleware de verificação de token JWT.
- * Extrai o token do header Authorization: Bearer <TOKEN>,
- * valida a assinatura e injeta os dados decodificados em req.user.
- */
-export function verificaToken(req: Request, res: Response, next: NextFunction): void {
+export async function verificaToken(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
@@ -56,7 +55,42 @@ export function verificaToken(req: Request, res: Response, next: NextFunction): 
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as unknown as JwtPayload;
-    req.user = decoded;
+
+    // Obtém o nome de usuário (username/usuario) a partir do token legando (Unix)
+    const username = decoded.usuario || decoded.username || decoded.userId;
+    if (!username) {
+      res.status(401).json({
+        error: 'Identificador de usuário inválido no token.',
+        code: 'AUTH_IDENTIFIER_INVALID',
+      });
+      return;
+    }
+
+    const usuarioRepo = AppDataSource.getRepository(Usuario);
+    const userLocal = await usuarioRepo.findOne({
+      where: { usuario: username },
+      relations: { perfil: true }
+    });
+
+    if (!userLocal) {
+      res.status(401).json({
+        error: 'Usuário não sincronizado no banco de dados local.',
+        code: 'AUTH_USER_NOT_FOUND',
+      });
+      return;
+    }
+
+    // Injeta as claims locais corretas (UUID do PostgreSQL) sobre o payload legado do Unix
+    req.user = {
+      ...decoded,
+      userId: userLocal.id,
+      perfilId: userLocal.perfilId,
+      perfilNome: userLocal.perfil?.nome || decoded.perfilNome || '',
+      plantaId: userLocal.plantaId,
+      setorId: userLocal.setorId || undefined,
+      nomeCompleto: userLocal.nomeCompleto,
+    };
+
     next();
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {

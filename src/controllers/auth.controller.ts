@@ -60,21 +60,20 @@ export class AuthController {
       const perfilRepository = AppDataSource.getRepository(Perfil);
       const plantaRepository = AppDataSource.getRepository(Planta);
 
-      // Upsert: Busca o usuário local na tabela
+      // Upsert: Busca o usuário local na tabela pelo nome de usuário
       let userLocal = await usuarioRepository.findOne({
-        where: { usuario: unixUsuario },
-        relations: { perfil: true, planta: true }
+        where: { usuario: unixUsuario }
       });
 
       if (userLocal) {
-        // Atualiza dados cadastrais
+        // Se o usuário já existir, atualiza apenas dados cadastrais. Não altera perfilId nem plantaId.
         userLocal.nomeCompleto = unixNome;
         userLocal.email = unixEmail;
         userLocal.cargo = unixFuncao;
         userLocal.ultimoAcesso = new Date();
         userLocal = await usuarioRepository.save(userLocal);
       } else {
-        // Cria usuário vinculando Perfil e Planta obrigatórios sem hardcode de Admin/Gerente
+        // Se o usuário for novo, busca o perfil padrão 'OPERADOR' e a primeira planta ativa
         let perfil = await perfilRepository.findOne({ where: { nome: 'OPERADOR' } });
         if (!perfil) {
           perfil = perfilRepository.create({
