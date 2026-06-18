@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { InspecoesController } from '../controllers/inspecoes.controller';
+import { verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const inspecoesController = new InspecoesController();
@@ -72,7 +73,11 @@ const inspecoesController = new InspecoesController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/', inspecoesController.createInspecao);
+router.post(
+  '/',
+  verificarPermissaoSetor('INSPECIONAR_SETOR', 'body'),
+  inspecoesController.createInspecao
+);
 
 /**
  * @swagger

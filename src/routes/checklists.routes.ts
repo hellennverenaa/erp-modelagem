@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ChecklistsController } from '../controllers/checklists.controller';
+import { verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const checklistsController = new ChecklistsController();
@@ -93,7 +94,11 @@ router.get('/templates', checklistsController.getTemplates);
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/responder', checklistsController.responderChecklist);
+router.post(
+  '/responder',
+  verificarPermissaoSetor('PREENCHER_CHECKLIST', 'body'),
+  checklistsController.responderChecklist
+);
 
 /**
  * @swagger
