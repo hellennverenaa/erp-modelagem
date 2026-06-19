@@ -67,77 +67,15 @@ export const dispararEmailChecklistFlow = ai.defineFlow(
     const currentSectorOpt = await configOpcaoRepo.findOne({
       where: { id: checklist.setor.tipoOpcaoId },
     });
-    const currentSectorType = currentSectorOpt?.valor || '';
+    const labelSetor = currentSectorOpt?.label || checklist.setor.nome;
 
-    // Setores paralelos iniciais
-    const parallelTypes = ['ALMOXARIFADO', 'NAVALHA', 'TELAS'];
-    const isParallel = parallelTypes.includes(currentSectorType);
-
-    let checklistsToReport: {
-      checklist: Checklist;
-      tipoSetor: string;
-      labelSetor: string;
-    }[] = [];
-
-    let isConsolidated = false;
-
-    if (isParallel) {
-      // Busca todos os checklists preenchidos para esta Ordem de Teste
-      const checklistsOrdem = await checklistRepo.find({
-        where: { ordemTesteId },
-        relations: {
-          itens: { templateItem: true },
-          template: true,
-          setor: true,
-          preenchidoPor: true,
-        },
-      });
-
-      // Identifica o tipoSetor de cada checklist
-      const checklistsWithTypes = await Promise.all(
-        checklistsOrdem.map(async (chk) => {
-          const opt = await configOpcaoRepo.findOne({ where: { id: chk.setor.tipoOpcaoId } });
-          return {
-            checklist: chk,
-            tipoSetor: opt?.valor || '',
-            labelSetor: opt?.label || chk.setor.nome,
-          };
-        })
-      );
-
-      // Filtra os checklists válidos (concluídos ou com pendências)
-      const validChecklists = checklistsWithTypes.filter(
-        (x) => x.checklist.status === ChecklistStatus.PREENCHIDO || x.checklist.status === ChecklistStatus.COM_PENDENCIAS
-      );
-
-      const almox = validChecklists.find((x) => x.tipoSetor === 'ALMOXARIFADO');
-      const navalha = validChecklists.find((x) => x.tipoSetor === 'NAVALHA');
-      const telas = validChecklists.find((x) => x.tipoSetor === 'TELAS');
-
-      if (almox && navalha && telas) {
-        // Consolida os 3 checklists iniciais paralelos
-        checklistsToReport = [almox, navalha, telas];
-        isConsolidated = true;
-      } else {
-        // Se ainda não preencheu todos os 3, relata apenas o atual
-        checklistsToReport = [
-          {
-            checklist,
-            tipoSetor: currentSectorType,
-            labelSetor: currentSectorOpt?.label || checklist.setor.nome,
-          },
-        ];
-      }
-    } else {
-      // Setor não-paralelo
-      checklistsToReport = [
-        {
-          checklist,
-          tipoSetor: currentSectorType,
-          labelSetor: currentSectorOpt?.label || checklist.setor.nome,
-        },
-      ];
-    }
+    const checklistsToReport = [
+      {
+        checklist,
+        tipoSetor: currentSectorOpt?.valor || '',
+        labelSetor,
+      },
+    ];
 
     // 3. Busca a Ordem de Teste e o Modelo
     const testOrder = await AppDataSource.getRepository(OrdemTeste).findOne({
@@ -167,13 +105,13 @@ export const dispararEmailChecklistFlow = ai.defineFlow(
       model: googleAI.model('gemini-2.5-flash'),
       prompt: `
 Você é o assistente inteligente de qualidade do ERP de Modelagem de Calçados da Dass.
-Sua tarefa é gerar uma tabela visual HTML moderna, corporativa e responsiva com o resumo do(s) checklist(s) preenchido(s).
+Sua tarefa é gerar uma tabela visual HTML moderna, corporativa e responsiva com o resumo do checklist preenchido.
 
 Dados da Ordem de Teste:
 - Código de Barras: ${testOrder?.codigoBarras || 'N/A'}
 - Modelo: ${testOrder?.modelo?.nome || 'N/A'} (${testOrder?.modelo?.codigoProduto || 'N/A'})
 
-Dados do(s) Checklist(s) Preenchido(s):
+Dados do Checklist Preenchido:
 ${JSON.stringify(checklistData, null, 2)}
 
 Diretrizes da Tabela HTML:
@@ -184,9 +122,8 @@ Diretrizes da Tabela HTML:
    - Status (Use obrigatoriamente ✅ para "Conforme" e ❌ para "Não Conforme" / "Pendência")
    - Resposta / Valor Informado
    - Observações (se houver)
-3. Agrupe os itens na tabela de forma clara. Se houver múltiplos checklists (consolidação de Almoxarifado, Navalha e Telas), identifique claramente qual setor cada linha pertence.
-4. Escreva no início do e-mail um parágrafo de resumo executivo gerado por IA sobre a conformidade geral da Ordem de Teste nesta etapa, alertando se houver pendências bloqueantes.
-5. Retorne APENAS o código HTML puro que será usado como corpo do e-mail, sem a formatação de bloco de código markdown (sem os caracteres \`\`\`html e \`\`\`). Comece diretamente com a tag HTML (como <div style="..."> ou <html>).
+3. Escreva no início do e-mail um parágrafo de resumo executivo gerado por IA sobre a conformidade do checklist para o setor ${labelSetor}, alertando se houver pendências bloqueantes.
+4. Retorne APENAS o código HTML puro que será usado como corpo do e-mail, sem a formatação de bloco de código markdown (sem os caracteres \`\`\`html e \`\`\`). Comece diretamente com a tag HTML (como <div style="..."> ou <html>).
       `,
     });
 
@@ -203,9 +140,7 @@ Diretrizes da Tabela HTML:
     corpoHtml = corpoHtml.trim();
 
     // 6. Define o Assunto do e-mail
-    const assunto = isConsolidated
-      ? `[Consolidado Inicial] Checklists Preenchidos - Ordem de Teste ${testOrder?.codigoBarras || ''}`
-      : `[Checklist ${checklist.status}] Setor ${checklistData[0].setor} - Ordem de Teste ${testOrder?.codigoBarras || ''}`;
+    const assunto = `[Checklist ${checklist.status}] Setor ${labelSetor} - Ordem de Teste ${testOrder?.codigoBarras || ''}`;
 
     // 7. Lista de destinatários
     const recipientUsers = await userRepo.find({
