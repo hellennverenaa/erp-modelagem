@@ -4,6 +4,7 @@ import { AppDataSource } from '../config/database';
 import { Checklist, ChecklistStatus } from '../entities/Checklist';
 import { ChecklistItem } from '../entities/ChecklistItem';
 import { ChecklistTemplate } from '../entities/ChecklistTemplate';
+import { triggerChecklistEmail } from '../services/genkitFlows.service';
 
 // ═══ Schema de Validação Zod para a resposta do Checklist ═══
 const responderChecklistSchema = z.object({
@@ -127,6 +128,9 @@ export class ChecklistsController {
 
         return savedChecklist;
       });
+
+      // Dispara o e-mail em background sem travar a resposta HTTP
+      triggerChecklistEmail(result.id, result.ordemTesteId);
 
       return res.status(201).json({
         message: 'Respostas do checklist salvas com sucesso.',
