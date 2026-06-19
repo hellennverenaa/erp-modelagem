@@ -131,12 +131,12 @@ router.post(
  *                 enum: [LOTE_PRINCIPAL, CAIXA_TESTE]
  *                 default: LOTE_PRINCIPAL
  *                 example: "LOTE_PRINCIPAL"
- *               inspecaoSaidaId:
+ *               pecaId:
  *                 type: string
  *                 format: uuid
  *                 nullable: true
  *                 example: null
- *                 description: UUID da inspeção que liberou a saída (Categoria B)
+ *                 description: UUID da peça (se aplicável)
  *     responses:
  *       200:
  *         description: Bipagem de saída registrada com sucesso (handoff concluído)

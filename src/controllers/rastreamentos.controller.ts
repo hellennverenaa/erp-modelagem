@@ -32,7 +32,7 @@ const biparSaidaSchema = z.object({
   ordemTesteId:   z.string().uuid({ message: 'ordemTesteId deve ser um UUID válido.' }),
   setorId:        z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
   tipoLote:       z.nativeEnum(TipoLote).optional().default(TipoLote.LOTE_PRINCIPAL),
-  inspecaoSaidaId: z.string().uuid().optional().nullable(),
+  pecaId:         z.string().uuid().optional().nullable(),
 });
 
 // ═══ Valor dos tipos de setor no config_opcoes (dinâmico, sem hardcode) ═══
@@ -138,7 +138,7 @@ export class RastreamentosController {
       });
     }
 
-    const { ordemTesteId, setorId, tipoLote, inspecaoSaidaId } = parseResult.data;
+    const { ordemTesteId, setorId, tipoLote, pecaId } = parseResult.data;
     const operadorId = req.user?.userId;
 
     if (!operadorId) {
@@ -153,12 +153,13 @@ export class RastreamentosController {
       const configOpcaoRepo   = AppDataSource.getRepository(ConfigOpcao);
       const setorRepo         = AppDataSource.getRepository(Setor);
 
-      // 2. Busca o rastreamento ativo (EM_PROCESSO) para esse setor/lote
+      // 2. Busca o rastreamento ativo (EM_PROCESSO) para esse setor/lote/peca
       const rastreamento = await rastreamentoRepo.findOne({
         where: {
           ordemTesteId,
           setorId,
           tipoLote,
+          ...(pecaId ? { pecaId } : {}),
           status: RastreamentoStatus.EM_PROCESSO,
         },
       });
@@ -174,6 +175,7 @@ export class RastreamentosController {
       // ── GATE DE QUALIDADE SELETIVA ──────────────────────────────────────
       // Identifica a categoria do setor via JOIN com config_opcoes
       // Zero Hardcode: não compara strings fixas de nome de setor
+      let foundInspecaoId: string | null = null;
 
       const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
       if (!setorInfo) {
@@ -279,6 +281,7 @@ export class RastreamentosController {
             details: { ordemTesteId, setorId, tipoLote },
           });
         }
+        foundInspecaoId = inspecaoAprovada.id;
       }
       // ── FIM DO GATE ──────────────────────────────────────────────────────
 
@@ -312,7 +315,7 @@ export class RastreamentosController {
       // 4. Atualiza o rastreamento com dados de saída
       rastreamento.dataSaida          = agora;
       rastreamento.operadorSaidaId    = operadorId;
-      rastreamento.inspecaoSaidaId    = inspecaoSaidaId ?? null;
+      rastreamento.inspecaoSaidaId    = foundInspecaoId;
       rastreamento.tempoPermanenciaMin = tempoPermanenciaMin;
       rastreamento.status             = RastreamentoStatus.CONCLUIDO;
 
