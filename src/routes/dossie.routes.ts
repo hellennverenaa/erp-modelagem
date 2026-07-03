@@ -46,6 +46,7 @@ const dossieController = new DossieController();
  *         description: Erro interno do servidor
  */
 router.post('/gerar', dossieController.gerarDossie);
+router.get('/download/:id', dossieController.downloadDossie);
 
 /**
  * @swagger

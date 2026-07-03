@@ -23,11 +23,11 @@ export class AuthController {
       }
 
       // Conexão de rede Docker via variável de ambiente (Zero Hardcode)
-      const dassAuthUrl = process.env.DASS_AUTH_URL || 'http://dass-auth-service:2399';
+      const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://dass-auth-service:2399';
 
       let response;
       try {
-        response = await axios.post(`${dassAuthUrl}/auth/login`, { usuario, senha });
+        response = await axios.post(`${authServiceUrl}/auth/login`, { usuario, senha });
       } catch (axiosError) {
         // Captura credenciais inválidas ou falha de comunicação com a API legada (Unix)
         return res.status(401).json({
@@ -48,13 +48,19 @@ export class AuthController {
       // Decodificação para ler as claims do Unix
       const decoded = jwt.decode(token) as any;
       
-      // Dados do usuário obtidos a partir da API legada (aninhado) ou do token decodificado (fallback)
-      const apiUsuario = response.data?.data?.usuario || response.data?.usuario;
+      const unixNome = decoded?.nome || response.data?.data?.nome || 'Usuário ERP';
+      const unixUsuario = decoded?.usuario || response.data?.data?.usuario || usuario;
+      const unixFuncao = decoded?.funcao || 'Operador';
 
-      const unixNome = apiUsuario?.nomeCompleto || apiUsuario?.nome || apiUsuario?.name || decoded?.nomeCompleto || decoded?.nome || decoded?.name || 'Usuário ERP';
-      const unixUsuario = apiUsuario?.usuario || apiUsuario?.username || apiUsuario?.userId || decoded?.usuario || decoded?.username || decoded?.userId || usuario;
-      const unixEmail = apiUsuario?.email || decoded?.email || null;
-      const unixFuncao = apiUsuario?.cargo || apiUsuario?.funcao || decoded?.cargo || decoded?.funcao || 'Operador';
+      let unixEmail = null;
+      if (decoded?.matricula) {
+        try {
+          const emailResponse = await axios.get(`${authServiceUrl}/user/email/${decoded.matricula}`);
+          unixEmail = emailResponse.data?.email || null;
+        } catch (emailError) {
+          console.warn('[AuthController] Não foi possível buscar o e-mail do usuário no legado:', emailError);
+        }
+      }
 
       const usuarioRepository = AppDataSource.getRepository(Usuario);
       const perfilRepository = AppDataSource.getRepository(Perfil);

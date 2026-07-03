@@ -1,6 +1,3 @@
-import { z } from 'genkit';
-import { ai } from '../config/genkit';
-import { googleAI } from '@genkit-ai/google-genai';
 import { AppDataSource } from '../config/database';
 import { Checklist, ChecklistStatus } from '../entities/Checklist';
 import { OrdemTeste } from '../entities/OrdemTeste';
@@ -23,26 +20,100 @@ const transporter = nodemailer.createTransport({
 });
 
 /**
- * Flow Genkit 4.1 — dispararEmailChecklist
- * Busca dados do checklist atual e, caso seja o último preenchido entre Almoxarifado, Navalha e Telas,
- * consolida os 3 checklists paralelos em um único e-mail com resumo gerado por IA.
+ * Monta o HTML corporativo formatado para o e-mail de checklist utilizando Template Literals
  */
-export const dispararEmailChecklistFlow = ai.defineFlow(
-  {
-    name: 'dispararEmailChecklistFlow',
-    inputSchema: z.object({
-      checklistId: z.string().uuid(),
-      ordemTesteId: z.string().uuid(),
-    }),
-    outputSchema: z.object({
-      success: z.boolean(),
-      emailId: z.string().uuid().optional(),
-      message: z.string(),
-    }),
-  },
-  async (input) => {
-    const { checklistId, ordemTesteId } = input;
+function generateChecklistHtml(
+  testOrder: OrdemTeste | null,
+  checklist: Checklist,
+  labelSetor: string,
+  checklistData: {
+    setor: string;
+    preenchidoPor: string;
+    dataPreenchimento: Date;
+    status: ChecklistStatus;
+    bloqueante: boolean;
+    observacoes: string | null;
+    itens: {
+      descricao: string;
+      conforme: boolean;
+      resposta: string | null;
+      observacao: string | null;
+      isAvulso: boolean;
+    }[];
+  }
+): string {
+  const itemsRowsHtml = checklistData.itens.map((it) => `
+    <tr style="border-bottom: 1px solid #ddd;">
+      <td style="padding: 10px; text-align: left; font-size: 14px;">${labelSetor}</td>
+      <td style="padding: 10px; text-align: left; font-size: 14px;">${it.descricao}</td>
+      <td style="padding: 10px; text-align: center; font-size: 14px;">${it.conforme ? '✅ Sim' : '❌ Não'}</td>
+      <td style="padding: 10px; text-align: left; font-size: 14px;">${it.resposta || '-'}</td>
+      <td style="padding: 10px; text-align: left; font-size: 14px;">${it.observacao || '-'}</td>
+    </tr>
+  `).join('');
 
+  return `
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Resumo do Checklist - Setor ${labelSetor}</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 20px; background-color: #f9f9f9;">
+        <div style="max-width: 600px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e0e0e0;">
+          <h2 style="color: #0b3c5d; border-bottom: 2px solid #0b3c5d; padding-bottom: 10px; margin-top: 0;">
+            Relatório de Checklist - Chão de Fábrica
+          </h2>
+          
+          <div style="margin-bottom: 20px; background-color: #f2f4f7; padding: 15px; border-radius: 6px;">
+            <p style="margin: 5px 0; font-size: 14px;"><strong>Ordem de Teste:</strong> ${testOrder?.codigoBarras || 'N/A'}</p>
+            <p style="margin: 5px 0; font-size: 14px;"><strong>Modelo:</strong> ${testOrder?.modelo?.nome || 'N/A'} (${testOrder?.modelo?.codigoProduto || 'N/A'})</p>
+            <p style="margin: 5px 0; font-size: 14px;"><strong>Setor:</strong> ${labelSetor}</p>
+            <p style="margin: 5px 0; font-size: 14px;"><strong>Preenchido Por:</strong> ${checklistData.preenchidoPor}</p>
+            <p style="margin: 5px 0; font-size: 14px;"><strong>Data:</strong> ${checklistData.dataPreenchimento ? new Date(checklistData.dataPreenchimento).toLocaleString('pt-BR') : 'N/A'}</p>
+            <p style="margin: 5px 0; font-size: 14px;"><strong>Status Geral:</strong> <span style="font-weight: bold; color: ${checklistData.status === 'COM_PENDENCIAS' ? '#d9534f' : '#5cb85c'};">${checklistData.status}</span></p>
+          </div>
+
+          <h3 style="color: #328cc1; margin-top: 25px; font-size: 16px;">Itens do Checklist</h3>
+          <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+            <thead>
+              <tr style="background-color: #0b3c5d; color: #fff;">
+                <th style="padding: 10px; text-align: left; font-size: 13px;">Setor</th>
+                <th style="padding: 10px; text-align: left; font-size: 13px;">Item / Requisito</th>
+                <th style="padding: 10px; text-align: center; font-size: 13px;">Conforme</th>
+                <th style="padding: 10px; text-align: left; font-size: 13px;">Resposta</th>
+                <th style="padding: 10px; text-align: left; font-size: 13px;">Observação</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsRowsHtml}
+            </tbody>
+          </table>
+
+          ${checklist.observacoes ? `
+            <div style="margin-top: 20px; padding: 10px; border-left: 4px solid #328cc1; background-color: #f9f9f9; font-size: 14px;">
+              <p style="margin: 0;"><strong>Observações Gerais:</strong></p>
+              <p style="margin: 5px 0 0 0; font-style: italic;">${checklist.observacoes}</p>
+            </div>
+          ` : ''}
+
+          <div style="margin-top: 30px; border-top: 1px solid #e0e0e0; padding-top: 15px; font-size: 12px; color: #777; text-align: center;">
+            Este é um e-mail automático gerado pelo ERP Dass de Modelagem de Calçados.
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+}
+
+/**
+ * Envia o e-mail do checklist de forma assíncrona.
+ * Busca dados no PostgreSQL via TypeORM e envia utilizando Nodemailer SMTP.
+ */
+export async function dispararEmailChecklist(
+  checklistId: string,
+  ordemTesteId: string
+): Promise<{ success: boolean; emailId?: string; message: string }> {
+  try {
     const checklistRepo = AppDataSource.getRepository(Checklist);
     const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
     const userRepo = AppDataSource.getRepository(Usuario);
@@ -69,75 +140,31 @@ export const dispararEmailChecklistFlow = ai.defineFlow(
     });
     const labelSetor = currentSectorOpt?.label || checklist.setor.nome;
 
-    const checklistsToReport = [
-      {
-        checklist,
-        tipoSetor: currentSectorOpt?.valor || '',
-        labelSetor,
-      },
-    ];
-
     // 3. Busca a Ordem de Teste e o Modelo
     const testOrder = await AppDataSource.getRepository(OrdemTeste).findOne({
       where: { id: ordemTesteId },
       relations: { modelo: true },
     });
 
-    // 4. Formata dados para enviar ao LLM
-    const checklistData = checklistsToReport.map((item) => ({
-      setor: item.labelSetor,
-      preenchidoPor: item.checklist.preenchidoPor?.nomeCompleto || 'Desconhecido',
-      dataPreenchimento: item.checklist.dataPreenchimento,
-      status: item.checklist.status,
-      bloqueante: item.checklist.bloqueante,
-      observacoes: item.checklist.observacoes,
-      itens: item.checklist.itens.map((it) => ({
+    // 4. Formata dados dos itens
+    const checklistData = {
+      setor: labelSetor,
+      preenchidoPor: checklist.preenchidoPor?.nomeCompleto || 'Desconhecido',
+      dataPreenchimento: checklist.dataPreenchimento,
+      status: checklist.status,
+      bloqueante: checklist.bloqueante,
+      observacoes: checklist.observacoes,
+      itens: checklist.itens.map((it) => ({
         descricao: it.templateItem?.descricao || it.descricaoAvulsa || 'Item Avulso',
         conforme: it.conforme,
         resposta: it.valorResposta,
         observacao: it.observacao,
         isAvulso: !it.templateItemId,
       })),
-    }));
+    };
 
-    // 5. Gera a tabela visual em HTML via Genkit (Gemini-2.5-flash)
-    const response = await ai.generate({
-      model: googleAI.model('gemini-2.5-flash'),
-      prompt: `
-Você é o assistente inteligente de qualidade do ERP de Modelagem de Calçados da Dass.
-Sua tarefa é gerar uma tabela visual HTML moderna, corporativa e responsiva com o resumo do checklist preenchido.
-
-Dados da Ordem de Teste:
-- Código de Barras: ${testOrder?.codigoBarras || 'N/A'}
-- Modelo: ${testOrder?.modelo?.nome || 'N/A'} (${testOrder?.modelo?.codigoProduto || 'N/A'})
-
-Dados do Checklist Preenchido:
-${JSON.stringify(checklistData, null, 2)}
-
-Diretrizes da Tabela HTML:
-1. Crie uma estrutura HTML elegante para o corpo do e-mail. Use fontes limpas como Arial ou Inter, espaçamento confortável e cores harmoniosas (paleta profissional/corporativa, por exemplo tons de cinza escuro, azul Dass, etc.).
-2. Adicione colunas claras na tabela:
-   - Setor
-   - Item de Verificação / Fator
-   - Status (Use obrigatoriamente ✅ para "Conforme" e ❌ para "Não Conforme" / "Pendência")
-   - Resposta / Valor Informado
-   - Observações (se houver)
-3. Escreva no início do e-mail um parágrafo de resumo executivo gerado por IA sobre a conformidade do checklist para o setor ${labelSetor}, alertando se houver pendências bloqueantes.
-4. Retorne APENAS o código HTML puro que será usado como corpo do e-mail, sem a formatação de bloco de código markdown (sem os caracteres \`\`\`html e \`\`\`). Comece diretamente com a tag HTML (como <div style="..."> ou <html>).
-      `,
-    });
-
-    let corpoHtml = response.text || '';
-    // Sanitização para remover eventuais blocos de código markdown que o modelo possa gerar
-    if (corpoHtml.startsWith('```html')) {
-      corpoHtml = corpoHtml.slice(7);
-    } else if (corpoHtml.startsWith('```')) {
-      corpoHtml = corpoHtml.slice(3);
-    }
-    if (corpoHtml.endsWith('```')) {
-      corpoHtml = corpoHtml.slice(0, -3);
-    }
-    corpoHtml = corpoHtml.trim();
+    // 5. Gera HTML nativo por Template Literals
+    const corpoHtml = generateChecklistHtml(testOrder, checklist, labelSetor, checklistData);
 
     // 6. Define o Assunto do e-mail
     const assunto = `[Checklist ${checklist.status}] Setor ${labelSetor} - Ordem de Teste ${testOrder?.codigoBarras || ''}`;
@@ -165,7 +192,7 @@ Diretrizes da Tabela HTML:
     }
 
     // 8. Determina o tipo do email
-    const hasPendencies = checklistsToReport.some(x => x.checklist.status === ChecklistStatus.COM_PENDENCIAS);
+    const hasPendencies = checklist.status === ChecklistStatus.COM_PENDENCIAS;
     const tipoEmail = hasPendencies ? TipoEmail.CHECKLIST_PENDENCIAS : TipoEmail.CHECKLIST_CONCESSAO;
 
     // 9. Registra o e-mail na tabela
@@ -181,7 +208,7 @@ Diretrizes da Tabela HTML:
 
     const savedEmail = await emailLogRepo.save(emailLog);
 
-    // 10. Envia o e-mail via SMTP simulado/real
+    // 10. Envia o e-mail via SMTP
     try {
       await transporter.sendMail({
         from: '"ERP Chão de Fábrica" <noreply@dass.com.br>',
@@ -200,7 +227,7 @@ Diretrizes da Tabela HTML:
         message: 'E-mail disparado e registrado com sucesso.',
       };
     } catch (err: any) {
-      console.error('[dispararEmailChecklistFlow] Falha no SMTP:', err);
+      console.error('[dispararEmailChecklist] Falha no SMTP:', err);
       savedEmail.status = EmailStatus.ERRO;
       savedEmail.erroMensagem = err.message || String(err);
       await emailLogRepo.save(savedEmail);
@@ -211,24 +238,30 @@ Diretrizes da Tabela HTML:
         message: `Falha ao enviar e-mail por SMTP: ${err.message || err}`,
       };
     }
+  } catch (error: any) {
+    console.error('[dispararEmailChecklist] Erro crítico no fluxo:', error);
+    return {
+      success: false,
+      message: `Erro crítico no fluxo: ${error.message || error}`,
+    };
   }
-);
+}
 
 /**
  * Função utilitária para acionar o flow de e-mail de forma assíncrona.
- * Isso impede que a resposta HTTP do controlador fique aguardando o processamento do LLM e do SMTP.
+ * Isso impede que a resposta HTTP do controlador fique aguardando o envio do SMTP.
  */
 export function triggerChecklistEmail(checklistId: string, ordemTesteId: string): void {
-  console.log(`[EmailFlow] Acionando flow para checklistId=${checklistId}, ordemTesteId=${ordemTesteId}`);
-  dispararEmailChecklistFlow({ checklistId, ordemTesteId })
+  console.log(`[EmailFlow] Acionando envio de e-mail nativo para checklistId=${checklistId}, ordemTesteId=${ordemTesteId}`);
+  dispararEmailChecklist(checklistId, ordemTesteId)
     .then((res) => {
       if (res.success) {
-        console.log(`[EmailFlow] Flow concluído com sucesso. Email ID: ${res.emailId}`);
+        console.log(`[EmailFlow] Envio concluído com sucesso. Email ID: ${res.emailId}`);
       } else {
-        console.warn(`[EmailFlow] Flow concluído com aviso: ${res.message}`);
+        console.warn(`[EmailFlow] Envio concluído com aviso: ${res.message}`);
       }
     })
     .catch((err) => {
-      console.error('[EmailFlow] Erro crítico ao executar o flow:', err);
+      console.error('[EmailFlow] Erro crítico ao executar o envio de e-mail:', err);
     });
 }
