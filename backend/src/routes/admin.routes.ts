@@ -34,6 +34,41 @@ router.get('/usuarios', adminController.getUsuarios);
 
 /**
  * @swagger
+ * /api/admin/perfis:
+ *   get:
+ *     summary: Lista todos os perfis do sistema
+ *     tags:
+ *       - Admin
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de perfis
+ *       401:
+ *         description: Não autorizado
+ */
+router.get('/perfis', adminController.getPerfis);
+
+/**
+ * @swagger
+ * /api/admin/setores:
+ *   get:
+ *     summary: Lista todos os setores do sistema
+ *     tags:
+ *       - Admin
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de setores
+ *       401:
+ *         description: Não autorizado
+ */
+router.get('/setores', adminController.getSetores);
+
+
+/**
+ * @swagger
  * /api/admin/permissoes/{perfilId}:
  *   get:
  *     summary: Obtém a matriz de permissões para um determinado perfil

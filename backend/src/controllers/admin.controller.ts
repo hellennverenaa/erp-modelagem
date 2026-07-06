@@ -3,7 +3,42 @@ import { AppDataSource } from '../config/database';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { Usuario } from '../entities/Usuario';
 
+import { Perfil } from '../entities/Perfil';
+import { Setor } from '../entities/Setor';
+
 export class AdminController {
+  /**
+   * Lista todos os perfis cadastrados no sistema.
+   */
+  public async getPerfis(_req: Request, res: Response): Promise<Response> {
+    try {
+      const perfilRepo = AppDataSource.getRepository(Perfil);
+      const perfis = await perfilRepo.find({
+        order: { nome: 'ASC' }
+      });
+      return res.json(perfis);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar perfis:', error);
+      return res.status(500).json({ error: 'Erro ao listar perfis' });
+    }
+  }
+
+  /**
+   * Lista todos os setores cadastrados no sistema.
+   */
+  public async getSetores(_req: Request, res: Response): Promise<Response> {
+    try {
+      const setorRepo = AppDataSource.getRepository(Setor);
+      const setores = await setorRepo.find({
+        order: { ordemFluxo: 'ASC' }
+      });
+      return res.json(setores);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar setores:', error);
+      return res.status(500).json({ error: 'Erro ao listar setores' });
+    }
+  }
+
   /**
    * Lista todos os usuários cadastrados no sistema (com perfil e planta).
    */
