@@ -9,7 +9,8 @@ import {
   X,
   ChevronRight,
   ListOrdered,
-  Barcode
+  Barcode,
+  ClipboardList
 } from '@lucide/vue'
 
 const router = useRouter()
@@ -22,14 +23,16 @@ const user = ref<{ nomeCompleto?: string; usuario?: string; perfilNome?: string 
 const sidebarOpen = ref(true)
 
 const navItems = [
-  { to: '/dashboard/rbac',    label: 'Permissões',       icon: ShieldCheck },
-  { to: '/dashboard/rotas',   label: 'Construtor de Rota', icon: ListOrdered },
+  { to: '/dashboard/rbac',    label: 'Permissões',         icon: ShieldCheck },
+  { to: '/dashboard/rotas',   label: 'Construtor de Rota',  icon: ListOrdered },
+  { to: '/dashboard/ordens',  label: 'Gestão de Ordens',    icon: ClipboardList },
   { to: '/dashboard/bipagem', label: 'Bipagem Operacional', icon: Barcode },
 ]
 
 const activeLabel = computed(() => {
-  if (route.path.endsWith('/rbac')) return 'Permissões'
-  if (route.path.endsWith('/rotas')) return 'Construtor de Rota'
+  if (route.path.endsWith('/rbac'))    return 'Permissões'
+  if (route.path.endsWith('/rotas'))   return 'Construtor de Rota'
+  if (route.path.endsWith('/ordens')) return 'Gestão de Ordens'
   if (route.path.endsWith('/bipagem')) return 'Bipagem Operacional'
   return 'Dashboard'
 })

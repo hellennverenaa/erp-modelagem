@@ -35,6 +35,11 @@ const router = createRouter({
           name: 'bipagem',
           component: () => import('../views/BipagemView.vue'),
         },
+        {
+          path: 'ordens',
+          name: 'ordens',
+          component: () => import('../views/GestaoOrdensView.vue'),
+        },
       ],
     },
   ],

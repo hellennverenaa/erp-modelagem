@@ -2,9 +2,10 @@ import { Request, Response } from 'express';
 import { AppDataSource } from '../config/database';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { Usuario } from '../entities/Usuario';
-
 import { Perfil } from '../entities/Perfil';
 import { Setor } from '../entities/Setor';
+import { Modelo } from '../entities/Modelo';
+import { Planta } from '../entities/Planta';
 import { IsNull } from 'typeorm';
 
 export class AdminController {
@@ -37,6 +38,40 @@ export class AdminController {
     } catch (error) {
       console.error('[AdminController] Erro ao listar setores:', error);
       return res.status(500).json({ error: 'Erro ao listar setores' });
+    }
+  }
+
+  /**
+   * Lista todos os modelos cadastrados no sistema (para uso em dropdowns de criação de ordens).
+   */
+  public async getModelos(_req: Request, res: Response): Promise<Response> {
+    try {
+      const modeloRepo = AppDataSource.getRepository(Modelo);
+      const modelos = await modeloRepo.find({
+        where: { ativo: true },
+        order: { nome: 'ASC' }
+      });
+      return res.json(modelos);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar modelos:', error);
+      return res.status(500).json({ error: 'Erro ao listar modelos' });
+    }
+  }
+
+  /**
+   * Lista todas as plantas industriais cadastradas no sistema (para uso em dropdowns de criação de ordens).
+   */
+  public async getPlantas(_req: Request, res: Response): Promise<Response> {
+    try {
+      const plantaRepo = AppDataSource.getRepository(Planta);
+      const plantas = await plantaRepo.find({
+        where: { ativo: true },
+        order: { nome: 'ASC' }
+      });
+      return res.json(plantas);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar plantas:', error);
+      return res.status(500).json({ error: 'Erro ao listar plantas' });
     }
   }
 

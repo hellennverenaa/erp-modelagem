@@ -66,6 +66,40 @@ router.get('/perfis', adminController.getPerfis);
  */
 router.get('/setores', adminController.getSetores);
 
+/**
+ * @swagger
+ * /api/admin/modelos:
+ *   get:
+ *     summary: Lista todos os modelos ativos (para dropdowns de Gestão de Ordens)
+ *     tags:
+ *       - Admin
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de modelos ativos
+ *       401:
+ *         description: Não autorizado
+ */
+router.get('/modelos', adminController.getModelos);
+
+/**
+ * @swagger
+ * /api/admin/plantas:
+ *   get:
+ *     summary: Lista todas as plantas industriais ativas (para dropdowns de Gestão de Ordens)
+ *     tags:
+ *       - Admin
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de plantas ativas
+ *       401:
+ *         description: Não autorizado
+ */
+router.get('/plantas', adminController.getPlantas);
+
 
 /**
  * @swagger
