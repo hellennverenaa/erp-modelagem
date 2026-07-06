@@ -8,8 +8,10 @@ import {
   Menu,
   X,
   ChevronRight,
+  ListOrdered,
 } from '@lucide/vue'
 import AdminRBAC from '../components/AdminRBAC.vue'
+import RouteBuilder from '../components/RouteBuilder.vue'
 
 const router = useRouter()
 const userRaw = localStorage.getItem('erp_user')
@@ -18,10 +20,11 @@ const user = ref<{ nomeCompleto?: string; usuario?: string; perfilNome?: string 
 )
 
 const sidebarOpen = ref(true)
-const activeView = ref<'rbac'>('rbac')
+const activeView = ref<'rbac' | 'rota'>('rbac')
 
 const navItems = [
-  { id: 'rbac', label: 'Permissões', icon: ShieldCheck },
+  { id: 'rbac',  label: 'Permissões',       icon: ShieldCheck },
+  { id: 'rota',  label: 'Construtor de Rota', icon: ListOrdered },
 ]
 
 const activeLabel = computed(
@@ -60,7 +63,7 @@ function logout() {
           :id="`nav-${item.id}`"
           class="nav-item"
           :class="{ 'nav-item--active': activeView === item.id }"
-          @click="activeView = item.id as 'rbac'"
+          @click="activeView = item.id as 'rbac' | 'rota'"
           type="button"
           :aria-current="activeView === item.id ? 'page' : undefined"
           :title="!sidebarOpen ? item.label : undefined"
@@ -126,7 +129,8 @@ function logout() {
 
       <!-- Content -->
       <main class="main-content" id="main-content">
-        <AdminRBAC v-if="activeView === 'rbac'" />
+        <AdminRBAC    v-if="activeView === 'rbac'" />
+        <RouteBuilder v-else-if="activeView === 'rota'" />
       </main>
     </div>
   </div>
