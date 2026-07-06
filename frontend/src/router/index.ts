@@ -12,9 +12,25 @@ const router = createRouter({
     },
     {
       path: '/dashboard',
-      name: 'dashboard',
       component: () => import('../views/DashboardView.vue'),
       meta: { requiresAuth: true },
+      children: [
+        {
+          path: '',
+          name: 'dashboard',
+          redirect: '/dashboard/rbac',
+        },
+        {
+          path: 'rbac',
+          name: 'rbac',
+          component: () => import('../components/AdminRBAC.vue'),
+        },
+        {
+          path: 'rotas',
+          name: 'rotas',
+          component: () => import('../components/RouteBuilder.vue'),
+        },
+      ],
     },
   ],
 })

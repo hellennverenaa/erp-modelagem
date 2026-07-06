@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import {
   LayoutDashboard,
   ShieldCheck,
@@ -10,26 +10,26 @@ import {
   ChevronRight,
   ListOrdered,
 } from '@lucide/vue'
-import AdminRBAC from '../components/AdminRBAC.vue'
-import RouteBuilder from '../components/RouteBuilder.vue'
 
 const router = useRouter()
+const route = useRoute()
 const userRaw = localStorage.getItem('erp_user')
 const user = ref<{ nomeCompleto?: string; usuario?: string; perfilNome?: string }>(
   userRaw ? JSON.parse(userRaw) : {}
 )
 
 const sidebarOpen = ref(true)
-const activeView = ref<'rbac' | 'rota'>('rbac')
 
 const navItems = [
-  { id: 'rbac',  label: 'Permissões',       icon: ShieldCheck },
-  { id: 'rota',  label: 'Construtor de Rota', icon: ListOrdered },
+  { to: '/dashboard/rbac',  label: 'Permissões',       icon: ShieldCheck },
+  { to: '/dashboard/rotas', label: 'Construtor de Rota', icon: ListOrdered },
 ]
 
-const activeLabel = computed(
-  () => navItems.find((n) => n.id === activeView.value)?.label ?? 'Dashboard'
-)
+const activeLabel = computed(() => {
+  if (route.path.endsWith('/rbac')) return 'Permissões'
+  if (route.path.endsWith('/rotas')) return 'Construtor de Rota'
+  return 'Dashboard'
+})
 
 function logout() {
   localStorage.removeItem('erp_token')
@@ -57,15 +57,12 @@ function logout() {
 
       <!-- Nav -->
       <nav class="sidebar-nav" role="navigation">
-        <button
+        <RouterLink
           v-for="item in navItems"
-          :key="item.id"
-          :id="`nav-${item.id}`"
+          :key="item.to"
+          :to="item.to"
           class="nav-item"
-          :class="{ 'nav-item--active': activeView === item.id }"
-          @click="activeView = item.id as 'rbac' | 'rota'"
-          type="button"
-          :aria-current="activeView === item.id ? 'page' : undefined"
+          active-class="nav-item--active"
           :title="!sidebarOpen ? item.label : undefined"
         >
           <component :is="item.icon" :size="18" class="nav-icon" aria-hidden="true" />
@@ -73,9 +70,9 @@ function logout() {
             <span v-if="sidebarOpen" class="nav-label">{{ item.label }}</span>
           </Transition>
           <Transition name="fade-slide">
-            <ChevronRight v-if="sidebarOpen && activeView === item.id" :size="14" class="nav-chevron" aria-hidden="true" />
+            <ChevronRight v-if="sidebarOpen && route.path === item.to" :size="14" class="nav-chevron" aria-hidden="true" />
           </Transition>
-        </button>
+        </RouterLink>
       </nav>
 
       <!-- Sidebar toggle -->
@@ -129,8 +126,7 @@ function logout() {
 
       <!-- Content -->
       <main class="main-content" id="main-content">
-        <AdminRBAC    v-if="activeView === 'rbac'" />
-        <RouteBuilder v-else-if="activeView === 'rota'" />
+        <RouterView />
       </main>
     </div>
   </div>
