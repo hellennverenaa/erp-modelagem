@@ -5,6 +5,7 @@ import { Usuario } from '../entities/Usuario';
 
 import { Perfil } from '../entities/Perfil';
 import { Setor } from '../entities/Setor';
+import { IsNull } from 'typeorm';
 
 export class AdminController {
   /**
@@ -92,22 +93,29 @@ export class AdminController {
           return res.status(400).json({ error: 'perfilId e acao são obrigatórios em cada item.' });
         }
 
+        // Normalização defensiva de setorId contra strings inválidas ou serialização incorreta
+        const normalizedSetorId = (setorId === 'null' || setorId === 'undefined' || setorId === '' || !setorId)
+          ? null
+          : setorId;
+
         // Busca se o registro correspondente já existe
         let perm = await permissaoRepo.findOne({
           where: {
             perfilId,
-            setorId: setorId || null,
+            setorId: normalizedSetorId ? normalizedSetorId : IsNull(),
             acao
           }
         });
 
         if (perm) {
           perm.permitido = permitido !== undefined ? permitido : true;
+          // Garante a passagem do null primitivo do JavaScript e não do IsNull() do TypeORM ao salvar
+          perm.setorId = normalizedSetorId;
           perm = await permissaoRepo.save(perm);
         } else {
           perm = permissaoRepo.create({
             perfilId,
-            setorId: setorId || null,
+            setorId: normalizedSetorId,
             acao,
             permitido: permitido !== undefined ? permitido : true
           });
@@ -119,8 +127,52 @@ export class AdminController {
 
       return res.json(savedItems);
     } catch (error) {
-      console.error('[AdminController] Erro ao atualizar permissões:', error);
-      return res.status(500).json({ error: 'Erro ao atualizar permissões' });
+      console.error('[AdminController.updatePermissoes] Erro crítico ao atualizar permissões:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar permissões no banco de dados.' });
+    }
+  }
+
+  /**
+   * Altera o perfil associado a um determinado usuário (colaborador).
+   */
+  public async updateUsuarioPerfil(req: Request, res: Response): Promise<Response> {
+    try {
+      const id = String(req.params.id);
+      const { perfilId } = req.body;
+
+      if (!perfilId) {
+        return res.status(400).json({ error: 'perfilId é obrigatório.' });
+      }
+
+      const userRepo = AppDataSource.getRepository(Usuario);
+      const perfilRepo = AppDataSource.getRepository(Perfil);
+
+      const user = await userRepo.findOne({
+        where: { id },
+        relations: { perfil: true }
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: 'Usuário não encontrado.' });
+      }
+
+      const novoPerfil = await perfilRepo.findOne({ where: { id: perfilId } });
+      if (!novoPerfil) {
+        return res.status(404).json({ error: 'Perfil não encontrado.' });
+      }
+
+      user.perfil = novoPerfil;
+      user.perfilId = novoPerfil.id;
+      
+      const salvo = await userRepo.save(user);
+
+      return res.json({
+        message: 'Perfil do usuário atualizado com sucesso.',
+        usuario: salvo
+      });
+    } catch (error) {
+      console.error('[AdminController] Erro ao atualizar perfil do usuário:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar perfil do usuário.' });
     }
   }
 }

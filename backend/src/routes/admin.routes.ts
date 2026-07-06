@@ -175,4 +175,51 @@ router.get('/permissoes/:perfilId', adminController.getPermissoes);
  */
 router.put('/permissoes', adminController.updatePermissoes);
 
+/**
+ * @swagger
+ * /api/admin/usuarios/{id}/perfil:
+ *   put:
+ *     summary: Atualiza o perfil de acesso de um usuário (Admin)
+ *     description: Altera o crachá/perfil associado a um funcionário. Apenas acessível por administradores.
+ *     tags:
+ *       - Admin
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID do usuário a ser atualizado
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - perfilId
+ *             properties:
+ *               perfilId:
+ *                 type: string
+ *                 format: uuid
+ *                 example: "550e8400-e29b-41d4-a716-446655440000"
+ *     responses:
+ *       200:
+ *         description: Perfil do usuário atualizado com sucesso
+ *       400:
+ *         description: Dados incompletos
+ *       401:
+ *         description: Token JWT inválido ou ausente
+ *       403:
+ *         description: Acesso negado
+ *       404:
+ *         description: Usuário ou perfil não encontrado
+ *       500:
+ *         description: Erro interno do servidor
+ */
+router.put('/usuarios/:id/perfil', adminController.updateUsuarioPerfil);
+
 export default router;

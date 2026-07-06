@@ -30,6 +30,11 @@ const router = createRouter({
           name: 'rotas',
           component: () => import('../components/RouteBuilder.vue'),
         },
+        {
+          path: 'bipagem',
+          name: 'bipagem',
+          component: () => import('../views/BipagemView.vue'),
+        },
       ],
     },
   ],

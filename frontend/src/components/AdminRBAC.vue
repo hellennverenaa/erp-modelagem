@@ -7,8 +7,6 @@ import {
   XCircle,
   RefreshCw,
   Sliders,
-  ToggleLeft,
-  ToggleRight,
   AlertCircle
 } from '@lucide/vue'
 import api from '../api/axios'
@@ -72,6 +70,7 @@ const filterText = ref<string>('')
 const loadingUsers = ref(false)
 const loadingRBAC = ref(false)
 const updatingPermissions = ref<Record<string, boolean>>({})
+const updatingUserProfile = ref<Record<string, boolean>>({})
 
 // Toasts
 const toasts = ref<Toast[]>([])
@@ -125,6 +124,42 @@ async function fetchPermissions() {
     showToast('Erro ao obter matriz de acessos.', 'error')
   } finally {
     loadingRBAC.value = false
+  }
+}
+
+async function alterarPerfilColaborador(usuarioId: string, event: Event) {
+  const target = event.target as HTMLSelectElement
+  const novoPerfilId = target.value
+
+  updatingUserProfile.value[usuarioId] = true
+  try {
+    await api.put(`/admin/usuarios/${usuarioId}/perfil`, {
+      perfilId: novoPerfilId
+    }, {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('erp_token')}`
+      }
+    })
+
+    showToast('Perfil do colaborador atualizado com sucesso.')
+    
+    // Atualiza localmente o perfil do usuário
+    const idx = users.value.findIndex(u => u.id === usuarioId)
+    if (idx !== -1) {
+      const perfilEncontrado = profiles.value.find(p => p.id === novoPerfilId)
+      if (perfilEncontrado) {
+        users.value[idx].perfil = {
+          id: perfilEncontrado.id,
+          nome: perfilEncontrado.nome,
+          descricao: perfilEncontrado.descricao
+        }
+      }
+    }
+  } catch (error: any) {
+    showToast('Falha ao atualizar perfil do colaborador.', 'error')
+    await fetchUsers()
+  } finally {
+    updatingUserProfile.value[usuarioId] = false
   }
 }
 
@@ -317,9 +352,19 @@ onMounted(() => {
                     <td><code class="user-code">{{ user.usuario }}</code></td>
                     <td class="text-muted">{{ user.cargo }}</td>
                     <td>
-                      <span class="badge-profile">
-                        {{ user.perfil?.nome || 'Nenhum' }}
-                      </span>
+                      <div class="table-select-wrapper">
+                        <select
+                          :value="user.perfil?.id"
+                          class="table-select-profile"
+                          @change="alterarPerfilColaborador(user.id, $event)"
+                          :disabled="updatingUserProfile[user.id]"
+                        >
+                          <option v-for="prof in profiles" :key="prof.id" :value="prof.id">
+                            {{ prof.nome }}
+                          </option>
+                        </select>
+                        <RefreshCw v-if="updatingUserProfile[user.id]" :size="12" class="spin-anim select-spinner" aria-hidden="true" />
+                      </div>
                     </td>
                     <td class="text-muted">{{ user.planta?.nome || '-' }}</td>
                     <td class="text-center">
@@ -379,17 +424,14 @@ onMounted(() => {
                     <div class="action-control">
                       <button
                         type="button"
-                        class="toggle-switch-btn"
-                        :class="{ 'toggle-switch-btn--checked': isAllowed(null, action) }"
+                        class="matrix-toggle"
+                        :class="{ 'matrix-toggle--active': isAllowed(null, action) }"
                         :disabled="updatingPermissions[`global-${action}`]"
                         @click="togglePermission(null, action)"
                         :aria-label="`Permitir ação global ${getActionLabel(action)}`"
                       >
-                        <RefreshCw v-if="updatingPermissions[`global-${action}`]" :size="16" class="spin-anim" />
-                        <template v-else>
-                          <ToggleRight v-if="isAllowed(null, action)" :size="32" class="toggle-icon-on" />
-                          <ToggleLeft v-else :size="32" class="toggle-icon-off" />
-                        </template>
+                        <RefreshCw v-if="updatingPermissions[`global-${action}`]" :size="12" class="spin-anim toggle-spinner" aria-hidden="true" />
+                        <span v-else class="matrix-toggle-thumb"></span>
                       </button>
                     </div>
                   </div>
@@ -423,17 +465,14 @@ onMounted(() => {
                         <td v-for="action in sectorActions" :key="action" class="text-center">
                           <button
                             type="button"
-                            class="toggle-switch-btn"
-                            :class="{ 'toggle-switch-btn--checked': isAllowed(sector.id, action) }"
+                            class="matrix-toggle"
+                            :class="{ 'matrix-toggle--active': isAllowed(sector.id, action) }"
                             :disabled="updatingPermissions[`${sector.id}-${action}`]"
                             @click="togglePermission(sector.id, action)"
                             :aria-label="`Permitir ação ${getActionLabel(action)} no setor ${sector.nome}`"
                           >
-                            <RefreshCw v-if="updatingPermissions[`${sector.id}-${action}`]" :size="14" class="spin-anim" />
-                            <template v-else>
-                              <ToggleRight v-if="isAllowed(sector.id, action)" :size="28" class="toggle-icon-on" />
-                              <ToggleLeft v-else :size="28" class="toggle-icon-off" />
-                            </template>
+                            <RefreshCw v-if="updatingPermissions[`${sector.id}-${action}`]" :size="12" class="spin-anim toggle-spinner" aria-hidden="true" />
+                            <span v-else class="matrix-toggle-thumb"></span>
                           </button>
                         </td>
                       </tr>
@@ -720,6 +759,51 @@ onMounted(() => {
   letter-spacing: 0.02em;
 }
 
+.table-select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.table-select-profile {
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: inherit;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 0.25rem 1.5rem 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%231e40af' stroke-width='3'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19.5 8.25l-7.5 7.5-7.5-7.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.375rem center;
+  background-size: 0.75rem;
+}
+
+.table-select-profile:hover:not(:disabled) {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.table-select-profile:focus {
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.12);
+}
+
+.table-select-profile:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.select-spinner {
+  color: #1e40af;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -876,41 +960,53 @@ onMounted(() => {
 }
 
 /* Toggle Switches */
-.toggle-switch-btn {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0;
+.matrix-toggle {
+  width: 2.75rem; /* 44px */
+  height: 1.5rem; /* 24px */
+  background-color: #cbd5e1; /* slate-300 quando desligado */
+  border: 1px solid #cbd5e1;
+  border-radius: 9999px;
+  position: relative;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  color: #94a3b8;
-  transition: color 0.15s;
-  border-radius: 0.25rem;
+  cursor: pointer;
+  padding: 0;
+  outline: none;
+  transition: background-color 0.25s cubic-bezier(0.32, 0.72, 0, 1), border-color 0.25s;
 }
 
-.toggle-switch-btn:focus-visible {
-  outline: 2px solid #1e40af;
-  outline-offset: 1px;
+.matrix-toggle:focus-visible {
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.2);
 }
 
-.toggle-icon-on {
-  color: #1e40af;
-  fill: #eff6ff;
+.matrix-toggle--active {
+  background-color: #0f172a; /* Carvão escuro quando ligado */
+  border-color: #0f172a;
 }
 
-.toggle-icon-off {
-  color: #94a3b8;
-  fill: transparent;
+.matrix-toggle-thumb {
+  width: 1.125rem; /* 18px */
+  height: 1.125rem; /* 18px */
+  background-color: #ffffff;
+  border-radius: 50%;
+  position: absolute;
+  left: 2px;
+  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
-.toggle-switch-btn:hover:not(:disabled) .toggle-icon-off {
-  color: #64748b;
+.matrix-toggle--active .matrix-toggle-thumb {
+  transform: translateX(20px);
 }
 
-.toggle-switch-btn:disabled {
+.matrix-toggle:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.toggle-spinner {
+  color: #1e40af;
+  margin: 0 auto;
 }
 
 /* Matrix Table */
