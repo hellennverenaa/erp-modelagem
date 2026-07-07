@@ -100,6 +100,68 @@ router.get('/modelos', adminController.getModelos);
  */
 router.get('/plantas', adminController.getPlantas);
 
+/**
+ * @swagger
+ * /api/admin/marcas:
+ *   get:
+ *     summary: Lista todas as marcas ativas (para dropdowns de Novo Modelo)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de marcas ativas
+ *       401:
+ *         description: Não autorizado
+ */
+router.get('/marcas', adminController.getMarcas);
+
+/**
+ * @swagger
+ * /api/admin/modelos/catalogo:
+ *   get:
+ *     summary: Lista TODOS os modelos do catálogo (com ou sem ordem de teste)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Catálogo completo de modelos
+ *       401:
+ *         description: Não autorizado
+ */
+router.get('/modelos/catalogo', adminController.getAllModelos);
+
+/**
+ * @swagger
+ * /api/admin/modelos:
+ *   post:
+ *     summary: Cria um novo modelo no catálogo
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [marcaId, codigoProduto, nome]
+ *             properties:
+ *               marcaId: { type: string, format: uuid }
+ *               codigoProduto: { type: string, example: "2056985" }
+ *               nome: { type: string, example: "KR LITE" }
+ *               temporada: { type: string, example: "SS26" }
+ *     responses:
+ *       201:
+ *         description: Modelo criado com sucesso
+ *       400:
+ *         description: Dados inválidos
+ *       409:
+ *         description: Código de produto já existe
+ */
+router.post('/modelos', adminController.createModelo);
+
 
 /**
  * @swagger

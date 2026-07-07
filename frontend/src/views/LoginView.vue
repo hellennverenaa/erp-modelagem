@@ -3,6 +3,7 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { LogIn, User, Lock, AlertCircle, Loader2 } from '@lucide/vue'
 import api from '../api/axios'
+import { authStore } from '../api/auth.store'
 
 const router = useRouter()
 
@@ -28,8 +29,9 @@ async function handleLogin() {
     const token = data.token
     if (!token) throw new Error('Token nao retornado pelo servidor.')
 
-    localStorage.setItem('erp_token', token)
-    if (data.usuario) localStorage.setItem('erp_user', JSON.stringify(data.usuario))
+    if (data.usuario) {
+      authStore.login(token, data.usuario)
+    }
 
     router.push({ name: 'dashboard' })
   } catch (err: any) {

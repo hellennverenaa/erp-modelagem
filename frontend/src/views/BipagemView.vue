@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
 import api from '../api/axios'
+import { authStore } from '../api/auth.store'
 import {
   Barcode,
   ArrowRight,
@@ -41,14 +42,14 @@ const loadingSetores = ref(false)
 const loadingBip = ref(false)
 const inputFocusRef = ref<HTMLInputElement | null>(null)
 
-// ─── Trava de Segurança Física ──────────────────────────────────────────
-const userRaw = localStorage.getItem('erp_user')
-const user = ref<any>(userRaw ? JSON.parse(userRaw) : {})
+const user = computed(() => authStore.user.value)
 
 const podeEditarSetor = computed(() => {
   const perfil = user.value?.perfilNome?.toUpperCase() || ''
   return perfil === 'ADMIN' || perfil === 'GERENTE_MODELAGEM'
 })
+
+const isAdmin = computed(() => authStore.isAdmin.value)
 
 // ─── Scanner de Câmera ───────────────────────────────────────────────────
 const showCameraModal = ref(false)
@@ -162,7 +163,7 @@ onMounted(async () => {
     const resSetores = await api.get('/admin/setores')
     setores.value = resSetores.data
 
-    if (user.value.setorId && setores.value.some(s => s.id === user.value.setorId)) {
+    if (user.value && user.value.setorId && setores.value.some(s => s.id === user.value?.setorId)) {
       selecionouSetorId.value = user.value.setorId
     } else if (setores.value.length > 0) {
       selecionouSetorId.value = setores.value[0].id
@@ -295,6 +296,26 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
     </Transition>
 
     <!-- ══ CARD CONTAINER (Tablet-focused layout) ════════════════════════ -->
+    <!-- Modo Deus / Admin Override Panel -->
+    <div v-if="isAdmin" class="admin-god-panel">
+      <div class="god-panel-left">
+        <Settings :size="16" class="god-icon" aria-hidden="true" />
+        <span class="god-title">Modo Administrador — Controle Global de Setores</span>
+      </div>
+      <div class="god-panel-right">
+        <label for="select-god-setor" class="god-label">Simular como Setor:</label>
+        <select
+          id="select-god-setor"
+          v-model="selecionouSetorId"
+          class="god-select"
+        >
+          <option v-for="setor in setores" :key="setor.id" :value="setor.id">
+            {{ setor.nome }} ({{ setor.codigo }})
+          </option>
+        </select>
+      </div>
+    </div>
+
     <main class="bp-card">
       <header class="bp-card-header">
         <div class="bp-header-info">
@@ -431,11 +452,74 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
 ═══════════════════════════════════════════════════════ */
 .bp-root {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   width: 100%;
   min-height: calc(100vh - 8rem);
   padding: 1rem;
+}
+
+/* Admin God Panel style */
+.admin-god-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 32rem;
+  padding: 0.75rem 1rem;
+  background: #eff6ff;
+  border: 1.5px solid #bfdbfe;
+  border-radius: 0.75rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 2px 4px rgba(30, 58, 138, 0.04);
+}
+.god-panel-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #1e40af;
+}
+.god-icon {
+  flex-shrink: 0;
+  animation: pulse 2s infinite ease-in-out;
+}
+.god-title {
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.god-panel-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.god-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #475569;
+}
+.god-select {
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: inherit;
+  color: #1e40af;
+  background: #ffffff;
+  border: 1px solid #dbeafe;
+  border-radius: 0.375rem;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.god-select:focus {
+  border-color: #3b82f6;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 .bp-card {

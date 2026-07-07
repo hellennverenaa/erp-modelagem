@@ -11,6 +11,7 @@ import dossieRoutes from './dossie.routes';
 import configuracoesRoutes from './configuracoes.routes';
 import dashboardRoutes from './dashboard.routes';
 import adminRoutes from './admin.routes';
+import rotasRoutes from './rotas.routes';
 import { verificaToken } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -30,5 +31,6 @@ router.use('/dossies', verificaToken, dossieRoutes);
 router.use('/configuracoes', verificaToken, configuracoesRoutes);
 router.use('/dashboard', verificaToken, dashboardRoutes);
 router.use('/admin', verificaToken, adminRoutes);
+router.use('/rotas', verificaToken, rotasRoutes);
 
 export default router;

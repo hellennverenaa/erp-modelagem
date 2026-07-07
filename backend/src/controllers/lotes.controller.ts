@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
+import { RotaModelo } from '../entities/RotaModelo';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -88,6 +89,30 @@ export class LotesController {
       const { modeloId, plantaId, prioridadePcp, possuiCaixaTeste, observacoes } = parseResult.data;
 
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
+
+      // ─── Trava de Segurança 1:1 ────────────────────────────────────────────
+      // Regra de negócio inegociável: cada modelo só pode ter UM teste de produção.
+      const ordemExistente = await loteRepo.findOne({ where: { modeloId } });
+      if (ordemExistente) {
+        return res.status(400).json({
+          error: 'Este modelo já possui um teste de produção ativo. A relação Modelo → Ordem de Teste é 1:1.',
+          code: 'MODELO_TESTE_DUPLICADO',
+          ordemId: ordemExistente.id,
+          codigoBarras: ordemExistente.codigoBarras,
+        });
+      }
+      // ───────────────────────────────────────────────────────────────────────
+
+      // ─── Trava de Rota Existente ───────────────────────────────────────────
+      const rotaRepo = AppDataSource.getRepository(RotaModelo);
+      const countRotas = await rotaRepo.count({ where: { modeloId } });
+      if (countRotas === 0) {
+        return res.status(400).json({
+          error: 'Falha: O modelo não possui uma rota de produção definida. Acesse o Construtor de Rota para mapear o fluxo do modelo antes de gerar a Ordem.',
+          code: 'ROTA_NOT_FOUND'
+        });
+      }
+      // ───────────────────────────────────────────────────────────────────────
 
       // Cria a entidade da Ordem de Teste de forma dinâmica (Zero Hardcode)
       const lote = loteRepo.create({

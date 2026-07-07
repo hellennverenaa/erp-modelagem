@@ -40,6 +40,16 @@ const router = createRouter({
           name: 'ordens',
           component: () => import('../views/GestaoOrdensView.vue'),
         },
+        {
+          path: 'modelos',
+          name: 'modelos',
+          component: () => import('../views/GestaoModelosView.vue'),
+        },
+        {
+          path: 'novo-teste',
+          name: 'novo-teste',
+          component: () => import('../views/WizardCriacaoTesteView.vue'),
+        },
       ],
     },
   ],

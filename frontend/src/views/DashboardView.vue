@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
+import { authStore } from '../api/auth.store'
 import {
   LayoutDashboard,
   ShieldCheck,
@@ -10,36 +11,37 @@ import {
   ChevronRight,
   ListOrdered,
   Barcode,
-  ClipboardList
+  ClipboardList,
+  Layers,
+  PlusCircle
 } from '@lucide/vue'
 
 const router = useRouter()
 const route = useRoute()
-const userRaw = localStorage.getItem('erp_user')
-const user = ref<{ nomeCompleto?: string; usuario?: string; perfilNome?: string }>(
-  userRaw ? JSON.parse(userRaw) : {}
-)
+const user = computed(() => authStore.user.value)
 
 const sidebarOpen = ref(true)
 
 const navItems = [
-  { to: '/dashboard/rbac',    label: 'Permissões',         icon: ShieldCheck },
-  { to: '/dashboard/rotas',   label: 'Construtor de Rota',  icon: ListOrdered },
-  { to: '/dashboard/ordens',  label: 'Gestão de Ordens',    icon: ClipboardList },
-  { to: '/dashboard/bipagem', label: 'Bipagem Operacional', icon: Barcode },
+  { to: '/dashboard/modelos',  label: 'Catálogo de Modelos',   icon: Layers },
+  { to: '/dashboard/ordens',   label: 'Gestão de Ordens',     icon: ClipboardList },
+  { to: '/dashboard/rotas',    label: 'Construtor de Rota',   icon: ListOrdered },
+  { to: '/dashboard/bipagem',  label: 'Bipagem Operacional',  icon: Barcode },
+  { to: '/dashboard/rbac',     label: 'Permissões RBAC',      icon: ShieldCheck },
 ]
 
 const activeLabel = computed(() => {
-  if (route.path.endsWith('/rbac'))    return 'Permissões'
-  if (route.path.endsWith('/rotas'))   return 'Construtor de Rota'
-  if (route.path.endsWith('/ordens')) return 'Gestão de Ordens'
-  if (route.path.endsWith('/bipagem')) return 'Bipagem Operacional'
+  if (route.path.endsWith('/novo-teste')) return 'Iniciar Novo Teste'
+  if (route.path.endsWith('/modelos'))    return 'Catálogo de Modelos'
+  if (route.path.endsWith('/ordens'))     return 'Gestão de Ordens'
+  if (route.path.endsWith('/rotas'))      return 'Construtor de Rota'
+  if (route.path.endsWith('/bipagem'))    return 'Bipagem Operacional'
+  if (route.path.endsWith('/rbac'))       return 'Permissões RBAC'
   return 'Dashboard'
 })
 
 function logout() {
-  localStorage.removeItem('erp_token')
-  localStorage.removeItem('erp_user')
+  authStore.logout()
   router.push({ name: 'login' })
 }
 </script>
@@ -59,6 +61,21 @@ function logout() {
             <span class="brand-sub">Modelagem</span>
           </div>
         </Transition>
+      </div>
+
+      <!-- Stepper Quick Action Button (Destaque) -->
+      <div class="sidebar-action-wrap">
+        <RouterLink
+          to="/dashboard/novo-teste"
+          class="btn-sidebar-action"
+          :class="{ 'btn-sidebar-action--active': route.path === '/dashboard/novo-teste' }"
+          :title="!sidebarOpen ? 'Iniciar Novo Teste' : undefined"
+        >
+          <PlusCircle :size="18" class="action-icon" aria-hidden="true" />
+          <Transition name="fade-slide">
+            <span v-if="sidebarOpen" class="action-label">Iniciar Novo Teste</span>
+          </Transition>
+        </RouterLink>
       </div>
 
       <!-- Nav -->
@@ -424,5 +441,52 @@ function logout() {
   .top-bar { height: 5.5rem; }
   .nav-item { font-size: 1.25rem; padding: 0.875rem 1rem; }
   .main-content { padding: 3rem; }
+}
+
+/* Stepper Quick Action styles */
+.sidebar-action-wrap {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.btn-sidebar-action {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.6875rem 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-decoration: none;
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(29, 78, 216, 0.2);
+  transition: opacity 0.2s, transform 0.15s;
+}
+.btn-sidebar-action:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+.btn-sidebar-action:active {
+  transform: translateY(0);
+}
+.btn-sidebar-action--active {
+  background: linear-gradient(135deg, #1e3a8a, #111827);
+  box-shadow: 0 4px 12px rgba(17, 24, 39, 0.25);
+}
+.action-icon {
+  flex-shrink: 0;
+}
+.action-label {
+  white-space: nowrap;
+}
+
+/* Collapsed adjustment */
+.sidebar--collapsed .sidebar-action-wrap {
+  padding: 0.75rem 0.5rem;
+}
+.sidebar--collapsed .btn-sidebar-action {
+  justify-content: center;
+  padding: 0.6875rem 0;
+  width: 100%;
 }
 </style>

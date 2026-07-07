@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { Usuario } from '../entities/Usuario';
@@ -6,7 +7,18 @@ import { Perfil } from '../entities/Perfil';
 import { Setor } from '../entities/Setor';
 import { Modelo } from '../entities/Modelo';
 import { Planta } from '../entities/Planta';
+import { Marca } from '../entities/Marca';
 import { IsNull } from 'typeorm';
+
+// ─── Schema de validação para criação de Modelo ─────────────────────────────
+const createModeloSchema = z.object({
+  marcaId:       z.string().uuid({ message: 'marcaId deve ser um UUID válido.' }),
+  codigoProduto: z.string().min(1).max(50),
+  nome:          z.string().min(1).max(150),
+  temporada:     z.string().max(50).optional().nullable(),
+  mfmReferenciaUrl: z.string().url().optional().nullable(),
+  fichaTecnicaUrl:  z.string().url().optional().nullable(),
+});
 
 export class AdminController {
   /**
@@ -42,24 +54,127 @@ export class AdminController {
   }
 
   /**
-   * Lista todos os modelos cadastrados no sistema (para uso em dropdowns de criação de ordens).
+   * Lista todos os modelos ativos SEM ordem de teste vinculada.
+   * Regra de negócio 1:1: um modelo só pode ter UM teste de produção.
+   * Este endpoint alimenta exclusivamente o dropdown da tela "Nova Ordem de Teste".
    */
   public async getModelos(_req: Request, res: Response): Promise<Response> {
     try {
       const modeloRepo = AppDataSource.getRepository(Modelo);
-      const modelos = await modeloRepo.find({
-        where: { ativo: true },
-        order: { nome: 'ASC' }
-      });
+
+      // Subquery NOT EXISTS — exclui modelos que já possuem qualquer OrdemTeste
+      const modelos = await modeloRepo
+        .createQueryBuilder('m')
+        .where('m.ativo = :ativo', { ativo: true })
+        .andWhere(
+          'NOT EXISTS (SELECT 1 FROM erp_modelagem.ordens_teste ot WHERE ot.modelo_id = m.id)'
+        )
+        .leftJoinAndSelect('m.marca', 'marca')
+        .orderBy('m.nome', 'ASC')
+        .getMany();
+
       return res.json(modelos);
     } catch (error) {
-      console.error('[AdminController] Erro ao listar modelos:', error);
+      console.error('[AdminController] Erro ao listar modelos disponíveis:', error);
       return res.status(500).json({ error: 'Erro ao listar modelos' });
     }
   }
 
   /**
-   * Lista todas as plantas industriais cadastradas no sistema (para uso em dropdowns de criação de ordens).
+   * Lista TODOS os modelos ativos do catálogo (para a tela GestaoModelosView).
+   * Inclui todos — com ou sem ordem de teste.
+   */
+  public async getAllModelos(_req: Request, res: Response): Promise<Response> {
+    try {
+      const modeloRepo = AppDataSource.getRepository(Modelo);
+      const modelos = await modeloRepo
+        .createQueryBuilder('m')
+        .leftJoinAndSelect('m.marca', 'marca')
+        .orderBy('m.nome', 'ASC')
+        .getMany();
+      return res.json(modelos);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar catálogo de modelos:', error);
+      return res.status(500).json({ error: 'Erro ao listar catálogo de modelos' });
+    }
+  }
+
+  /**
+   * Cria um novo modelo no catálogo.
+   * POST /api/admin/modelos
+   */
+  public async createModelo(req: Request, res: Response): Promise<Response> {
+    try {
+      const parse = createModeloSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({
+          error: 'Dados inválidos.',
+          code: 'VALIDATION_ERROR',
+          details: parse.error.flatten().fieldErrors,
+        });
+      }
+
+      const { marcaId, codigoProduto, nome, temporada, mfmReferenciaUrl, fichaTecnicaUrl } = parse.data;
+
+      const modeloRepo = AppDataSource.getRepository(Modelo);
+      const marcaRepo  = AppDataSource.getRepository(Marca);
+
+      // Verifica existência da marca
+      const marca = await marcaRepo.findOne({ where: { id: marcaId } });
+      if (!marca) {
+        return res.status(404).json({ error: 'Marca não encontrada.', code: 'MARCA_NOT_FOUND' });
+      }
+
+      // Verifica duplicidade de codigoProduto
+      const existe = await modeloRepo.findOne({ where: { codigoProduto } });
+      if (existe) {
+        return res.status(409).json({
+          error: 'Já existe um modelo com este código de produto.',
+          code: 'MODELO_DUPLICATE_CODE',
+        });
+      }
+
+      const modelo = modeloRepo.create({
+        marcaId,
+        codigoProduto,
+        nome,
+        temporada:        temporada        || null,
+        mfmReferenciaUrl: mfmReferenciaUrl || null,
+        fichaTecnicaUrl:  fichaTecnicaUrl  || null,
+        ativo: true,
+      });
+
+      const saved = await modeloRepo.save(modelo);
+
+      return res.status(201).json({
+        message: 'Modelo criado com sucesso.',
+        modelo: saved,
+      });
+    } catch (error: any) {
+      console.error('[AdminController] Erro ao criar modelo:', error);
+      return res.status(500).json({ error: 'Erro ao criar modelo.' });
+    }
+  }
+
+  /**
+   * Lista todas as marcas ativas (para dropdown do formulário de criação de modelos).
+   */
+  public async getMarcas(_req: Request, res: Response): Promise<Response> {
+    try {
+      const marcaRepo = AppDataSource.getRepository(Marca);
+      const marcas = await marcaRepo.find({
+        where: { ativo: true },
+        order: { nome: 'ASC' },
+      });
+      return res.json(marcas);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar marcas:', error);
+      return res.status(500).json({ error: 'Erro ao listar marcas' });
+    }
+  }
+
+  /**
+   * Lista todas as plantas industriais cadastradas no sistema.
    */
   public async getPlantas(_req: Request, res: Response): Promise<Response> {
     try {

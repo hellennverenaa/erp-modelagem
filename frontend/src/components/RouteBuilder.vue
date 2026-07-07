@@ -25,6 +25,30 @@ import {
   AlertTriangle,
   RotateCcw
 } from '@lucide/vue'
+import api from '../api/axios'
+
+const props = defineProps<{
+  modeloId?: string
+  isWizardMode?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'rota-salva'): void
+}>()
+
+const MAP_SETORES_REAL: Record<string, string> = {
+  'conferencia-inicial': 'ecb2d21d-51db-41a7-8261-17e8a5f03fed',
+  'corte-automatico': '9ab65b01-cc61-4ab7-9ede-50ac10aed941',
+  'apoio': 'c6a2909a-1d09-48e0-8949-aaa5a99e854c',
+  'costura': '682ba50a-0f31-4ed9-aa5f-d2565c04f2f8',
+  'montagem': '368c6f80-0e87-40b1-8e08-dc8b811da29b',
+  'laboratorio': '566aae2e-7645-411a-9542-3554bfd33f25',
+  'serigrafia': 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8',
+  'bordado': 'e80c2b61-6b00-4657-9b1a-2b51688fce01',
+  'costura-programada': 'b30cfd86-c496-476b-90b9-49db72a3a736',
+  'pre-fabricado': 'fd774810-8f85-4fcb-bffe-3b70d323f798',
+  'vulcanizado': '2e2475db-56a3-4673-91a9-dbb0b42fa57b',
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────
 interface RouteBlock {
@@ -286,90 +310,260 @@ const fullTimeline = computed<Array<RouteBlock & { isConditional?: boolean; isPa
 // ─── Save handler ────────────────────────────────────────────────────────
 const saveSuccess = ref(false)
 
-function salvarRota() {
+async function salvarRota() {
   const rotaSalvar: any[] = []
   let currentOrdem = 1
 
-  // 1. Conferência Inicial
-  rotaSalvar.push({ ordem: currentOrdem, setorId: fixedStart.id, label: fixedStart.label, tipo: fixedStart.tipo, tipoExecucao: 'SEQUENCIAL' })
+  // 1. Conferência Inicial (Almoxarifado, Navalha, Telas) em paralelo
+  const confOrdem = currentOrdem
+  rotaSalvar.push({
+    setorId: 'ecb2d21d-51db-41a7-8261-17e8a5f03fed', // Almoxarifado
+    ordem: confOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'PARALELO',
+    bipagemApenasSaida: false
+  })
+  rotaSalvar.push({
+    setorId: 'd40e4883-4f99-45cf-9c5c-c9da2ff53c26', // Navalha
+    ordem: confOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'PARALELO',
+    bipagemApenasSaida: false
+  })
+  rotaSalvar.push({
+    setorId: '8686f071-1a7c-4df5-861b-e3316d4ec01c', // Telas
+    ordem: confOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'PARALELO',
+    bipagemApenasSaida: false
+  })
   currentOrdem++
 
-  // 2. Corte Automático
-  rotaSalvar.push({ ordem: currentOrdem, setorId: fixedMiddle[0].id, label: fixedMiddle[0].label, tipo: fixedMiddle[0].tipo, tipoExecucao: 'SEQUENCIAL' })
+  // 2. Corte Automático (Corte Recebimento, Corte Separação, Corte Dublagem e subsetores Ponte/Lectra/Atom)
+  rotaSalvar.push({
+    setorId: '9ab65b01-cc61-4ab7-9ede-50ac10aed941', // Corte Recebimento
+    ordem: currentOrdem++,
+    obrigatorio: true,
+    tipoExecucao: 'SEQUENCIAL',
+    bipagemApenasSaida: false
+  })
+  rotaSalvar.push({
+    setorId: 'add9f0c2-02d6-4aba-ac97-cc5c4d038bd9', // Corte Separação
+    ordem: currentOrdem++,
+    obrigatorio: true,
+    tipoExecucao: 'SEQUENCIAL',
+    bipagemApenasSaida: false
+  })
+  rotaSalvar.push({
+    setorId: '02474f80-6dd0-4190-8019-67b8d33af26e', // Corte Dublagem
+    ordem: currentOrdem++,
+    obrigatorio: true,
+    tipoExecucao: 'SEQUENCIAL',
+    bipagemApenasSaida: false
+  })
+  
+  // Subsetores Ponte, Lectra, Atom em paralelo
+  const subsetoresOrdem = currentOrdem
+  rotaSalvar.push({
+    setorId: '2fa35a1d-1509-454c-9c77-9afda28a47dd', // Corte Ponte
+    ordem: subsetoresOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'PARALELO',
+    bipagemApenasSaida: false
+  })
+  rotaSalvar.push({
+    setorId: '397ea00b-c4bd-465d-bd47-66e17d5e2a07', // Corte Lectra
+    ordem: subsetoresOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'PARALELO',
+    bipagemApenasSaida: false
+  })
+  rotaSalvar.push({
+    setorId: 'c729d21b-cc5c-4492-a130-a7d4a3cb04ee', // Corte Atom
+    ordem: subsetoresOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'PARALELO',
+    bipagemApenasSaida: false
+  })
   currentOrdem++
 
   // 3. Serigrafia
   if (toggleSerigrafia.value) {
-    rotaSalvar.push({ ordem: currentOrdem, setorId: 'serigrafia', label: 'Serigrafia', tipo: 'condicional', tipoExecucao: 'SEQUENCIAL' })
-    currentOrdem++
+    rotaSalvar.push({
+      setorId: 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8',
+      ordem: currentOrdem++,
+      obrigatorio: false,
+      tipoExecucao: 'SEQUENCIAL',
+      bipagemApenasSaida: false
+    })
   }
 
   // 4. Antes do Apoio
   for (const block of zoneAntesApoio.value) {
-    rotaSalvar.push({ ordem: currentOrdem, setorId: block.id, label: block.label, tipo: block.tipo, tipoExecucao: 'SEQUENCIAL' })
-    currentOrdem++
+    const sId = MAP_SETORES_REAL[block.id]
+    if (sId) {
+      rotaSalvar.push({
+        setorId: sId,
+        ordem: currentOrdem++,
+        obrigatorio: true,
+        tipoExecucao: 'SEQUENCIAL',
+        bipagemApenasSaida: false
+      })
+    }
   }
 
   // 5. Apoio
   const apoioOrdem = currentOrdem
-  rotaSalvar.push({ ordem: apoioOrdem, setorId: fixedMiddle[1].id, label: fixedMiddle[1].label, tipo: fixedMiddle[1].tipo, tipoExecucao: 'SEQUENCIAL' })
+  rotaSalvar.push({
+    setorId: 'c6a2909a-1d09-48e0-8949-aaa5a99e854c', // Apoio
+    ordem: apoioOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'SEQUENCIAL',
+    bipagemApenasSaida: true
+  })
   for (const block of zoneJuntoApoio.value) {
-    rotaSalvar.push({ ordem: apoioOrdem, setorId: block.id, label: block.label, tipo: block.tipo, tipoExecucao: 'PARALELO' })
+    const sId = MAP_SETORES_REAL[block.id]
+    if (sId) {
+      rotaSalvar.push({
+        setorId: sId,
+        ordem: apoioOrdem,
+        obrigatorio: true,
+        tipoExecucao: 'PARALELO',
+        bipagemApenasSaida: false
+      })
+    }
   }
   currentOrdem++
 
   // 6. Entre Apoio e Costura
   for (const block of zoneEntreApoioCostura.value) {
-    rotaSalvar.push({ ordem: currentOrdem, setorId: block.id, label: block.label, tipo: block.tipo, tipoExecucao: 'SEQUENCIAL' })
-    currentOrdem++
+    const sId = MAP_SETORES_REAL[block.id]
+    if (sId) {
+      rotaSalvar.push({
+        setorId: sId,
+        ordem: currentOrdem++,
+        obrigatorio: true,
+        tipoExecucao: 'SEQUENCIAL',
+        bipagemApenasSaida: false
+      })
+    }
   }
 
   // 7. Costura
   const costuraOrdem = currentOrdem
-  rotaSalvar.push({ ordem: costuraOrdem, setorId: fixedMiddle[2].id, label: fixedMiddle[2].label, tipo: fixedMiddle[2].tipo, tipoExecucao: 'SEQUENCIAL' })
+  rotaSalvar.push({
+    setorId: '682ba50a-0f31-4ed9-aa5f-d2565c04f2f8', // Costura
+    ordem: costuraOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'SEQUENCIAL',
+    bipagemApenasSaida: false
+  })
   for (const block of zoneJuntoCostura.value) {
-    rotaSalvar.push({ ordem: costuraOrdem, setorId: block.id, label: block.label, tipo: block.tipo, tipoExecucao: 'PARALELO' })
+    const sId = MAP_SETORES_REAL[block.id]
+    if (sId) {
+      rotaSalvar.push({
+        setorId: sId,
+        ordem: costuraOrdem,
+        obrigatorio: true,
+        tipoExecucao: 'PARALELO',
+        bipagemApenasSaida: false
+      })
+    }
   }
   currentOrdem++
 
   // 8. Entre Costura e Montagem
   for (const block of zoneEntreCosturaMontagem.value) {
-    rotaSalvar.push({ ordem: currentOrdem, setorId: block.id, label: block.label, tipo: block.tipo, tipoExecucao: 'SEQUENCIAL' })
-    currentOrdem++
+    const sId = MAP_SETORES_REAL[block.id]
+    if (sId) {
+      rotaSalvar.push({
+        setorId: sId,
+        ordem: currentOrdem++,
+        obrigatorio: true,
+        tipoExecucao: 'SEQUENCIAL',
+        bipagemApenasSaida: false
+      })
+    }
   }
 
   // 9. Montagem
   const montagemOrdem = currentOrdem
-  rotaSalvar.push({ ordem: montagemOrdem, setorId: fixedMiddle[3].id, label: fixedMiddle[3].label, tipo: fixedMiddle[3].tipo, tipoExecucao: 'SEQUENCIAL' })
+  rotaSalvar.push({
+    setorId: '368c6f80-0e87-40b1-8e08-dc8b811da29b', // Montagem
+    ordem: montagemOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'SEQUENCIAL',
+    bipagemApenasSaida: false
+  })
   for (const block of zoneJuntoMontagem.value) {
-    rotaSalvar.push({ ordem: montagemOrdem, setorId: block.id, label: block.label, tipo: block.tipo, tipoExecucao: 'PARALELO' })
+    const sId = MAP_SETORES_REAL[block.id]
+    if (sId) {
+      rotaSalvar.push({
+        setorId: sId,
+        ordem: montagemOrdem,
+        obrigatorio: true,
+        tipoExecucao: 'PARALELO',
+        bipagemApenasSaida: false
+      })
+    }
   }
   if (toggleVulcanizado.value) {
-    rotaSalvar.push({ ordem: montagemOrdem, setorId: 'vulcanizado', label: 'Vulcanizado', tipo: 'condicional', tipoExecucao: 'PARALELO' })
+    rotaSalvar.push({
+      setorId: '2e2475db-56a3-4673-91a9-dbb0b42fa57b', // Vulcanizado
+      ordem: montagemOrdem,
+      obrigatorio: false,
+      tipoExecucao: 'PARALELO',
+      bipagemApenasSaida: false
+    })
   }
   currentOrdem++
 
   // 10. Após a Montagem
   for (const block of zonePosMontagem.value) {
-    rotaSalvar.push({ ordem: currentOrdem, setorId: block.id, label: block.label, tipo: block.tipo, tipoExecucao: 'SEQUENCIAL' })
-    currentOrdem++
+    const sId = MAP_SETORES_REAL[block.id]
+    if (sId) {
+      rotaSalvar.push({
+        setorId: sId,
+        ordem: currentOrdem++,
+        obrigatorio: true,
+        tipoExecucao: 'SEQUENCIAL',
+        bipagemApenasSaida: false
+      })
+    }
   }
 
   // 11. Laboratório
-  rotaSalvar.push({ ordem: currentOrdem, setorId: fixedEnd.id, label: fixedEnd.label, tipo: fixedEnd.tipo, tipoExecucao: 'SEQUENCIAL' })
+  rotaSalvar.push({
+    setorId: '566aae2e-7645-411a-9542-3554bfd33f25', // Laboratório
+    ordem: currentOrdem,
+    obrigatorio: true,
+    tipoExecucao: 'SEQUENCIAL',
+    bipagemApenasSaida: false
+  })
 
-  const payload = {
-    rota: rotaSalvar,
-    configuracoes: {
-      serigrafia: toggleSerigrafia.value,
-      vulcanizado: toggleVulcanizado.value,
-      possuiCaixaTeste: toggleCaixaTeste.value,
-      tamanhoCaixaTeste: toggleCaixaTeste.value ? tamanhoCaixaTeste.value : null,
-    },
+  if (props.modeloId) {
+    try {
+      const response = await api.put(`/rotas/${props.modeloId}`, {
+        rota: rotaSalvar
+      })
+      if (response.status === 200) {
+        showToast('Rota de produção salva com sucesso.', 'success')
+        saveSuccess.value = true
+        emit('rota-salva')
+        setTimeout(() => { saveSuccess.value = false }, 3000)
+      } else {
+        showToast('Falha ao salvar a rota de produção.', 'error')
+      }
+    } catch (err: any) {
+      console.error(err)
+      const errorMsg = err?.response?.data?.error || 'Erro ao conectar no servidor para salvar a rota.'
+      showToast(errorMsg, 'error')
+    }
+  } else {
+    console.log('[RouteBuilder] Rota salva em demonstração:', JSON.stringify(rotaSalvar, null, 2))
+    saveSuccess.value = true
+    setTimeout(() => { saveSuccess.value = false }, 3000)
   }
-  console.log('[RouteBuilder] Rota a salvar (Dropzones Múltiplas):', JSON.stringify(payload, null, 2))
-  saveSuccess.value = true
-  setTimeout(() => { saveSuccess.value = false }, 3000)
 }
 
 function getBlockBg(block: RouteBlock) {
@@ -383,6 +577,10 @@ function getBlockBorder(block: RouteBlock) {
   if (block.tipo === 'flutuante') return '#ddd6fe'
   return '#fed7aa'
 }
+
+defineExpose({
+  salvarRota
+})
 </script>
 
 <template>
@@ -397,7 +595,7 @@ function getBlockBorder(block: RouteBlock) {
     </Transition>
 
     <!-- ══ PAGE HEADER ══════════════════════════════════════════════════ -->
-    <header class="rb-header">
+    <header v-if="!isWizardMode" class="rb-header">
       <div class="rb-header-left">
         <div class="rb-header-icon" aria-hidden="true">
           <ListOrdered :size="20" />

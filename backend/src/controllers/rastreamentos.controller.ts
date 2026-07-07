@@ -7,6 +7,8 @@ import { Inspecao, TipoInspecao, ResultadoInspecao } from '../entities/Inspecao'
 import { OcorrenciaProducao } from '../entities/OcorrenciaProducao';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
+import { OrdemTeste } from '../entities/OrdemTeste';
+import { RotaModelo } from '../entities/RotaModelo';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RastreamentosController — Motor do ERP (Bipagem de Entrada/Saída)
@@ -72,7 +74,53 @@ export class RastreamentosController {
     }
 
     try {
+      // 1.1. Busca a Ordem de Teste correspondente para obter o modeloId
+      const ordemRepo = AppDataSource.getRepository(OrdemTeste);
+      const ordem = await ordemRepo.findOne({ where: { id: ordemTesteId } });
+      if (!ordem) {
+        return res.status(404).json({
+          error: 'Ordem de teste não encontrada.',
+          code: 'ORDEM_NOT_FOUND',
+        });
+      }
+
+      // 1.2. Verifica se o setorId pertence à rota de produção mapeada para o modelo
+      const rotaRepo = AppDataSource.getRepository(RotaModelo);
+      const pertenceARota = await rotaRepo.findOne({
+        where: {
+          modeloId: ordem.modeloId,
+          setorId: setorId,
+        },
+      });
+
+      if (!pertenceARota) {
+        return res.status(403).json({
+          error: 'Acesso Negado: Este setor não pertence à rota de produção definida para este modelo.',
+          code: 'SETOR_NOT_IN_ROUTE',
+        });
+      }
+
       const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+
+      // 1.3. Trava de Duplicidade: Verifica se já existe um registro de processamento para essa ordem/peça/tipoLote neste setor
+      const queryExistente = rastreamentoRepo.createQueryBuilder('r')
+        .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
+        .andWhere('r.setorId = :setorId', { setorId })
+        .andWhere('r.tipoLote = :tipoLote', { tipoLote });
+      
+      if (pecaId) {
+        queryExistente.andWhere('r.pecaId = :pecaId', { pecaId });
+      } else {
+        queryExistente.andWhere('r.pecaId IS NULL');
+      }
+
+      const registroExistente = await queryExistente.getOne();
+      if (registroExistente) {
+        return res.status(400).json({
+          error: 'Bloqueio: Esta ordem já possui um registro de processamento neste setor.',
+          code: 'BIPAGEM_DUPLICADA_SETOR'
+        });
+      }
 
       // 2. Verifica se já existe uma bipagem de entrada ativa (sem dataSaida) para essa
       //    combinação ordemTeste + setor + tipoLote + peca (evita bips duplicados)

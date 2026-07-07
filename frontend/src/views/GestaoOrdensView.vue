@@ -13,8 +13,17 @@ import {
   CheckCircle2,
   XCircle,
   BarChart3,
+  Activity,
+  MapPin,
+  LogIn,
+  LogOut,
+  Timer,
+  ChevronRight,
+  Info,
+  Printer
 } from '@lucide/vue'
 import api from '../api/axios'
+import JsBarcode from 'jsbarcode'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 interface OrdemTeste {
@@ -50,9 +59,42 @@ interface Toast {
   message: string
 }
 
-// ─── Estado Reativo ──────────────────────────────────────────────────────────
+interface SetorInfo {
+  id: string
+  nome: string
+  tipoSetor?: string | null
+}
+
+interface OperadorInfo {
+  id: string
+  nomeCompleto: string
+  usuario: string
+}
+
+interface RastreamentoHistorico {
+  id: string
+  ordemTesteId: string
+  setorId: string
+  tipoLote: string
+  dataEntrada: string | null
+  dataSaida: string | null
+  tempoPermanenciaMin: number | null
+  status: string
+  setor: SetorInfo | null
+  operadorEntrada: OperadorInfo | null
+  operadorSaida: OperadorInfo | null
+}
+
+interface HistoricoResponse {
+  ordemTesteId: string
+  total: number
+  historico: RastreamentoHistorico[]
+}
+
+// ─── Estado Reativo ────────────────────────────────────────────
 const ordens = ref<OrdemTeste[]>([])
 const modelos = ref<Modelo[]>([])
+const catalogoModelos = ref<Modelo[]>([])
 const plantas = ref<Planta[]>([])
 
 const loading = ref(true)
@@ -60,7 +102,305 @@ const loadingCreate = ref(false)
 const showModal = ref(false)
 const searchQuery = ref('')
 const toasts = ref<Toast[]>([])
+
+// ─── Resolução de Nomes do Catálogo ───────────────────────────────────
+function getModeloNome(modeloId: string) {
+  const m = catalogoModelos.value.find(x => x.id === modeloId)
+  return m ? m.nome : `Modelo #${modeloId.substring(0, 8)}`
+}
+
+function getModeloReferencia(modeloId: string) {
+  const m = catalogoModelos.value.find(x => x.id === modeloId)
+  return m ? m.codigoProduto : 'N/A'
+}
 let toastCounter = 0
+
+// ─── Timeline / Drawer de Rastreamento ──────────────────────────────
+const showTimeline = ref(false)
+const timelineOrdem = ref<OrdemTeste | null>(null)
+const timelineData = ref<RastreamentoHistorico[]>([])
+const loadingTimeline = ref(false)
+
+function imprimirOrdem(ordem: OrdemTeste) {
+  const modelName = getModeloNome(ordem.modeloId)
+  const modelCode = getModeloReferencia(ordem.modeloId)
+  const barcode = ordem.codigoBarras
+  const dateStr = formatDate(ordem.createdAt)
+  
+  const planta = plantas.value.find(p => p.id === ordem.plantaId)
+  const plantaNome = planta ? `${planta.nome} (${planta.cidade || ''})` : 'DASS MATRIZ'
+
+  // Criar SVG do código de barras
+  const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+  try {
+    JsBarcode(svgElement, barcode, {
+      format: 'CODE128',
+      displayValue: true,
+      fontSize: 14,
+      fontOptions: 'bold',
+      font: 'monospace',
+      height: 45, // Levemente reduzido para caber melhor no layout
+      width: 2.0,
+      margin: 0, // Removida a margem do SVG para controlar no CSS
+      lineColor: '#000000',
+      background: 'transparent'
+    })
+  } catch (err) {
+    console.error('[JsBarcode] Erro ao gerar codigo de barras:', err)
+  }
+  const barcodeSvgHtml = svgElement.outerHTML
+
+  const printWindow = window.open('', '_blank', 'width=600,height=450')
+  if (!printWindow) {
+    addToast('error', 'Bloqueio de pop-up detectado. Ative pop-ups para imprimir.')
+    return
+  }
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Etiqueta de Teste de Producao</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=JetBrains+Mono:wght@700;800&display=swap');
+    
+    @page {
+      size: 100mm 50mm;
+      margin: 0;
+    }
+    
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100mm;
+      height: 50mm;
+      background-color: white;
+      color: #000000;
+      font-family: 'Inter', sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    
+    .etiqueta-container {
+      width: 96mm;
+      height: 46mm;
+      border: 2px solid #000;
+      border-radius: 4px;
+      box-sizing: border-box;
+      padding: 2.5mm 3mm;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #000;
+      padding-bottom: 2mm;
+      margin-bottom: 1.5mm;
+    }
+    
+    .header-brand {
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      margin: 0;
+    }
+    
+    .badge-teste {
+      background: #000;
+      color: #fff;
+      font-size: 7px;
+      font-weight: 800;
+      text-transform: uppercase;
+      padding: 2.5px 5px;
+      border-radius: 2px;
+      letter-spacing: 0.05em;
+    }
+    
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 1mm;
+    }
+    
+    .header-model {
+      font-size: 14px;
+      font-weight: 900;
+      text-transform: uppercase;
+      margin: 0;
+      line-height: 1.1;
+      max-width: 65%;
+      word-break: break-word;
+    }
+    
+    .ref-box {
+      text-align: right;
+    }
+    
+    .ref-label {
+      font-size: 6px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 1px;
+    }
+    
+    .ref-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+    }
+    
+    .barcode-wrapper {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      overflow: hidden;
+      margin: 0.5mm 0;
+    }
+    
+    .barcode-wrapper svg {
+      height: 100%;
+      max-height: 16mm;
+      width: auto;
+      max-width: 100%;
+    }
+    
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      border-top: 1px dashed #000;
+      padding-top: 1.5mm;
+      gap: 2mm;
+    }
+    
+    .footer-item {
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .footer-label {
+      font-size: 6px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: #444;
+      margin-bottom: 1px;
+    }
+    
+    .footer-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 7.5px;
+      font-weight: 700;
+      color: #000;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <div class="etiqueta-container">
+    <div class="header-row">
+      <h1 class="header-brand">DASS MODELAGEM</h1>
+      <div class="badge-teste">Teste de Produção</div>
+    </div>
+    
+    <div class="info-row">
+      <h2 class="header-model">${modelName}</h2>
+      <div class="ref-box">
+        <div class="ref-label">Referência</div>
+        <div class="ref-val">${modelCode}</div>
+      </div>
+    </div>
+    
+    <div class="barcode-wrapper">
+      ${barcodeSvgHtml}
+    </div>
+    
+    <div class="footer-grid">
+      <div class="footer-item">
+        <span class="footer-label">Planta / Origem</span>
+        <span class="footer-val">${plantaNome}</span>
+      </div>
+      <div class="footer-item">
+        <span class="footer-label">Gerado Em</span>
+        <span class="footer-val">${dateStr}</span>
+      </div>
+    </div>
+  </div>
+  ` + '<' + 'script>' + `
+    window.onload = function() {
+      window.focus();
+      window.print();
+      setTimeout(function() { window.close(); }, 500);
+    };
+  ` + '<' + '/script>' + `
+</body>
+</html>`
+
+  printWindow.document.open()
+  printWindow.document.write(html)
+  printWindow.document.close()
+}
+
+async function openTimeline(ordem: OrdemTeste) {
+  timelineOrdem.value = ordem
+  timelineData.value = []
+  showTimeline.value = true
+  loadingTimeline.value = true
+  try {
+    const { data } = await api.get<HistoricoResponse>(`/rastreamentos/historico/${ordem.id}`)
+    timelineData.value = data.historico ?? []
+  } catch {
+    addToast('error', 'Erro ao carregar histórico de rastreamento.')
+    showTimeline.value = false
+  } finally {
+    loadingTimeline.value = false
+  }
+}
+
+function closeTimeline() {
+  showTimeline.value = false
+  timelineOrdem.value = null
+  timelineData.value = []
+}
+
+// Config visual dos status de rastreamento
+const rastreamentoStatusConfig: Record<string, { label: string; cls: string; dotCls: string }> = {
+  EM_PROCESSO:   { label: 'Em Processo',    cls: 'rstat--amber',  dotCls: 'rdot--amber'  },
+  CONCLUIDO:     { label: 'Concluído',       cls: 'rstat--green',  dotCls: 'rdot--green'  },
+  REPROVADO:     { label: 'Reprovado',       cls: 'rstat--red',    dotCls: 'rdot--red'    },
+  EM_RETRABALHO: { label: 'Em Retrabalho',  cls: 'rstat--orange', dotCls: 'rdot--orange' },
+}
+
+function getRastreamentoStatus(s: string) {
+  return rastreamentoStatusConfig[s] ?? { label: s, cls: 'rstat--slate', dotCls: 'rdot--slate' }
+}
+
+function formatDateTime(iso: string | null) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
+function formatPermanencia(min: number | null) {
+  if (min === null || min === undefined) return null
+  if (min < 60) return `${min}min`
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return m > 0 ? `${h}h ${m}min` : `${h}h`
+}
 
 // ─── Formulário ──────────────────────────────────────────────────────────────
 const form = ref({
@@ -153,12 +493,15 @@ async function fetchOrdens() {
 
 async function fetchDropdownData() {
   try {
-    const [resModelos, resPlantas] = await Promise.all([
+    const [resModelos, resPlantas, resCatalogo] = await Promise.all([
+      // Endpoint filtrado: retorna apenas modelos SEM ordem de teste (regra 1:1)
       api.get<Modelo[]>('/admin/modelos'),
       api.get<Planta[]>('/admin/plantas'),
+      api.get<Modelo[]>('/admin/modelos/catalogo'),
     ])
     modelos.value = resModelos.data
     plantas.value = resPlantas.data
+    catalogoModelos.value = resCatalogo.data
   } catch {
     addToast('error', 'Erro ao carregar opções do formulário.')
   }
@@ -167,8 +510,8 @@ async function fetchDropdownData() {
 async function handleCreateOrdem() {
   formErrors.value = {}
 
-  if (!form.value.modeloId)     formErrors.value.modeloId = 'Selecione um modelo.'
-  if (!form.value.plantaId)     formErrors.value.plantaId = 'Selecione uma planta.'
+  if (!form.value.modeloId)      formErrors.value.modeloId = 'Selecione um modelo.'
+  if (!form.value.plantaId)      formErrors.value.plantaId = 'Selecione uma planta.'
   if (!form.value.prioridadePcp) formErrors.value.prioridadePcp = 'Selecione a prioridade.'
 
   if (Object.keys(formErrors.value).length > 0) return
@@ -176,20 +519,32 @@ async function handleCreateOrdem() {
   loadingCreate.value = true
   try {
     await api.post('/lotes', {
-      modeloId:    form.value.modeloId,
-      plantaId:    form.value.plantaId,
+      modeloId:      form.value.modeloId,
+      plantaId:      form.value.plantaId,
       prioridadePcp: form.value.prioridadePcp,
-      observacoes: form.value.observacoes || null,
+      observacoes:   form.value.observacoes || null,
     })
     addToast('success', 'Ordem de teste criada com sucesso.')
+    // Recarrega dropdown para remover o modelo que agora tem ordem ativa
+    await Promise.all([fetchOrdens(), fetchDropdownData()])
     closeModal()
-    await fetchOrdens()
   } catch (err: any) {
-    const msg =
-      err?.response?.data?.error ||
-      err?.response?.data?.details ||
-      'Erro ao criar ordem. Verifique os dados e tente novamente.'
-    addToast('error', typeof msg === 'string' ? msg : JSON.stringify(msg))
+    const code = err?.response?.data?.code
+    const serverMsg = err?.response?.data?.error
+
+    // Trata o erro específico da regra 1:1
+    if (code === 'MODELO_TESTE_DUPLICADO') {
+      const cb = err?.response?.data?.codigoBarras
+      addToast('error', cb
+        ? `Este modelo já possui a ordem ativa: ${cb}. Cada modelo admite apenas um teste de produção.`
+        : 'Este modelo já possui um teste de produção ativo. Regra 1:1.'
+      )
+    } else {
+      addToast('error', typeof serverMsg === 'string'
+        ? serverMsg
+        : 'Erro ao criar ordem. Verifique os dados e tente novamente.'
+      )
+    }
   } finally {
     loadingCreate.value = false
   }
@@ -353,6 +708,7 @@ onMounted(async () => {
               <th scope="col" class="text-center">Status</th>
               <th scope="col" class="text-center">Liberado</th>
               <th scope="col">Criado em</th>
+              <th scope="col" class="text-center">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -361,7 +717,10 @@ onMounted(async () => {
                 <span class="barcode-cell">{{ ordem.codigoBarras }}</span>
               </td>
               <td>
-                <span class="id-cell" :title="ordem.modeloId">{{ ordem.modeloId.substring(0, 8) }}…</span>
+                <div class="model-info-cell">
+                  <strong class="model-name-text">{{ getModeloNome(ordem.modeloId) }}</strong>
+                  <span class="model-ref-sub">Ref: {{ getModeloReferencia(ordem.modeloId) }}</span>
+                </div>
               </td>
               <td class="text-center">
                 <span class="badge" :class="getPrioridade(ordem.prioridadePcp).cls">
@@ -381,6 +740,31 @@ onMounted(async () => {
                 ></span>
               </td>
               <td class="date-cell">{{ formatDate(ordem.createdAt) }}</td>
+              <td class="text-center">
+                <div class="actions-flex">
+                  <button
+                    :id="`btn-timeline-${ordem.id}`"
+                    type="button"
+                    class="btn-action-timeline"
+                    @click="openTimeline(ordem)"
+                    :aria-label="`Ver timeline de rastreamento da ordem ${ordem.codigoBarras}`"
+                    title="Ver Timeline de Rastreamento"
+                  >
+                    <Activity :size="14" aria-hidden="true" />
+                    <span>Timeline</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-action-print"
+                    @click="imprimirOrdem(ordem)"
+                    :aria-label="`Imprimir etiqueta da ordem ${ordem.codigoBarras}`"
+                    title="Imprimir Etiqueta"
+                  >
+                    <Printer :size="14" aria-hidden="true" />
+                    <span>Imprimir</span>
+                  </button>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -521,7 +905,7 @@ onMounted(async () => {
               <!-- Info tip -->
               <div class="info-tip" role="note">
                 <AlertCircle :size="14" class="tip-icon" aria-hidden="true" />
-                <span>O código de barras será gerado automaticamente pelo sistema ao confirmar a criação.</span>
+                <span>O código de barras será gerado automaticamente. Apenas modelos <strong>sem teste ativo</strong> aparecem na lista (regra 1:1).</span>
               </div>
             </div>
 
@@ -549,6 +933,164 @@ onMounted(async () => {
               </button>
             </div>
           </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ══════════════════════════════════════════════════════
+         DRAWER — TIMELINE DE RASTREAMENTO
+    ══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <Transition name="drawer">
+        <div
+          v-if="showTimeline"
+          class="tl-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tl-drawer-title"
+          @click.self="closeTimeline"
+        >
+          <aside class="tl-drawer">
+
+            <!-- Drawer Header -->
+            <div class="tl-header">
+              <div class="tl-header-left">
+                <div class="tl-icon-wrap" aria-hidden="true">
+                  <Activity :size="18" />
+                </div>
+                <div>
+                  <h2 id="tl-drawer-title" class="tl-title">Timeline de Rastreamento</h2>
+                  <p class="tl-subtitle" v-if="timelineOrdem">
+                    Ordem
+                    <span class="tl-code">{{ timelineOrdem.codigoBarras }}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                id="btn-close-timeline"
+                type="button"
+                class="tl-close"
+                @click="closeTimeline"
+                aria-label="Fechar timeline"
+              >
+                <X :size="16" aria-hidden="true" />
+              </button>
+            </div>
+
+            <!-- Drawer Body -->
+            <div class="tl-body">
+
+              <!-- Loading state -->
+              <div v-if="loadingTimeline" class="tl-loading" aria-label="Carregando rastreamentos...">
+                <div v-for="i in 4" :key="i" class="tl-skel-row">
+                  <div class="tl-skel-dot"></div>
+                  <div class="tl-skel-content">
+                    <div class="tl-skel tl-skel--title"></div>
+                    <div class="tl-skel tl-skel--sub"></div>
+                    <div class="tl-skel tl-skel--sub"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Empty state -->
+              <div v-else-if="timelineData.length === 0" class="tl-empty">
+                <MapPin :size="32" class="tl-empty-icon" aria-hidden="true" />
+                <p class="tl-empty-title">Nenhum rastreamento registrado</p>
+                <p class="tl-empty-sub">A bipagem das peças nesta ordem ainda não foi iniciada no chão de fábrica.</p>
+              </div>
+
+              <!-- Timeline list -->
+              <ol v-else class="tl-list" aria-label="Histórico de rastreamento por setor">
+                <li
+                  v-for="(item, idx) in timelineData"
+                  :key="item.id"
+                  class="tl-item"
+                >
+                  <!-- Conector vertical (oculta no último) -->
+                  <div class="tl-connector" :class="{ 'tl-connector--hidden': idx === timelineData.length - 1 }" aria-hidden="true"></div>
+
+                  <!-- Bolha de status -->
+                  <div
+                    class="tl-dot"
+                    :class="getRastreamentoStatus(item.status).dotCls"
+                    :aria-label="getRastreamentoStatus(item.status).label"
+                  ></div>
+
+                  <!-- Card do rastreamento -->
+                  <div class="tl-card">
+                    <!-- Setor + badge -->
+                    <div class="tl-card-header">
+                      <div class="tl-setor-wrap">
+                        <MapPin :size="12" class="tl-setor-icon" aria-hidden="true" />
+                        <span class="tl-setor-nome">{{ item.setor?.nome ?? 'Setor desconhecido' }}</span>
+                        <span v-if="item.setor?.tipoSetor" class="tl-tipo-setor">{{ item.setor.tipoSetor }}</span>
+                      </div>
+                      <span class="tl-badge" :class="getRastreamentoStatus(item.status).cls">
+                        {{ getRastreamentoStatus(item.status).label }}
+                      </span>
+                    </div>
+
+                    <!-- Tipo de lote -->
+                    <div class="tl-lote-tag">
+                      <ChevronRight :size="10" aria-hidden="true" />
+                      {{ item.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste' : 'Lote Principal' }}
+                    </div>
+
+                    <!-- Datas -->
+                    <div class="tl-dates">
+                      <div class="tl-date-row">
+                        <LogIn :size="12" class="tl-date-icon" aria-hidden="true" />
+                        <span class="tl-date-label">Entrada:</span>
+                        <span class="tl-date-val">{{ formatDateTime(item.dataEntrada) }}</span>
+                      </div>
+                      <div class="tl-date-row">
+                        <LogOut :size="12" class="tl-date-icon" aria-hidden="true" />
+                        <span class="tl-date-label">Saída:</span>
+                        <span class="tl-date-val">{{ formatDateTime(item.dataSaida) }}</span>
+                      </div>
+                    </div>
+
+                    <!-- Tempo de permanência -->
+                    <div v-if="formatPermanencia(item.tempoPermanenciaMin)" class="tl-permanencia">
+                      <Timer :size="12" class="tl-perm-icon" aria-hidden="true" />
+                      <span class="tl-perm-label">Permanência:</span>
+                      <span class="tl-perm-val">{{ formatPermanencia(item.tempoPermanenciaMin) }}</span>
+                    </div>
+
+                    <!-- Operadores -->
+                    <div v-if="item.operadorEntrada || item.operadorSaida" class="tl-operadores">
+                      <div v-if="item.operadorEntrada" class="tl-op">
+                        <span class="tl-op-tag">Entrada</span>
+                        <span class="tl-op-nome">{{ item.operadorEntrada.nomeCompleto }}</span>
+                      </div>
+                      <div v-if="item.operadorSaida" class="tl-op">
+                        <span class="tl-op-tag">Saída</span>
+                        <span class="tl-op-nome">{{ item.operadorSaida.nomeCompleto }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              </ol>
+
+            </div>
+
+            <!-- Drawer Footer -->
+            <div class="tl-footer">
+              <div class="tl-footer-info" v-if="!loadingTimeline && timelineData.length > 0">
+                <Info :size="13" aria-hidden="true" />
+                <span>{{ timelineData.length }} rastreamento{{ timelineData.length !== 1 ? 's' : '' }} registrado{{ timelineData.length !== 1 ? 's' : '' }}</span>
+              </div>
+              <button
+                id="btn-fechar-timeline-footer"
+                type="button"
+                class="btn-outline"
+                @click="closeTimeline"
+              >
+                Fechar
+              </button>
+            </div>
+
+          </aside>
         </div>
       </Transition>
     </Teleport>
@@ -1191,4 +1733,305 @@ onMounted(async () => {
 .toast-leave-active  { transition: all 0.25s ease; }
 .toast-enter-from    { opacity: 0; transform: translateX(1.5rem); }
 .toast-leave-to      { opacity: 0; transform: translateX(1.5rem); }
+
+/* ─── Botão de ação — Timeline ─────────────────────────────── */
+.btn-action-timeline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: inherit;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+.btn-action-timeline:hover { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
+.btn-action-timeline:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   DRAWER — TIMELINE DE RASTREAMENTO (PAINEL E)
+   Light Mode Industrial, slide da direita
+═══════════════════════════════════════════════════════════════ */
+.tl-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  z-index: 9998;
+  display: flex;
+  justify-content: flex-end;
+}
+.tl-drawer {
+  width: 100%;
+  max-width: 26rem;
+  height: 100%;
+  background: #ffffff;
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
+}
+.tl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.125rem 1.25rem;
+  border-bottom: 1px solid #f1f5f9;
+  flex-shrink: 0;
+  background: #ffffff;
+}
+.tl-header-left { display: flex; align-items: center; gap: 0.75rem; }
+.tl-icon-wrap {
+  width: 2.25rem;
+  height: 2.25rem;
+  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.25);
+}
+.tl-title { font-size: 0.9375rem; font-weight: 800; color: #0f172a; margin: 0; letter-spacing: -0.02em; }
+.tl-subtitle { font-size: 0.75rem; color: #64748b; margin: 0.15rem 0 0; }
+.tl-code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: #f1f5f9;
+  padding: 0.1rem 0.375rem;
+  border-radius: 0.2rem;
+  color: #1d4ed8;
+}
+.tl-close {
+  width: 2rem; height: 2rem;
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  color: #94a3b8;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.tl-close:hover { background: #f1f5f9; color: #0f172a; }
+.tl-close:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+
+.tl-body { flex: 1; overflow-y: auto; padding: 1.25rem; background: #f8fafc; }
+
+/* Loading skeleton */
+.tl-loading { display: flex; flex-direction: column; gap: 1.25rem; }
+.tl-skel-row { display: flex; gap: 1rem; align-items: flex-start; }
+.tl-skel-dot {
+  width: 0.875rem; height: 0.875rem;
+  border-radius: 50%;
+  background: #e2e8f0;
+  flex-shrink: 0;
+  margin-top: 0.25rem;
+  animation: shimmer 1.4s infinite;
+}
+.tl-skel-content { flex: 1; display: flex; flex-direction: column; gap: 0.375rem; }
+.tl-skel {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 0.25rem;
+  height: 0.875rem;
+}
+.tl-skel--title { width: 60%; height: 1rem; }
+.tl-skel--sub   { width: 85%; height: 0.75rem; }
+
+/* Empty */
+.tl-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 3rem 1.5rem; gap: 0.5rem; }
+.tl-empty-icon  { color: #cbd5e1; margin-bottom: 0.25rem; }
+.tl-empty-title { font-size: 0.9375rem; font-weight: 700; color: #334155; }
+.tl-empty-sub   { font-size: 0.8125rem; color: #94a3b8; line-height: 1.5; max-width: 18rem; }
+
+/* Timeline list */
+.tl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tl-item { display: flex; gap: 0.875rem; position: relative; align-items: flex-start; }
+
+/* Conector e dot */
+.tl-connector {
+  position: absolute;
+  left: 0.375rem;
+  top: 1.125rem;
+  width: 2px;
+  bottom: 0;
+  background: #e2e8f0;
+  transform: translateX(-50%);
+  z-index: 0;
+}
+.tl-connector--hidden { background: transparent; }
+
+.tl-dot {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  border: 2.5px solid #fff;
+  box-shadow: 0 0 0 1.5px currentColor;
+  flex-shrink: 0;
+  margin-top: 0.3125rem;
+  z-index: 1;
+  position: relative;
+}
+.rdot--green  { background: #16a34a; color: #16a34a; }
+.rdot--amber  { background: #d97706; color: #d97706; }
+.rdot--red    { background: #dc2626; color: #dc2626; }
+.rdot--orange { background: #ea580c; color: #ea580c; }
+.rdot--slate  { background: #64748b; color: #64748b; }
+
+/* Card */
+.tl-card {
+  flex: 1;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.625rem;
+  padding: 0.875rem 1rem;
+  margin-bottom: 1.125rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.tl-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.tl-setor-wrap { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.tl-setor-icon { color: #64748b; flex-shrink: 0; }
+.tl-setor-nome { font-size: 0.875rem; font-weight: 800; color: #0f172a; }
+.tl-tipo-setor {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #64748b;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  padding: 0.05rem 0.375rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tl-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; flex-shrink: 0; }
+.rstat--green  { background: #dcfce7; color: #15803d; }
+.rstat--amber  { background: #fef3c7; color: #92400e; }
+.rstat--red    { background: #fee2e2; color: #b91c1c; }
+.rstat--orange { background: #ffedd5; color: #c2410c; }
+.rstat--slate  { background: #f1f5f9; color: #475569; }
+
+.tl-lote-tag { display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; font-weight: 600; color: #64748b; }
+
+.tl-dates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.625rem;
+}
+.tl-date-row { display: flex; align-items: center; gap: 0.375rem; }
+.tl-date-icon  { color: #94a3b8; flex-shrink: 0; }
+.tl-date-label { font-size: 0.75rem; font-weight: 600; color: #64748b; min-width: 4rem; }
+.tl-date-val   { font-size: 0.8125rem; color: #0f172a; font-weight: 500; }
+
+.tl-permanencia { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; }
+.tl-perm-icon  { color: #64748b; flex-shrink: 0; }
+.tl-perm-label { font-weight: 600; color: #64748b; }
+.tl-perm-val   { font-weight: 800; color: #1d4ed8; }
+
+.tl-operadores { display: flex; flex-direction: column; gap: 0.25rem; border-top: 1px solid #f1f5f9; padding-top: 0.5rem; }
+.tl-op { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; }
+.tl-op-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tl-op-nome { color: #334155; font-weight: 500; }
+
+.tl-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 1.25rem;
+  border-top: 1px solid #f1f5f9;
+  flex-shrink: 0;
+  background: #ffffff;
+}
+.tl-footer-info { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; color: #94a3b8; font-weight: 500; }
+
+/* Drawer slide-in */
+.drawer-enter-active { transition: opacity 0.2s ease; }
+.drawer-leave-active { transition: opacity 0.25s ease; }
+.drawer-enter-active .tl-drawer { transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1); }
+.drawer-leave-active .tl-drawer { transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1); }
+.drawer-enter-from            { opacity: 0; }
+.drawer-enter-from .tl-drawer { transform: translateX(100%); }
+.drawer-leave-to              { opacity: 0; }
+.drawer-leave-to .tl-drawer   { transform: translateX(100%); }
+
+/* ─── Botão de Impressão e Layouts Extras ─────────────────── */
+.actions-flex {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.btn-action-print {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-family: inherit;
+  font-weight: 700;
+  color: #475569;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-action-print:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.model-info-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  text-align: left;
+}
+.model-name-text {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+.model-ref-sub {
+  font-size: 0.6875rem;
+  color: #64748b;
+  font-weight: 500;
+}
 </style>
