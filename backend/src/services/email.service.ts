@@ -6,7 +6,7 @@ import { Usuario } from '../entities/Usuario';
 import { Email, TipoEmail, EmailStatus } from '../entities/Email';
 import nodemailer from 'nodemailer';
 
-// Configuração do transporter Nodemailer
+// Configuracao do transporter Nodemailer
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'localhost',
   port: parseInt(process.env.SMTP_PORT || '1025', 10),
@@ -20,7 +20,7 @@ const transporter = nodemailer.createTransport({
 });
 
 /**
- * Monta o HTML corporativo formatado para o e-mail de checklist utilizando Template Literals
+ * Monta o HTML corporativo formatado para o e-mail de checklist utilizando Template Literals puros (Sem Emojis)
  */
 function generateChecklistHtml(
   testOrder: OrdemTeste | null,
@@ -46,7 +46,7 @@ function generateChecklistHtml(
     <tr style="border-bottom: 1px solid #ddd;">
       <td style="padding: 10px; text-align: left; font-size: 14px;">${labelSetor}</td>
       <td style="padding: 10px; text-align: left; font-size: 14px;">${it.descricao}</td>
-      <td style="padding: 10px; text-align: center; font-size: 14px;">${it.conforme ? '✅ Sim' : '❌ Não'}</td>
+      <td style="padding: 10px; text-align: center; font-size: 14px; font-weight: bold; color: ${it.conforme ? '#22c55e' : '#ef4444'};">${it.conforme ? 'Sim' : 'Nao'}</td>
       <td style="padding: 10px; text-align: left; font-size: 14px;">${it.resposta || '-'}</td>
       <td style="padding: 10px; text-align: left; font-size: 14px;">${it.observacao || '-'}</td>
     </tr>
@@ -61,7 +61,7 @@ function generateChecklistHtml(
       <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 20px; background-color: #f9f9f9;">
         <div style="max-width: 600px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e0e0e0;">
           <h2 style="color: #0b3c5d; border-bottom: 2px solid #0b3c5d; padding-bottom: 10px; margin-top: 0;">
-            Relatório de Checklist - Chão de Fábrica
+            Relatorio de Checklist - Chao de Fabrica
           </h2>
           
           <div style="margin-bottom: 20px; background-color: #f2f4f7; padding: 15px; border-radius: 6px;">
@@ -70,7 +70,7 @@ function generateChecklistHtml(
             <p style="margin: 5px 0; font-size: 14px;"><strong>Setor:</strong> ${labelSetor}</p>
             <p style="margin: 5px 0; font-size: 14px;"><strong>Preenchido Por:</strong> ${checklistData.preenchidoPor}</p>
             <p style="margin: 5px 0; font-size: 14px;"><strong>Data:</strong> ${checklistData.dataPreenchimento ? new Date(checklistData.dataPreenchimento).toLocaleString('pt-BR') : 'N/A'}</p>
-            <p style="margin: 5px 0; font-size: 14px;"><strong>Status Geral:</strong> <span style="font-weight: bold; color: ${checklistData.status === 'COM_PENDENCIAS' ? '#d9534f' : '#5cb85c'};">${checklistData.status}</span></p>
+            <p style="margin: 5px 0; font-size: 14px;"><strong>Status Geral:</strong> <span style="font-weight: bold; color: ${checklistData.status === 'COM_PENDENCIAS' ? '#ef4444' : '#22c55e'};">${checklistData.status}</span></p>
           </div>
 
           <h3 style="color: #328cc1; margin-top: 25px; font-size: 16px;">Itens do Checklist</h3>
@@ -81,7 +81,7 @@ function generateChecklistHtml(
                 <th style="padding: 10px; text-align: left; font-size: 13px;">Item / Requisito</th>
                 <th style="padding: 10px; text-align: center; font-size: 13px;">Conforme</th>
                 <th style="padding: 10px; text-align: left; font-size: 13px;">Resposta</th>
-                <th style="padding: 10px; text-align: left; font-size: 13px;">Observação</th>
+                <th style="padding: 10px; text-align: left; font-size: 13px;">Observacao</th>
               </tr>
             </thead>
             <tbody>
@@ -91,13 +91,13 @@ function generateChecklistHtml(
 
           ${checklist.observacoes ? `
             <div style="margin-top: 20px; padding: 10px; border-left: 4px solid #328cc1; background-color: #f9f9f9; font-size: 14px;">
-              <p style="margin: 0;"><strong>Observações Gerais:</strong></p>
+              <p style="margin: 0;"><strong>Observacoes Gerais:</strong></p>
               <p style="margin: 5px 0 0 0; font-style: italic;">${checklist.observacoes}</p>
             </div>
           ` : ''}
 
           <div style="margin-top: 30px; border-top: 1px solid #e0e0e0; padding-top: 15px; font-size: 12px; color: #777; text-align: center;">
-            Este é um e-mail automático gerado pelo ERP Dass de Modelagem de Calçados.
+            Este e um e-mail automatico gerado pelo ERP Dass de Modelagem de Calcados.
           </div>
         </div>
       </body>
@@ -106,8 +106,7 @@ function generateChecklistHtml(
 }
 
 /**
- * Envia o e-mail do checklist de forma assíncrona.
- * Busca dados no PostgreSQL via TypeORM e envia utilizando Nodemailer SMTP.
+ * Envia o e-mail do checklist de forma assincrona usando exclusivamente Nodemailer SMTP.
  */
 export async function dispararEmailChecklist(
   checklistId: string,
@@ -131,10 +130,10 @@ export async function dispararEmailChecklist(
     });
 
     if (!checklist) {
-      return { success: false, message: `Checklist com id ${checklistId} não encontrado.` };
+      return { success: false, message: `Checklist com id ${checklistId} nao encontrado.` };
     }
 
-    // 2. Busca informações do setor
+    // 2. Busca informacoes do setor
     const currentSectorOpt = await configOpcaoRepo.findOne({
       where: { id: checklist.setor.tipoOpcaoId },
     });
@@ -163,18 +162,18 @@ export async function dispararEmailChecklist(
       })),
     };
 
-    // 5. Gera HTML nativo por Template Literals
+    // 5. Gera HTML nativo por Template Literals puros
     const corpoHtml = generateChecklistHtml(testOrder, checklist, labelSetor, checklistData);
 
     // 6. Define o Assunto do e-mail
     const assunto = `[Checklist ${checklist.status}] Setor ${labelSetor} - Ordem de Teste ${testOrder?.codigoBarras || ''}`;
 
-    // 7. Lista de destinatários
+    // 7. Lista de destinatarios
     const recipientUsers = await userRepo.find({
       relations: { perfil: true },
       where: [
         { perfil: { nome: 'MODELISTA' }, ativo: true },
-        { perfil: { nome: 'GERENTE_MODELAGEM' }, ativo: true }
+        { perfil: { nome: 'GERENTE' }, ativo: true }
       ]
     });
 
@@ -211,7 +210,7 @@ export async function dispararEmailChecklist(
     // 10. Envia o e-mail via SMTP
     try {
       await transporter.sendMail({
-        from: '"ERP Chão de Fábrica" <noreply@dass.com.br>',
+        from: '"ERP Chao de Fabrica" <noreply@dass.com.br>',
         to: uniqueEmails.join(','),
         subject: assunto,
         html: corpoHtml,
@@ -239,29 +238,28 @@ export async function dispararEmailChecklist(
       };
     }
   } catch (error: any) {
-    console.error('[dispararEmailChecklist] Erro crítico no fluxo:', error);
+    console.error('[dispararEmailChecklist] Erro critico no fluxo:', error);
     return {
       success: false,
-      message: `Erro crítico no fluxo: ${error.message || error}`,
+      message: `Erro critico no fluxo: ${error.message || error}`,
     };
   }
 }
 
 /**
- * Função utilitária para acionar o flow de e-mail de forma assíncrona.
- * Isso impede que a resposta HTTP do controlador fique aguardando o envio do SMTP.
+ * Funcao utilitaria para acionar o fluxo de e-mail de forma assincrona (100% offline).
  */
 export function triggerChecklistEmail(checklistId: string, ordemTesteId: string): void {
   console.log(`[EmailFlow] Acionando envio de e-mail nativo para checklistId=${checklistId}, ordemTesteId=${ordemTesteId}`);
   dispararEmailChecklist(checklistId, ordemTesteId)
     .then((res) => {
       if (res.success) {
-        console.log(`[EmailFlow] Envio concluído com sucesso. Email ID: ${res.emailId}`);
+        console.log(`[EmailFlow] Envio concluido com sucesso. Email ID: ${res.emailId}`);
       } else {
-        console.warn(`[EmailFlow] Envio concluído com aviso: ${res.message}`);
+        console.warn(`[EmailFlow] Envio concluido com aviso: ${res.message}`);
       }
     })
     .catch((err) => {
-      console.error('[EmailFlow] Erro crítico ao executar o envio de e-mail:', err);
+      console.error('[EmailFlow] Erro critico ao executar o envio de e-mail:', err);
     });
 }

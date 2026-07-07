@@ -4,7 +4,7 @@ import { AppDataSource } from '../config/database';
 import { Checklist, ChecklistStatus } from '../entities/Checklist';
 import { ChecklistItem } from '../entities/ChecklistItem';
 import { ChecklistTemplate } from '../entities/ChecklistTemplate';
-import { triggerChecklistEmail } from '../services/genkitFlows.service';
+import { triggerChecklistEmail } from '../services/email.service';
 
 // ═══ Schema de Validação Zod para a resposta do Checklist ═══
 const responderChecklistSchema = z.object({

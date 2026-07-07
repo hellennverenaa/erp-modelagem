@@ -100,6 +100,44 @@ export class RastreamentosController {
         });
       }
 
+      // 1.2.1. Trava Estrita de Sequência (Anti-Teletransporte)
+      if (pertenceARota.ordem > 1) {
+        // Encontra a etapa imediatamente anterior na rota desse mesmo modelo
+        const rotaAnterior = await rotaRepo.findOne({
+          where: {
+            modeloId: ordem.modeloId,
+            ordem: pertenceARota.ordem - 1,
+          },
+        });
+
+        if (rotaAnterior) {
+          const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+          
+          // Verifica se a saída do setor anterior foi concluída
+          const queryAnterior = checkRastreamentoRepo.createQueryBuilder('r')
+            .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
+            .andWhere('r.setorId = :setorId', { setorId: rotaAnterior.setorId })
+            .andWhere('r.status = :status', { status: RastreamentoStatus.CONCLUIDO })
+            .andWhere('r.dataSaida IS NOT NULL')
+            .andWhere('r.tipoLote = :tipoLote', { tipoLote });
+
+          if (pecaId) {
+            queryAnterior.andWhere('r.pecaId = :pecaId', { pecaId });
+          } else {
+            queryAnterior.andWhere('r.pecaId IS NULL');
+          }
+
+          const rastreamentoAnterior = await queryAnterior.getOne();
+
+          if (!rastreamentoAnterior) {
+            return res.status(403).json({
+              error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
+              code: 'SEQUENCIA_INVALIDA',
+            });
+          }
+        }
+      }
+
       const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
 
       // 1.3. Trava de Duplicidade: Verifica se já existe um registro de processamento para essa ordem/peça/tipoLote neste setor
@@ -368,6 +406,53 @@ export class RastreamentosController {
       rastreamento.status             = RastreamentoStatus.CONCLUIDO;
 
       const atualizado = await rastreamentoRepo.save(rastreamento);
+
+      // 5. Handoff Automático (se aplicável)
+      // Se for um setor de Handoff Automático (Categoria A), transfere automaticamente para o próximo setor lógico da rota
+      if (isSetorHandoffAutomatico) {
+        try {
+          const ordemRepo = AppDataSource.getRepository(OrdemTeste);
+          const ordemObj = await ordemRepo.findOne({ where: { id: ordemTesteId } });
+          
+          if (ordemObj) {
+            const rotaRepo = AppDataSource.getRepository(RotaModelo);
+            const rotaAtual = await rotaRepo.findOne({
+              where: {
+                modeloId: ordemObj.modeloId,
+                setorId: setorId,
+              },
+            });
+
+            if (rotaAtual) {
+              const proximasRotas = await rotaRepo.find({
+                where: {
+                  modeloId: ordemObj.modeloId,
+                  ordem: rotaAtual.ordem + 1,
+                },
+              });
+
+              if (proximasRotas && proximasRotas.length > 0) {
+                for (const proxima of proximasRotas) {
+                  // Cria e salva a entrada de cada próximo setor em paralelo de forma imediata e transparente
+                  const proximoRastreamento = rastreamentoRepo.create({
+                    ordemTesteId,
+                    setorId:          proxima.setorId,
+                    tipoLote,
+                    pecaId:           pecaId ?? null,
+                    operadorEntradaId: operadorId,
+                    dataEntrada:      new Date(),
+                    status:           RastreamentoStatus.EM_PROCESSO,
+                  });
+                  await rastreamentoRepo.save(proximoRastreamento);
+                  console.log(`[Handoff Automático] Peça transferida automaticamente de ${setorId} para ${proxima.setorId}`);
+                }
+              }
+            }
+          }
+        } catch (handoffErr) {
+          console.error('[Handoff Automático] Falha ao processar transferência:', handoffErr);
+        }
+      }
 
       return res.status(200).json({
         message: 'Bipagem de saída registrada com sucesso. Handoff concluído.',

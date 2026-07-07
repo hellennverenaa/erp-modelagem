@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable'
 import {
   Lock,
@@ -23,7 +23,8 @@ import {
   Box,
   Trash2,
   AlertTriangle,
-  RotateCcw
+  RotateCcw,
+  Loader2
 } from '@lucide/vue'
 import api from '../api/axios'
 
@@ -48,6 +49,9 @@ const MAP_SETORES_REAL: Record<string, string> = {
   'costura-programada': 'b30cfd86-c496-476b-90b9-49db72a3a736',
   'pre-fabricado': 'fd774810-8f85-4fcb-bffe-3b70d323f798',
   'vulcanizado': '2e2475db-56a3-4673-91a9-dbb0b42fa57b',
+  'corte-cn': '1ee99690-f3b5-4c07-b644-197488e84d1b',
+  'corte-couro': 'c85a4c3c-0018-4a24-8a64-d030a5e69e2f',
+  'corte-laser': 'c980a1bf-7979-4d67-b426-2c5246890f98',
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -107,6 +111,18 @@ const toggleSerigrafia   = ref(false)
 const toggleVulcanizado  = ref(false)
 const toggleCaixaTeste   = ref(false)
 const tamanhoCaixaTeste  = ref('')
+
+// Toggles para as máquinas extras de corte
+const toggleCorteCN      = ref(false)
+const toggleCorteCouro   = ref(false)
+const toggleCorteLaser   = ref(false)
+
+// Estados para a seleção avulsa de modelo
+const selectedModeloId   = ref('')
+const modelos            = ref<any[]>([])
+const loadingModelos     = ref(false)
+
+const activeModeloId = computed(() => props.modeloId || selectedModeloId.value)
 
 // ─── Drag state ──────────────────────────────────────────────────────────
 const isDragging = ref(false)
@@ -229,6 +245,14 @@ function resetarRota() {
   zoneJuntoMontagem.value = []
   zonePosMontagem.value = []
 
+  toggleSerigrafia.value = false
+  toggleVulcanizado.value = false
+  toggleCaixaTeste.value = false
+  tamanhoCaixaTeste.value = ''
+  toggleCorteCN.value = false
+  toggleCorteCouro.value = false
+  toggleCorteLaser.value = false
+
   floatingAvailable.value = [
     { id: 'costura-programada', label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
     { id: 'bordado',            label: 'Bordado',            tipo: 'flutuante', icon: Zap,          color: '#b45309', description: 'Posicione entre Apoio e Montagem' },
@@ -311,6 +335,12 @@ const fullTimeline = computed<Array<RouteBlock & { isConditional?: boolean; isPa
 const saveSuccess = ref(false)
 
 async function salvarRota() {
+  const modelId = activeModeloId.value
+  if (!modelId) {
+    showToast('Por favor, selecione um modelo para salvar.', 'error')
+    return
+  }
+
   const rotaSalvar: any[] = []
   let currentOrdem = 1
 
@@ -339,7 +369,7 @@ async function salvarRota() {
   })
   currentOrdem++
 
-  // 2. Corte Automático (Corte Recebimento, Corte Separação, Corte Dublagem e subsetores Ponte/Lectra/Atom)
+  // 2. Corte Automático (Corte Recebimento, Corte Separação, Corte Dublagem)
   rotaSalvar.push({
     setorId: '9ab65b01-cc61-4ab7-9ede-50ac10aed941', // Corte Recebimento
     ordem: currentOrdem++,
@@ -362,7 +392,7 @@ async function salvarRota() {
     bipagemApenasSaida: false
   })
   
-  // Subsetores Ponte, Lectra, Atom em paralelo
+  // Subsetores Corte (Ponte, Lectra, Atom fixos, CN, Couro e Laser opcionais)
   const subsetoresOrdem = currentOrdem
   rotaSalvar.push({
     setorId: '2fa35a1d-1509-454c-9c77-9afda28a47dd', // Corte Ponte
@@ -385,6 +415,35 @@ async function salvarRota() {
     tipoExecucao: 'PARALELO',
     bipagemApenasSaida: false
   })
+
+  // CN, Couro e Laser dinâmicos baseados no modelista
+  if (toggleCorteCN.value) {
+    rotaSalvar.push({
+      setorId: '1ee99690-f3b5-4c07-b644-197488e84d1b', // Corte CN
+      ordem: subsetoresOrdem,
+      obrigatorio: true,
+      tipoExecucao: 'PARALELO',
+      bipagemApenasSaida: false
+    })
+  }
+  if (toggleCorteCouro.value) {
+    rotaSalvar.push({
+      setorId: 'c85a4c3c-0018-4a24-8a64-d030a5e69e2f', // Corte Couro
+      ordem: subsetoresOrdem,
+      obrigatorio: true,
+      tipoExecucao: 'PARALELO',
+      bipagemApenasSaida: false
+    })
+  }
+  if (toggleCorteLaser.value) {
+    rotaSalvar.push({
+      setorId: 'c980a1bf-7979-4d67-b426-2c5246890f98', // Corte Laser
+      ordem: subsetoresOrdem,
+      obrigatorio: true,
+      tipoExecucao: 'PARALELO',
+      bipagemApenasSaida: false
+    })
+  }
   currentOrdem++
 
   // 3. Serigrafia
@@ -541,30 +600,157 @@ async function salvarRota() {
     bipagemApenasSaida: false
   })
 
-  if (props.modeloId) {
-    try {
-      const response = await api.put(`/rotas/${props.modeloId}`, {
-        rota: rotaSalvar
-      })
-      if (response.status === 200) {
-        showToast('Rota de produção salva com sucesso.', 'success')
-        saveSuccess.value = true
-        emit('rota-salva')
-        setTimeout(() => { saveSuccess.value = false }, 3000)
-      } else {
-        showToast('Falha ao salvar a rota de produção.', 'error')
-      }
-    } catch (err: any) {
-      console.error(err)
-      const errorMsg = err?.response?.data?.error || 'Erro ao conectar no servidor para salvar a rota.'
-      showToast(errorMsg, 'error')
+  try {
+    const response = await api.put(`/rotas/${modelId}`, {
+      rota: rotaSalvar
+    })
+    if (response.status === 200) {
+      showToast('Rota de produção salva com sucesso.', 'success')
+      saveSuccess.value = true
+      emit('rota-salva')
+      setTimeout(() => { saveSuccess.value = false }, 3000)
+    } else {
+      showToast('Falha ao salvar a rota de produção.', 'error')
     }
-  } else {
-    console.log('[RouteBuilder] Rota salva em demonstração:', JSON.stringify(rotaSalvar, null, 2))
-    saveSuccess.value = true
-    setTimeout(() => { saveSuccess.value = false }, 3000)
+  } catch (err: any) {
+    console.error(err)
+    const errorMsg = err?.response?.data?.error || 'Erro ao conectar no servidor para salvar a rota.'
+    showToast(errorMsg, 'error')
   }
 }
+
+// ─── Carregar modelos (para modo standalone) ───────────────────────────
+async function carregarModelos() {
+  if (props.modeloId) return
+  loadingModelos.value = true
+  try {
+    const response = await api.get('/admin/modelos')
+    modelos.value = response.data || []
+  } catch (err) {
+    console.error('[RouteBuilder] Falha ao carregar modelos:', err)
+    showToast('Falha ao carregar lista de modelos.', 'error')
+  } finally {
+    loadingModelos.value = false
+  }
+}
+
+// ─── Carregar rota salva de modelo ───────────────────────────────────────
+async function carregarRotaDoModelo(modeloId: string) {
+  if (!modeloId) return
+
+  // Reset temporário antes de carregar
+  zoneAntesApoio.value = []
+  zoneJuntoApoio.value = []
+  zoneEntreApoioCostura.value = []
+  zoneJuntoCostura.value = []
+  zoneEntreCosturaMontagem.value = []
+  zoneJuntoMontagem.value = []
+  zonePosMontagem.value = []
+  
+  toggleSerigrafia.value = false
+  toggleVulcanizado.value = false
+  toggleCaixaTeste.value = false
+  tamanhoCaixaTeste.value = ''
+  toggleCorteCN.value = false
+  toggleCorteCouro.value = false
+  toggleCorteLaser.value = false
+
+  floatingAvailable.value = [
+    { id: 'costura-programada', label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
+    { id: 'bordado',            label: 'Bordado',            tipo: 'flutuante', icon: Zap,          color: '#b45309', description: 'Posicione entre Apoio e Montagem' },
+    { id: 'pre-fabricado',      label: 'Pré-Fabricado',      tipo: 'flutuante', icon: Package,      color: '#0369a1', description: 'Antes, junto ou depois de Montagem' },
+  ]
+
+  try {
+    const response = await api.get(`/rotas/${modeloId}`)
+    const rotaData = response.data?.rota || []
+
+    if (rotaData.length === 0) return // Não tem rota, usa inicial
+
+    // Encontra ordens de referência para os flutuantes
+    const apoioItem = rotaData.find((r: any) => r.setorId === 'c6a2909a-1d09-48e0-8949-aaa5a99e854c')
+    const costuraItem = rotaData.find((r: any) => r.setorId === '682ba50a-0f31-4ed9-aa5f-d2565c04f2f8')
+    const montagemItem = rotaData.find((r: any) => r.setorId === '368c6f80-0e87-40b1-8e08-dc8b811da29b')
+
+    const apoioOrdem = apoioItem ? apoioItem.ordem : 99
+    const costuraOrdem = costuraItem ? costuraItem.ordem : 99
+    const montagemOrdem = montagemItem ? montagemItem.ordem : 99
+
+    // Condicionais
+    if (rotaData.some((r: any) => r.setorId === 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8')) toggleSerigrafia.value = true
+    if (rotaData.some((r: any) => r.setorId === '2e2475db-56a3-4673-91a9-dbb0b42fa57b')) toggleVulcanizado.value = true
+    
+    // Máquinas Corte
+    if (rotaData.some((r: any) => r.setorId === '1ee99690-f3b5-4c07-b644-197488e84d1b')) toggleCorteCN.value = true
+    if (rotaData.some((r: any) => r.setorId === 'c85a4c3c-0018-4a24-8a64-d030a5e69e2f')) toggleCorteCouro.value = true
+    if (rotaData.some((r: any) => r.setorId === 'c980a1bf-7979-4d67-b426-2c5246890f98')) toggleCorteLaser.value = true
+
+    // Distribui flutuantes nas zonas correspondentes
+    const flutuantesMapeados = [
+      { id: 'costura-programada', sId: 'b30cfd86-c496-476b-90b9-49db72a3a736', label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
+      { id: 'bordado',            sId: 'e80c2b61-6b00-4657-9b1a-2b51688fce01', label: 'Bordado',            tipo: 'flutuante', icon: Zap,          color: '#b45309', description: 'Posicione entre Apoio e Montagem' },
+      { id: 'pre-fabricado',      sId: 'fd774810-8f85-4fcb-bffe-3b70d323f798', label: 'Pré-Fabricado',      tipo: 'flutuante', icon: Package,      color: '#0369a1', description: 'Antes, junto ou depois de Montagem' },
+    ]
+
+    for (const flut of flutuantesMapeados) {
+      const dbItem = rotaData.find((r: any) => r.setorId === flut.sId)
+      if (!dbItem) continue
+
+      const block: RouteBlock = {
+        id: flut.id,
+        label: flut.label,
+        tipo: 'flutuante',
+        icon: flut.icon,
+        color: flut.color,
+        description: flut.description
+      }
+
+      if (dbItem.ordem === apoioOrdem && dbItem.tipoExecucao === 'PARALELO') {
+        zoneJuntoApoio.value.push(block)
+      } else if (dbItem.ordem === costuraOrdem && dbItem.tipoExecucao === 'PARALELO') {
+        zoneJuntoCostura.value.push(block)
+      } else if (dbItem.ordem === montagemOrdem && dbItem.tipoExecucao === 'PARALELO') {
+        zoneJuntoMontagem.value.push(block)
+      } else if (dbItem.ordem < apoioOrdem) {
+        if (dbItem.setorId !== 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8' && 
+            dbItem.setorId !== '9ab65b01-cc61-4ab7-9ede-50ac10aed941' &&
+            dbItem.setorId !== 'ecb2d21d-51db-41a7-8261-17e8a5f03fed') {
+          zoneAntesApoio.value.push(block)
+        }
+      } else if (dbItem.ordem > apoioOrdem && dbItem.ordem < costuraOrdem) {
+        zoneEntreApoioCostura.value.push(block)
+      } else if (dbItem.ordem > costuraOrdem && dbItem.ordem < montagemOrdem) {
+        zoneEntreCosturaMontagem.value.push(block)
+      } else if (dbItem.ordem > montagemOrdem && dbItem.setorId !== '566aae2e-7645-411a-9542-3554bfd33f25') {
+        zonePosMontagem.value.push(block)
+      }
+
+      floatingAvailable.value = floatingAvailable.value.filter(f => f.id !== flut.id)
+    }
+  } catch (err) {
+    console.error('[RouteBuilder] Falha ao buscar rota do modelo:', err)
+    showToast('Falha ao carregar rota salva deste modelo.', 'error')
+  }
+}
+
+onMounted(() => {
+  carregarModelos()
+  if (props.modeloId) {
+    carregarRotaDoModelo(props.modeloId)
+  }
+})
+
+watch(() => props.modeloId, (newId) => {
+  if (newId) {
+    carregarRotaDoModelo(newId)
+  }
+})
+
+watch(selectedModeloId, (newId) => {
+  if (newId) {
+    carregarRotaDoModelo(newId)
+  }
+})
 
 function getBlockBg(block: RouteBlock) {
   if (block.tipo === 'fixo') return '#ffffff'
@@ -622,8 +808,38 @@ defineExpose({
       </div>
     </header>
 
+    <!-- Seleção do Modelo (Apenas quando fora do Wizard) -->
+    <div v-if="!props.modeloId" class="rb-model-selector-card" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.25rem; display:flex; flex-direction:column; gap:0.5rem; margin-bottom: 0.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+      <label for="modelo-select" class="field-label" style="font-weight:800; color:#475569;">Modelo de Referência *</label>
+      <div style="display:flex; align-items:center; gap:0.75rem;">
+        <select
+          id="modelo-select"
+          v-model="selectedModeloId"
+          class="field-input"
+          style="flex: 1; padding: 0.625rem 0.875rem;"
+          :disabled="loadingModelos"
+        >
+          <option value="">-- Selecione o Modelo para Carregar/Editar a Rota --</option>
+          <option v-for="m in modelos" :key="m.id" :value="m.id">
+            {{ m.nome }} (Código: {{ m.codigoProduto }})
+          </option>
+        </select>
+        <span v-if="loadingModelos" style="display:flex; align-items:center; font-size:0.75rem; color:#64748b; white-space:nowrap;">
+          <Loader2 class="animate-spin" :size="16" style="margin-right:0.25rem;" />
+          Buscando...
+        </span>
+      </div>
+    </div>
+
+    <!-- ══ BLOCKED OVERLAY ══════════════════════════════════════════════ -->
+    <div v-if="!activeModeloId" class="rb-blocked-overlay" style="background:#f1f5f9; border: 1.5px dashed #cbd5e1; border-radius:0.75rem; padding: 4rem; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0.5rem; margin-top: 1rem;">
+      <AlertTriangle :size="32" style="color: #64748b;" />
+      <span style="font-size:0.9375rem; font-weight:700; color:#0f172a;">Aguardando Seleção de Modelo</span>
+      <span style="font-size:0.8125rem; color:#64748b;">Selecione um modelo no dropdown acima para habilitar o Construtor de Rota de Produção.</span>
+    </div>
+
     <!-- ══ MAIN LAYOUT: left panel + right timeline ═════════════════════ -->
-    <div class="rb-layout">
+    <div v-else class="rb-layout">
 
       <!-- ── LEFT PANEL: available sectors palette + toggles ────────── -->
       <aside class="rb-sidebar">
@@ -759,6 +975,77 @@ defineExpose({
             </div>
           </Transition>
         </section>
+        <!-- Máquinas de Corte Opcionais -->
+        <section class="sidebar-section">
+          <h2 class="sidebar-section-title">
+            <Scissors :size="14" aria-hidden="true" />
+            Máquinas do Corte
+          </h2>
+          <p class="sidebar-hint">Selecione quais máquinas adicionais este modelo utilizará no Corte Automático.</p>
+
+          <div class="toggle-card">
+            <div class="toggle-info">
+              <Scissors :size="16" style="color:#0f172a" aria-hidden="true" />
+              <div>
+                <span class="toggle-label">Corte CN</span>
+                <span class="toggle-desc">Máquina de Corte Numérico</span>
+              </div>
+            </div>
+            <button
+              class="toggle-btn"
+              :class="{ 'toggle-btn--on': toggleCorteCN }"
+              @click="toggleCorteCN = !toggleCorteCN"
+              type="button"
+              :aria-pressed="toggleCorteCN"
+              aria-label="Ativar Corte CN"
+            >
+              <ToggleRight v-if="toggleCorteCN" :size="32" class="t-icon-on" />
+              <ToggleLeft  v-else                 :size="32" class="t-icon-off" />
+            </button>
+          </div>
+
+          <div class="toggle-card">
+            <div class="toggle-info">
+              <Scissors :size="16" style="color:#0f172a" aria-hidden="true" />
+              <div>
+                <span class="toggle-label">Corte Couro</span>
+                <span class="toggle-desc">Corte manual para couro</span>
+              </div>
+            </div>
+            <button
+              class="toggle-btn"
+              :class="{ 'toggle-btn--on': toggleCorteCouro }"
+              @click="toggleCorteCouro = !toggleCorteCouro"
+              type="button"
+              :aria-pressed="toggleCorteCouro"
+              aria-label="Ativar Corte Couro"
+            >
+              <ToggleRight v-if="toggleCorteCouro" :size="32" class="t-icon-on" />
+              <ToggleLeft  v-else                  :size="32" class="t-icon-off" />
+            </button>
+          </div>
+
+          <div class="toggle-card">
+            <div class="toggle-info">
+              <Scissors :size="16" style="color:#0f172a" aria-hidden="true" />
+              <div>
+                <span class="toggle-label">Corte Laser</span>
+                <span class="toggle-desc">Máquina de Corte a Laser</span>
+              </div>
+            </div>
+            <button
+              class="toggle-btn"
+              :class="{ 'toggle-btn--on': toggleCorteLaser }"
+              @click="toggleCorteLaser = !toggleCorteLaser"
+              type="button"
+              :aria-pressed="toggleCorteLaser"
+              aria-label="Ativar Corte Laser"
+            >
+              <ToggleRight v-if="toggleCorteLaser" :size="32" class="t-icon-on" />
+              <ToggleLeft  v-else                  :size="32" class="t-icon-off" />
+            </button>
+          </div>
+        </section>
       </aside>
 
       <!-- ── RIGHT: TIMELINE (Area 2: Rota) ────────────────────────────── -->
@@ -804,6 +1091,14 @@ defineExpose({
                 <div class="tl-block-text">
                   <span class="tl-block-name">Corte Automático</span>
                   <span class="tl-block-sub">Máquinas de corte + Revisão</span>
+                  <div class="tl-corte-submachines" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.375rem;">
+                    <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Ponte</span>
+                    <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Lectra</span>
+                    <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Atom</span>
+                    <span v-if="toggleCorteCN" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">CN</span>
+                    <span v-if="toggleCorteCouro" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">Couro</span>
+                    <span v-if="toggleCorteLaser" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">Laser</span>
+                  </div>
                 </div>
               </div>
               <div class="tl-block-right">
