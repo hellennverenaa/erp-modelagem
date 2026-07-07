@@ -66,9 +66,10 @@ export class AuthController {
       const perfilRepository = AppDataSource.getRepository(Perfil);
       const plantaRepository = AppDataSource.getRepository(Planta);
 
-      // Upsert: Busca o usuário local na tabela pelo nome de usuário
+      // Upsert: Busca o usuário local na tabela pelo nome de usuário com relacionamento de perfil
       let userLocal = await usuarioRepository.findOne({
-        where: { usuario: unixUsuario }
+        where: { usuario: unixUsuario },
+        relations: { perfil: true }
       });
 
       if (userLocal) {
@@ -78,6 +79,12 @@ export class AuthController {
         userLocal.cargo = unixFuncao;
         userLocal.ultimoAcesso = new Date();
         userLocal = await usuarioRepository.save(userLocal);
+        
+        // Recarrega relacionamento após salvar
+        userLocal = await usuarioRepository.findOne({
+          where: { id: userLocal.id },
+          relations: { perfil: true }
+        }) || userLocal;
       } else {
         // Se o usuário for novo, busca o perfil padrão 'OPERADOR' e a primeira planta ativa
         let perfil = await perfilRepository.findOne({ where: { nome: 'OPERADOR' } });
@@ -128,6 +135,8 @@ export class AuthController {
           email: userLocal.email,
           ativo: userLocal.ativo,
           perfilId: userLocal.perfilId,
+          perfilNome: userLocal.perfil?.nome || null,
+          permissoes: userLocal.perfil?.permissoes || {},
           setorId: userLocal.setorId,
           plantaId: userLocal.plantaId,
           gestorId: userLocal.gestorId,

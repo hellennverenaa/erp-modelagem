@@ -46,7 +46,7 @@ const user = computed(() => authStore.user.value)
 
 const podeEditarSetor = computed(() => {
   const perfil = user.value?.perfilNome?.toUpperCase() || ''
-  return perfil === 'ADMIN' || perfil === 'GERENTE_MODELAGEM'
+  return perfil === 'ADMIN' || perfil === 'GERENTE'
 })
 
 const isAdmin = computed(() => authStore.isAdmin.value)

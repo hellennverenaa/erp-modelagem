@@ -30,6 +30,20 @@ const navItems = [
   { to: '/dashboard/rbac',     label: 'Permissões RBAC',      icon: ShieldCheck },
 ]
 
+const visibleNavItems = computed(() => {
+  return navItems.filter(item => {
+    // Permissões RBAC é exclusivo para ADMIN
+    if (item.to === '/dashboard/rbac') {
+      return authStore.isAdmin.value
+    }
+    // Construtor de Rota é acessível por ADMIN, MODELISTA ou GERENTE
+    if (item.to === '/dashboard/rotas') {
+      return authStore.isAdmin.value || authStore.isModelista.value || authStore.isGerente.value
+    }
+    return true
+  })
+})
+
 const activeLabel = computed(() => {
   if (route.path.endsWith('/novo-teste')) return 'Iniciar Novo Teste'
   if (route.path.endsWith('/modelos'))    return 'Catálogo de Modelos'
@@ -64,7 +78,7 @@ function logout() {
       </div>
 
       <!-- Stepper Quick Action Button (Destaque) -->
-      <div class="sidebar-action-wrap">
+      <div v-if="authStore.isAdmin.value || authStore.isModelista.value || authStore.isGerente.value" class="sidebar-action-wrap">
         <RouterLink
           to="/dashboard/novo-teste"
           class="btn-sidebar-action"
@@ -81,7 +95,7 @@ function logout() {
       <!-- Nav -->
       <nav class="sidebar-nav" role="navigation">
         <RouterLink
-          v-for="item in navItems"
+          v-for="item in visibleNavItems"
           :key="item.to"
           :to="item.to"
           class="nav-item"

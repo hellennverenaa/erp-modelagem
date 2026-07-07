@@ -18,7 +18,13 @@ const router = createRouter({
         {
           path: '',
           name: 'dashboard',
-          redirect: '/dashboard/rbac',
+          redirect: () => {
+            const userRaw = localStorage.getItem('erp_user')
+            const user = userRaw ? JSON.parse(userRaw) : null
+            const perfil = user?.perfilNome?.toUpperCase() || ''
+            if (perfil === 'ADMIN') return '/dashboard/rbac'
+            return '/dashboard/ordens'
+          }
         },
         {
           path: 'rbac',
@@ -50,6 +56,18 @@ const router = createRouter({
           name: 'novo-teste',
           component: () => import('../views/WizardCriacaoTesteView.vue'),
         },
+        {
+          path: 'acesso-negado',
+          name: 'acesso-negado',
+          component: {
+            template: `
+              <div class="acesso-negado-container">
+                <h1>Acesso Negado</h1>
+                <p>Voce nao possui as permissoes necessarias para acessar esta tela.</p>
+              </div>
+            `
+          }
+        }
       ],
     },
   ],
@@ -57,13 +75,35 @@ const router = createRouter({
 
 router.beforeEach((to, _from, next) => {
   const token = localStorage.getItem('erp_token')
-  if (to.meta.requiresAuth && !token) {
-    next({ name: 'login' })
-  } else if (to.name === 'login' && token) {
-    next({ name: 'dashboard' })
-  } else {
-    next()
+  const userRaw = localStorage.getItem('erp_user')
+  const user = userRaw ? JSON.parse(userRaw) : null
+  const perfil = user?.perfilNome?.toUpperCase() || ''
+
+  if (to.matched.some(record => record.meta.requiresAuth)) {
+    if (!token) {
+      next({ name: 'login' })
+      return
+    }
+
+    // Validação estrita de RBAC de rotas
+    if (to.name === 'rbac' && perfil !== 'ADMIN') {
+      next({ name: 'acesso-negado' })
+      return
+    }
+
+    if ((to.name === 'rotas' || to.name === 'novo-teste') && 
+        perfil !== 'ADMIN' && perfil !== 'MODELISTA' && perfil !== 'GERENTE') {
+      next({ name: 'acesso-negado' })
+      return
+    }
   }
+
+  if (to.name === 'login' && token) {
+    next({ name: 'dashboard' })
+    return
+  }
+
+  next()
 })
 
 export default router

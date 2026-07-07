@@ -5,7 +5,8 @@ export interface UsuarioLogado {
   id: string
   nomeCompleto: string
   usuario: string
-  perfilNome?: string
+  perfilNome?: string | null
+  permissoes?: Record<string, boolean>
   setorId?: string | null
   plantaId?: string | null
 }
@@ -16,12 +17,37 @@ const user = ref<UsuarioLogado | null>(userRaw ? JSON.parse(userRaw) : null)
 
 const isAuthenticated = computed(() => !!token.value)
 
-// Getter reativo estrito isAdmin que verifica se o perfil é ADMIN
+// Getters reativos rigorosos para os perfis da seção de permissões
 const isAdmin = computed(() => {
   if (!user.value) return false
   const perfil = user.value.perfilNome?.toUpperCase() || ''
   return perfil === 'ADMIN'
 })
+
+const isModelista = computed(() => {
+  if (!user.value) return false
+  const perfil = user.value.perfilNome?.toUpperCase() || ''
+  return perfil === 'MODELISTA'
+})
+
+const isGerente = computed(() => {
+  if (!user.value) return false
+  const perfil = user.value.perfilNome?.toUpperCase() || ''
+  return perfil === 'GERENTE'
+})
+
+const isOperador = computed(() => {
+  if (!user.value) return false
+  const perfil = user.value.perfilNome?.toUpperCase() || ''
+  return perfil === 'OPERADOR'
+})
+
+// Avaliador de permissões dinâmicas (se tiver permissão global ou específica para a ação)
+function hasPermission(acao: string): boolean {
+  if (!user.value) return false
+  if (isAdmin.value) return true // ADMIN tem permissão para tudo
+  return !!user.value.permissoes?.[acao]
+}
 
 function login(newToken: string, userData: UsuarioLogado) {
   token.value = newToken
@@ -42,6 +68,10 @@ export const authStore = {
   user,
   isAuthenticated,
   isAdmin,
+  isModelista,
+  isGerente,
+  isOperador,
+  hasPermission,
   login,
   logout
 }
