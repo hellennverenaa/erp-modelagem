@@ -1,6 +1,7 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  BeforeInsert,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
@@ -10,6 +11,7 @@ import {
 import { Rastreamento } from './Rastreamento';
 import { EstacaoTrabalho } from './EstacaoTrabalho';
 import { Usuario } from './Usuario';
+import { uuidv7 } from 'uuidv7';
 
 export enum EtapaCorteTipo {
   REVISAO_MAQUINA = 'REVISAO_MAQUINA', // Primeiro bip (efetuado pela Revisora)
@@ -23,8 +25,15 @@ export enum ResultadoConformidade {
 
 @Entity({ name: 'etapas_corte' })
 export class EtapaCorte {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn('uuid')
   id: string;
+
+  @BeforeInsert()
+  generateId() {
+    if (!this.id) {
+      this.id = uuidv7();
+    }
+  }
 
   // Rastreamento correspondente ao subsetor do corte
   @ManyToOne(() => Rastreamento, { nullable: false, onDelete: 'CASCADE' })

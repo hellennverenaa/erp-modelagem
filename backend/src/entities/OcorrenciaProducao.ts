@@ -1,6 +1,7 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  BeforeInsert,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
@@ -11,6 +12,7 @@ import { OrdemTeste } from './OrdemTeste';
 import { Rastreamento } from './Rastreamento';
 import { Setor } from './Setor';
 import { Usuario } from './Usuario';
+import { uuidv7 } from 'uuidv7';
 
 export enum TipoOcorrencia {
   GARGALO_MAQUINA    = 'GARGALO_MAQUINA',    // Problemas mecânicos ou operacionais em máquinas
@@ -37,8 +39,15 @@ export enum StatusOcorrencia {
 
 @Entity({ name: 'ocorrencias_producao' })
 export class OcorrenciaProducao {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn('uuid')
   id: string;
+
+  @BeforeInsert()
+  generateId() {
+    if (!this.id) {
+      this.id = uuidv7();
+    }
+  }
 
   // Ordem de teste afetada
   @ManyToOne(() => OrdemTeste, { nullable: false, onDelete: 'CASCADE' })

@@ -94,10 +94,18 @@ async function carregarDados() {
     )
 
     if (!template.value) {
-      template.value = {
-        id: '00000000-0000-0000-0000-000000000000',
-        nome: `Checklist — ${setor.value.nome}`,
-        itens: []
+      if (templatesList.length > 0) {
+        template.value = {
+          id: templatesList[0].id,
+          nome: `Checklist — ${setor.value.nome}`,
+          itens: []
+        }
+      } else {
+        template.value = {
+          id: '00000000-0000-0000-0000-000000000000',
+          nome: `Checklist — ${setor.value.nome}`,
+          itens: []
+        }
       }
     }
 

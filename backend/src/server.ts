@@ -83,17 +83,28 @@ app.use('/api', apiRoutes);
 app.use(errorHandler);
 
 // ═══ INICIALIZAÇÃO ═══
+console.log('🔧 Verificando configurações de ambiente...');
+console.log(`🔌 Banco de Dados - Host: ${process.env.DB_HOST || 'localhost'} | Porta: ${process.env.DB_PORT || 5432}`);
+console.log(`🔌 Redis Cache - Host: ${process.env.REDIS_HOST || 'Não configurado'}`);
+
+// Inicializa o servidor Express primeiro (Garante que a aplicação esteja de pé para responder diagnósticos)
+app.listen(port, () => {
+  console.log(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
+  console.log(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
+  console.log(`🔒 Helmet, CORS e Rate Limiting ativos`);
+});
+
+// Inicialização do banco de dados assíncrona com tratamento fail-safe
 AppDataSource.initialize()
   .then(() => {
     console.log('📦 Banco de dados conectado com sucesso via TypeORM!');
-
-    app.listen(port, () => {
-      console.log(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
-      console.log(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
-      console.log(`🔒 Helmet, CORS e Rate Limiting ativos`);
-    });
   })
   .catch((error) => {
-    console.error('❌ Falha ao inicializar o banco de dados:', error);
-    process.exit(1);
+    console.error('\n********************************************************************************');
+    console.error('❌ ERRO CRÍTICO: Falha ao conectar no PostgreSQL. Verifique se o DB_HOST no .env está apontando para "erp-postgres" ou "host.docker.internal" e não para localhost.');
+    console.error(`🔌 Host de destino configurado: ${process.env.DB_HOST || 'localhost'}`);
+    console.error('💡 Dica: Verifique se o serviço do banco de dados PostgreSQL está rodando e a porta está aberta.');
+    console.error('Detalhes do erro:', error.message || error);
+    console.error('********************************************************************************\n');
+    // Não matamos o processo para permitir diagnóstico via rota de /health
   });

@@ -27,9 +27,23 @@ export class AuthController {
 
       let response;
       try {
-        response = await axios.post(`${authServiceUrl}/auth/login`, { usuario, senha });
-      } catch (axiosError) {
-        // Captura credenciais inválidas ou falha de comunicação com a API legada (Unix)
+        response = await axios.post(`${authServiceUrl}/auth/login`, 
+          { usuario, senha },
+          { timeout: 5000 }
+        );
+      } catch (axiosError: any) {
+        console.error('[AuthController] Falha de comunicação com o serviço de autenticação DASS:', axiosError.message || axiosError);
+        
+        const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout');
+        const isConnRefused = axiosError.code === 'ECONNREFUSED';
+        
+        if (isTimeout || isConnRefused) {
+          return res.status(503).json({
+            error: 'Serviço de autenticação DASS temporariamente indisponível. Tente novamente mais tarde.',
+            code: 'AUTH_SERVICE_UNAVAILABLE'
+          });
+        }
+
         return res.status(401).json({
           error: 'Credenciais inválidas ou serviço de autenticação indisponível.',
           code: 'AUTH_INVALID_CREDENTIALS'
@@ -55,10 +69,12 @@ export class AuthController {
       let unixEmail = null;
       if (decoded?.matricula) {
         try {
-          const emailResponse = await axios.get(`${authServiceUrl}/user/email/${decoded.matricula}`);
+          const emailResponse = await axios.get(`${authServiceUrl}/user/email/${decoded.matricula}`, {
+            timeout: 5000
+          });
           unixEmail = emailResponse.data?.email || null;
-        } catch (emailError) {
-          console.warn('[AuthController] Não foi possível buscar o e-mail do usuário no legado:', emailError);
+        } catch (emailError: any) {
+          console.warn('[AuthController] Não foi possível buscar o e-mail do usuário no legado:', emailError.message || emailError);
         }
       }
 

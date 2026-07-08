@@ -1,6 +1,7 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  BeforeInsert,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
@@ -9,6 +10,7 @@ import {
 } from 'typeorm';
 import { Rastreamento } from './Rastreamento';
 import { Usuario } from './Usuario';
+import { uuidv7 } from 'uuidv7';
 
 export enum EtapaApoioTipo {
   CORTE_APOIO             = 'CORTE_APOIO',
@@ -30,8 +32,15 @@ export enum EtapaApoioStatus {
 
 @Entity({ name: 'etapas_apoio' })
 export class EtapaApoio {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn('uuid')
   id: string;
+
+  @BeforeInsert()
+  generateId() {
+    if (!this.id) {
+      this.id = uuidv7();
+    }
+  }
 
   // Rastreamento associado ao setor APOIO
   @ManyToOne(() => Rastreamento, { nullable: false, onDelete: 'CASCADE' })

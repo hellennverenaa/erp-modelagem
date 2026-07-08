@@ -1,6 +1,7 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  BeforeInsert,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
@@ -12,6 +13,7 @@ import { Peca } from './Peca';
 import { Setor } from './Setor';
 import { EstacaoTrabalho } from './EstacaoTrabalho';
 import { Usuario } from './Usuario';
+import { uuidv7 } from 'uuidv7';
 
 export enum TipoLote {
   LOTE_PRINCIPAL = 'LOTE_PRINCIPAL',
@@ -27,8 +29,15 @@ export enum RastreamentoStatus {
 
 @Entity({ name: 'rastreamentos' })
 export class Rastreamento {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn('uuid')
   id: string;
+
+  @BeforeInsert()
+  generateId() {
+    if (!this.id) {
+      this.id = uuidv7();
+    }
+  }
 
   // Ordem de teste associada
   @ManyToOne(() => OrdemTeste, (ordemTeste) => ordemTeste.rastreamentos, { nullable: false, onDelete: 'CASCADE' })

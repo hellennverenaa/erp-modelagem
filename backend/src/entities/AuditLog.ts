@@ -1,18 +1,27 @@
 import {
   Entity,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
+  BeforeInsert,
   Column,
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
 import { Usuario } from './Usuario';
+import { uuidv7 } from 'uuidv7';
 
 // Esta entidade é logicamente append-only. Não deve possuir lógica de update/delete no sistema.
 @Entity({ name: 'audit_log' })
 export class AuditLog {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn('uuid')
   id: string;
+
+  @BeforeInsert()
+  generateId() {
+    if (!this.id) {
+      this.id = uuidv7();
+    }
+  }
 
   // Usuário que realizou a ação (nulo para processos automáticos do sistema)
   @ManyToOne(() => Usuario, { nullable: true, onDelete: 'SET NULL' })
