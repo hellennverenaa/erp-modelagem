@@ -424,6 +424,60 @@ export class RastreamentosController {
             });
 
             if (rotaAtual) {
+              // 1. Verifica se existem outros setores com a mesma ordem (irmãos paralelos) na rota do modelo
+              const setoresMesmaOrdem = await rotaRepo.find({
+                where: {
+                  modeloId: ordemObj.modeloId,
+                  ordem: rotaAtual.ordem,
+                },
+              });
+
+              if (setoresMesmaOrdem.length > 1) {
+                const setoresIdsParalelos = setoresMesmaOrdem.map(s => s.setorId);
+
+                // Consulta os rastreamentos concluídos para esta ordemTesteId, tipoLote e pecaId nesses setores
+                const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+                const queryParalelos = checkRastreamentoRepo.createQueryBuilder('r')
+                  .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
+                  .andWhere('r.tipoLote = :tipoLote', { tipoLote })
+                  .andWhere('r.setorId IN (:...setoresIds)', { setoresIds: setoresIdsParalelos })
+                  .andWhere('r.status = :status', { status: RastreamentoStatus.CONCLUIDO })
+                  .andWhere('r.dataSaida IS NOT NULL');
+
+                if (pecaId) {
+                  queryParalelos.andWhere('r.pecaId = :pecaId', { pecaId });
+                } else {
+                  queryParalelos.andWhere('r.pecaId IS NULL');
+                }
+
+                const rastreamentosConcluidos = await queryParalelos.getMany();
+
+                // Mapeia os setores concluídos
+                const setoresConcluidosIds = new Set(rastreamentosConcluidos.map(r => r.setorId));
+
+                // Como a saída do setor atual já foi salva logo acima na requisição,
+                // nós a adicionamos de forma garantida no Set
+                setoresConcluidosIds.add(setorId);
+
+                const todosConcluidos = setoresIdsParalelos.every(id => setoresConcluidosIds.has(id));
+
+                if (!todosConcluidos) {
+                  console.log(`[HandoffJoin] Setores paralelos da ordem ${rotaAtual.ordem} nao concluiram todos. Concluidos: ${setoresConcluidosIds.size}/${setoresIdsParalelos.length}. Aguardando conclusao dos demais.`);
+                  
+                  return res.status(200).json({
+                    message: 'Bipagem de saída registrada com sucesso. Aguardando a conclusão dos demais setores paralelos.',
+                    rastreamento: atualizado,
+                    sla: {
+                      tempoTotalMin,
+                      tempoPausadoMin,
+                      tempoPermanenciaMin,
+                      ocorrenciasPausadoras: ocorrencias.length,
+                    },
+                  });
+                }
+              }
+
+              // 2. Se todos concluíram (ou só havia 1 setor na ordem atual), prossiga para a próxima ordem (ordem + 1)
               const proximasRotas = await rotaRepo.find({
                 where: {
                   modeloId: ordemObj.modeloId,
@@ -432,19 +486,39 @@ export class RastreamentosController {
               });
 
               if (proximasRotas && proximasRotas.length > 0) {
+                const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+
                 for (const proxima of proximasRotas) {
-                  // Cria e salva a entrada de cada próximo setor em paralelo de forma imediata e transparente
-                  const proximoRastreamento = rastreamentoRepo.create({
-                    ordemTesteId,
-                    setorId:          proxima.setorId,
-                    tipoLote,
-                    pecaId:           pecaId ?? null,
-                    operadorEntradaId: operadorId,
-                    dataEntrada:      new Date(),
-                    status:           RastreamentoStatus.EM_PROCESSO,
-                  });
-                  await rastreamentoRepo.save(proximoRastreamento);
-                  console.log(`[Handoff Automático] Peça transferida automaticamente de ${setorId} para ${proxima.setorId}`);
+                  // Verificação de existência para evitar duplicar entradas na próxima etapa
+                  const queryExistenteProxima = checkRastreamentoRepo.createQueryBuilder('r')
+                    .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
+                    .andWhere('r.setorId = :setorId', { setorId: proxima.setorId })
+                    .andWhere('r.tipoLote = :tipoLote', { tipoLote });
+                  
+                  if (pecaId) {
+                    queryExistenteProxima.andWhere('r.pecaId = :pecaId', { pecaId });
+                  } else {
+                    queryExistenteProxima.andWhere('r.pecaId IS NULL');
+                  }
+
+                  const jaExiste = await queryExistenteProxima.getOne();
+
+                  if (!jaExiste) {
+                    // Cria e salva a entrada de cada próximo setor de forma imediata e transparente
+                    const proximoRastreamento = rastreamentoRepo.create({
+                      ordemTesteId,
+                      setorId:          proxima.setorId,
+                      tipoLote,
+                      pecaId:           pecaId ?? null,
+                      operadorEntradaId: operadorId,
+                      dataEntrada:      new Date(),
+                      status:           RastreamentoStatus.EM_PROCESSO,
+                    });
+                    await rastreamentoRepo.save(proximoRastreamento);
+                    console.log(`[Handoff Automático] Peça transferida automaticamente de ${setorId} para ${proxima.setorId}`);
+                  } else {
+                    console.log(`[Handoff Automático] Evitada duplicidade. Entrada para o setor ${proxima.setorId} já existe.`);
+                  }
                 }
               }
             }

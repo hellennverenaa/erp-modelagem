@@ -57,6 +57,11 @@ const router = createRouter({
           component: () => import('../views/WizardCriacaoTesteView.vue'),
         },
         {
+          path: 'checklist/:ordemTesteId/:setorId',
+          name: 'checklist',
+          component: () => import('../views/ChecklistView.vue'),
+        },
+        {
           path: 'acesso-negado',
           name: 'acesso-negado',
           component: {

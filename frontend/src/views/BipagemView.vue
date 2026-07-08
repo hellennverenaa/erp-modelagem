@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { Html5Qrcode } from 'html5-qrcode'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -31,6 +32,14 @@ interface OrdemTeste {
   status: string
   possuiCaixaTeste: boolean
 }
+
+const router = useRouter()
+
+const SETORES_FASE_INICIAL = [
+  'ecb2d21d-51db-41a7-8261-17e8a5f03fed', // Almoxarifado da Modelagem
+  'd40e4883-4f99-45cf-9c5c-c9da2ff53c26', // Setor de Navalha
+  '8686f071-1a7c-4df5-861b-e3316d4ec01c'  // Setor de Telas
+]
 
 // ─── State ───────────────────────────────────────────────────────────────
 const setores = ref<Setor[]>([])
@@ -212,6 +221,15 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
       } else {
         throw new Error('LOTE_NOT_FOUND')
       }
+    }
+
+    if (acao === 'saida' && SETORES_FASE_INICIAL.includes(selecionouSetorId.value)) {
+      triggerToast('Redirecionando para o checklist obrigatorio do setor...', 'success')
+      setTimeout(() => {
+        router.push(`/dashboard/checklist/${ordemTesteId}/${selecionouSetorId.value}`)
+      }, 1000)
+      codigoLeitura.value = ''
+      return
     }
 
     const endpoint = acao === 'entrada' ? '/rastreamentos/bipar-entrada' : '/rastreamentos/bipar-saida'
