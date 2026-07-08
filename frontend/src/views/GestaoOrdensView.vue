@@ -123,14 +123,15 @@ const loadingTimeline = ref(false)
 const loadingPdfId = ref<string | null>(null)
 const user = computed(() => authStore.user.value)
 
-async function imprimirOrdem(ordem: OrdemTeste) {
+async function imprimirOrdem(ordem: OrdemTeste, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL' = 'LOTE_PRINCIPAL') {
   if (loadingPdfId.value) return
   
-  loadingPdfId.value = ordem.id
+  loadingPdfId.value = `${ordem.id}-${tipoLote}`
   try {
     const response = await api.post('/etiquetas/gerar', {
       ordemTesteIds: [ordem.id],
-      setorId: user.value?.setorId || 'ecb2d21d-51db-41a7-8261-17e8a5f03fed'
+      setorId: user.value?.setorId || 'ecb2d21d-51db-41a7-8261-17e8a5f03fed',
+      tipoLote
     }, {
       responseType: 'blob'
     })
@@ -551,18 +552,46 @@ onMounted(async () => {
                     <Activity :size="14" aria-hidden="true" />
                     <span>Timeline</span>
                   </button>
-                  <button
-                    type="button"
-                    class="btn-action-print"
-                    @click="imprimirOrdem(ordem)"
-                    :disabled="loadingPdfId === ordem.id"
-                    :aria-label="`Imprimir etiqueta da ordem ${ordem.codigoBarras}`"
-                    title="Imprimir Etiqueta"
-                  >
-                    <Loader2 v-if="loadingPdfId === ordem.id" :size="14" class="animate-spin" aria-hidden="true" />
-                    <Printer v-else :size="14" aria-hidden="true" />
-                    <span>{{ loadingPdfId === ordem.id ? 'Gerando PDF...' : 'Imprimir' }}</span>
-                  </button>
+                  <template v-if="ordem.possuiCaixaTeste">
+                    <button
+                      type="button"
+                      class="btn-action-print"
+                      @click="imprimirOrdem(ordem, 'LOTE_PRINCIPAL')"
+                      :disabled="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` || loadingPdfId === `${ordem.id}-CAIXA_TESTE`"
+                      :aria-label="`Imprimir etiqueta de lote da ordem ${ordem.codigoBarras}`"
+                      title="Imprimir Lote"
+                    >
+                      <Loader2 v-if="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL`" :size="14" class="animate-spin" aria-hidden="true" />
+                      <Printer v-else :size="14" aria-hidden="true" />
+                      <span>{{ loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` ? 'Gerando...' : 'Lote' }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-action-print"
+                      @click="imprimirOrdem(ordem, 'CAIXA_TESTE')"
+                      :disabled="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` || loadingPdfId === `${ordem.id}-CAIXA_TESTE`"
+                      :aria-label="`Imprimir etiqueta de caixa teste da ordem ${ordem.codigoBarras}`"
+                      title="Imprimir Caixa Teste"
+                    >
+                      <Loader2 v-if="loadingPdfId === `${ordem.id}-CAIXA_TESTE`" :size="14" class="animate-spin" aria-hidden="true" />
+                      <Printer v-else :size="14" aria-hidden="true" />
+                      <span>{{ loadingPdfId === `${ordem.id}-CAIXA_TESTE` ? 'Gerando...' : 'Caixa Teste' }}</span>
+                    </button>
+                  </template>
+                  <template v-else>
+                    <button
+                      type="button"
+                      class="btn-action-print"
+                      @click="imprimirOrdem(ordem, 'LOTE_PRINCIPAL')"
+                      :disabled="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL`"
+                      :aria-label="`Imprimir etiqueta da ordem ${ordem.codigoBarras}`"
+                      title="Imprimir Lote"
+                    >
+                      <Loader2 v-if="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL`" :size="14" class="animate-spin" aria-hidden="true" />
+                      <Printer v-else :size="14" aria-hidden="true" />
+                      <span>{{ loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` ? 'Gerando...' : 'Imprimir' }}</span>
+                    </button>
+                  </template>
                 </div>
               </td>
             </tr>

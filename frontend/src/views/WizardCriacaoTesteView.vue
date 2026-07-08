@@ -72,7 +72,7 @@ const formOrdem = ref({
 })
 const loadingOrdem = ref(false)
 const errorOrdem = ref('')
-const createdOrdem = ref<{ id: string; codigoBarras: string } | null>(null)
+const createdOrdem = ref<{ id: string; codigoBarras: string; possuiCaixaTeste?: boolean } | null>(null)
 
 // Toasts
 const toasts = ref<Toast[]>([])
@@ -188,7 +188,7 @@ async function submitOrdem() {
 const loadingPdf = ref(false)
 const user = computed(() => authStore.user.value)
 
-async function imprimirEtiqueta() {
+async function imprimirEtiqueta(tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL' = 'LOTE_PRINCIPAL') {
   if (!createdOrdem.value?.id) return
   if (loadingPdf.value) return
   
@@ -196,7 +196,8 @@ async function imprimirEtiqueta() {
   try {
     const response = await api.post('/etiquetas/gerar', {
       ordemTesteIds: [createdOrdem.value.id],
-      setorId: user.value?.setorId || 'ecb2d21d-51db-41a7-8261-17e8a5f03fed'
+      setorId: user.value?.setorId || 'ecb2d21d-51db-41a7-8261-17e8a5f03fed',
+      tipoLote
     }, {
       responseType: 'blob'
     })
@@ -304,17 +305,45 @@ function resetWizard() {
           </div>
           <p class="wiz-barcode-hint">Imprima esta etiqueta para iniciar a bipagem no Almoxarifado.</p>
           
-          <button
-            type="button"
-            class="btn-print-barcode"
-            :disabled="loadingPdf"
-            @click="imprimirEtiqueta"
-            title="Imprimir Etiqueta de Código de Barras"
-          >
-            <Loader2 v-if="loadingPdf" :size="16" class="animate-spin" aria-hidden="true" />
-            <Printer v-else :size="16" aria-hidden="true" />
-            <span>{{ loadingPdf ? 'Gerando PDF...' : 'Imprimir Etiqueta' }}</span>
-          </button>
+          <template v-if="createdOrdem.possuiCaixaTeste || formOrdem.possuiCaixaTeste">
+            <div style="display: flex; gap: 0.5rem; justify-content: center; width: 100%;">
+              <button
+                type="button"
+                class="btn-print-barcode"
+                :disabled="loadingPdf"
+                @click="imprimirEtiqueta('LOTE_PRINCIPAL')"
+                title="Imprimir Etiqueta de Lote"
+              >
+                <Loader2 v-if="loadingPdf" :size="16" class="animate-spin" aria-hidden="true" />
+                <Printer v-else :size="16" aria-hidden="true" />
+                <span>{{ loadingPdf ? 'Gerando...' : 'Imprimir Lote' }}</span>
+              </button>
+              <button
+                type="button"
+                class="btn-print-barcode"
+                :disabled="loadingPdf"
+                @click="imprimirEtiqueta('CAIXA_TESTE')"
+                title="Imprimir Etiqueta de Caixa Teste"
+              >
+                <Loader2 v-if="loadingPdf" :size="16" class="animate-spin" aria-hidden="true" />
+                <Printer v-else :size="16" aria-hidden="true" />
+                <span>{{ loadingPdf ? 'Gerando...' : 'Imprimir Caixa Teste' }}</span>
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <button
+              type="button"
+              class="btn-print-barcode"
+              :disabled="loadingPdf"
+              @click="imprimirEtiqueta('LOTE_PRINCIPAL')"
+              title="Imprimir Etiqueta de Código de Barras"
+            >
+              <Loader2 v-if="loadingPdf" :size="16" class="animate-spin" aria-hidden="true" />
+              <Printer v-else :size="16" aria-hidden="true" />
+              <span>{{ loadingPdf ? 'Gerando PDF...' : 'Imprimir Etiqueta' }}</span>
+            </button>
+          </template>
         </div>
 
         <div class="wiz-done-actions">

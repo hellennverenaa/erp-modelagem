@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { EtiquetaController } from '../controllers/etiqueta.controller';
+import { imprimirEtiquetas, gerarEtiquetas } from '../controllers/etiqueta.controller';
 import { verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
-const etiquetaController = new EtiquetaController();
+
+router.post('/imprimir', verificarPermissaoSetor('BIPAR_ENTRADA'), imprimirEtiquetas);
 
 /**
  * @swagger
@@ -57,7 +58,7 @@ const etiquetaController = new EtiquetaController();
 router.post(
   '/gerar',
   verificarPermissaoSetor('IMPRIMIR_ETIQUETA', 'body'),
-  etiquetaController.gerarEtiquetas
+  gerarEtiquetas
 );
 
 export default router;
