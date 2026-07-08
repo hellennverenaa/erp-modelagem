@@ -13,6 +13,7 @@ import dashboardRoutes from './dashboard.routes';
 import adminRoutes from './admin.routes';
 import rotasRoutes from './rotas.routes';
 import pecasRoutes from './pecas.routes';
+import etiquetasRoutes from './etiquetas.routes';
 import { verificaToken } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -34,5 +35,6 @@ router.use('/dashboard', verificaToken, dashboardRoutes);
 router.use('/admin', verificaToken, adminRoutes);
 router.use('/rotas', verificaToken, rotasRoutes);
 router.use('/pecas', verificaToken, pecasRoutes);
+router.use('/etiquetas', verificaToken, etiquetasRoutes);
 
 export default router;

@@ -31,6 +31,7 @@ export class AuthController {
           { usuario, senha },
           { timeout: 5000 }
         );
+        console.log('=== PAYLOAD DO UNIX ===', JSON.stringify(response.data, null, 2));
       } catch (axiosError: any) {
         console.error('[AuthController] Falha de comunicação com o serviço de autenticação DASS:', axiosError.message || axiosError);
         
