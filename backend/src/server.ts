@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import path from 'path';
 import { AppDataSource } from './config/database';
 import { corsOptions } from './config/cors';
 import { globalLimiter, authLimiter, heavyLimiter } from './config/rateLimits';
@@ -77,6 +78,7 @@ app.get('/health', (_req, res) => {
 });
 
 // ═══ CAMADA 7: ROTAS PROTEGIDAS (JWT obrigatório) ═══
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api', apiRoutes);
 
 // ═══ CAMADA 8: TRATAMENTO DE ERROS CENTRALIZADO ═══

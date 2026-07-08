@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { Html5Qrcode } from 'html5-qrcode'
 import api from '../api/axios'
@@ -16,7 +16,11 @@ import {
   Box,
   Camera,
   Lock,
-  ClipboardList
+  ClipboardList,
+  AlertOctagon,
+  Upload,
+  X,
+  Check
 } from '@lucide/vue'
 
 // ─── Interfaces ──────────────────────────────────────────────────────────
@@ -47,6 +51,25 @@ const setores = ref<Setor[]>([])
 const selecionouSetorId = ref('')
 const tipoLote = ref<'LOTE_PRINCIPAL' | 'CAIXA_TESTE'>('LOTE_PRINCIPAL')
 const codigoLeitura = ref('')
+const lotesDisponiveis = ref<OrdemTeste[]>([])
+const ordemAtiva = ref<OrdemTeste | null>(null)
+
+watch(codigoLeitura, (novoCodigo) => {
+  const codigo = novoCodigo.trim().toUpperCase()
+  if (!codigo) {
+    ordemAtiva.value = null
+    return
+  }
+  
+  const loteEncontrado = lotesDisponiveis.value.find(
+    l => l.codigoBarras.toUpperCase() === codigo || l.id === codigo
+  )
+  if (loteEncontrado) {
+    ordemAtiva.value = loteEncontrado
+  } else {
+    ordemAtiva.value = null
+  }
+})
 
 const loadingSetores = ref(false)
 const loadingBip = ref(false)
@@ -178,9 +201,12 @@ onMounted(async () => {
     } else if (setores.value.length > 0) {
       selecionouSetorId.value = setores.value[0].id
     }
+
+    const resLotes = await api.get('/lotes')
+    lotesDisponiveis.value = resLotes.data
   } catch (err: any) {
-    console.error('[BipagemView] Erro ao carregar setores:', err)
-    triggerToast('Nao foi possivel carregar a lista de setores ativos.', 'error')
+    console.error('[BipagemView] Erro ao carregar dados iniciais:', err)
+    triggerToast('Nao foi possivel carregar os dados iniciais.', 'error')
   } finally {
     loadingSetores.value = false
     forcarFocoInput()
@@ -320,6 +346,117 @@ async function irParaConferencia() {
     }
   } finally {
     loadingBip.value = false
+  }
+}
+
+// ─── Modal de Ocorrencia ───────────────────────────────────────────────────
+const showOcorrenciaModal = ref(false)
+const loadingOcorrencia = ref(false)
+
+const ocorrenciaForm = reactive({
+  ordemTesteId: '',
+  titulo: '',
+  descricao: '',
+  tipoOcorrencia: 'GARGALO_MAQUINA',
+  gravidade: 'MEDIA',
+  interrompeSla: false
+})
+
+const fotoInputRef = ref<HTMLInputElement | null>(null)
+const fotoFile = ref<File | null>(null)
+const fotoPreview = ref<string | null>(null)
+
+function abrirModalOcorrencia() {
+  if (ordemAtiva.value) {
+    ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
+  }
+  
+  ocorrenciaForm.titulo = ''
+  ocorrenciaForm.descricao = ''
+  ocorrenciaForm.tipoOcorrencia = 'GARGALO_MAQUINA'
+  ocorrenciaForm.gravidade = 'MEDIA'
+  ocorrenciaForm.interrompeSla = false
+  fotoFile.value = null
+  fotoPreview.value = null
+  showOcorrenciaModal.value = true
+}
+
+function fecharModalOcorrencia() {
+  showOcorrenciaModal.value = false
+}
+
+function aoSelecionarFoto(event: Event) {
+  const target = event.target as HTMLInputElement
+  if (target.files && target.files[0]) {
+    const file = target.files[0]
+    fotoFile.value = file
+    fotoPreview.value = URL.createObjectURL(file)
+  }
+}
+
+function removerFoto() {
+  fotoFile.value = null
+  fotoPreview.value = null
+  if (fotoInputRef.value) {
+    fotoInputRef.value.value = ''
+  }
+}
+
+async function submeterOcorrencia() {
+  if (!ordemAtiva.value) {
+    triggerToast('Nenhum lote ativo selecionado.', 'error')
+    return
+  }
+  
+  ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
+  
+  if (!ocorrenciaForm.titulo.trim()) {
+    triggerToast('Informe o titulo da ocorrencia.', 'error')
+    return
+  }
+  if (!ocorrenciaForm.descricao.trim()) {
+    triggerToast('Informe a descricao detalhada.', 'error')
+    return
+  }
+
+  loadingOcorrencia.value = true
+  try {
+    const resOcorrencia = await api.post('/ocorrencias', {
+      ordemTesteId: ocorrenciaForm.ordemTesteId,
+      setorId: selecionouSetorId.value,
+      titulo: ocorrenciaForm.titulo.trim(),
+      descricao: ocorrenciaForm.descricao.trim(),
+      tipoOcorrencia: ocorrenciaForm.tipoOcorrencia,
+      gravidade: ocorrenciaForm.gravidade,
+      interrompeSla: ocorrenciaForm.interrompeSla
+    })
+
+    const ocorrenciaId = resOcorrencia.data.id
+
+    if (fotoFile.value && ocorrenciaId) {
+      const formData = new FormData()
+      formData.append('file', fotoFile.value)
+
+      await api.post(`/ocorrencias/${ocorrenciaId}/anexos`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      })
+    }
+
+    triggerToast('Ocorrencia registrada com sucesso.', 'success')
+    fecharModalOcorrencia()
+    
+    // Atualiza a lista de lotes disponiveis
+    const resLotes = await api.get('/lotes')
+    lotesDisponiveis.value = resLotes.data
+  } catch (err: any) {
+    console.error('[BipagemView] Erro ao registrar ocorrencia:', err)
+    const errorData = err.response?.data
+    const descError = errorData?.error || 'Erro de comunicacao com o servidor.'
+    triggerToast(`Falha ao registrar ocorrencia: ${descError}`, 'error')
+  } finally {
+    loadingOcorrencia.value = false
   }
 }
 </script>
@@ -522,8 +659,156 @@ async function irParaConferencia() {
             <span>Registrar Saída</span>
           </button>
         </div>
+
+        <div class="ocorrencia-divider"></div>
+
+        <button
+          type="button"
+          class="btn-ocorrencia"
+          :disabled="!ordemAtiva || loadingBip"
+          @click="abrirModalOcorrencia"
+        >
+          <AlertOctagon :size="20" class="ocorrencia-icon" aria-hidden="true" />
+          <span>Reportar Ocorrencia</span>
+        </button>
       </form>
     </main>
+
+    <!-- ══ MODAL DE OCORRÊNCIA (Tablet-focused layout) ═══════════════════ -->
+    <Transition name="block-pop">
+      <div v-if="showOcorrenciaModal" class="ocorrencia-modal-overlay" role="dialog" aria-modal="true">
+        <div class="ocorrencia-modal-content">
+          <div class="ocorrencia-modal-header">
+            <span class="ocorrencia-modal-title">Apontar Gargalo / Ocorrencia</span>
+            <span class="ocorrencia-modal-desc">Relate problemas que afetam a fluidez do setor</span>
+          </div>
+
+          <form @submit.prevent="submeterOcorrencia" class="ocorrencia-modal-form">
+            <!-- Badge de Lote Ativo somente leitura -->
+            <div class="active-op-badge">
+              <AlertOctagon :size="18" class="ocorrencia-icon" aria-hidden="true" />
+              <span class="active-op-text">Relatando problema no Lote: {{ ordemAtiva?.codigoBarras }}</span>
+            </div>
+
+            <!-- Título -->
+            <div class="field-group">
+              <label for="modal-titulo" class="field-label">Titulo</label>
+              <input
+                id="modal-titulo"
+                v-model="ocorrenciaForm.titulo"
+                type="text"
+                class="text-input"
+                placeholder="Ex: Faca quebrada na Atom A1"
+                required
+              />
+            </div>
+
+            <!-- Descrição -->
+            <div class="field-group">
+              <label for="modal-descricao" class="field-label">Descricao Detalhada</label>
+              <textarea
+                id="modal-descricao"
+                v-model="ocorrenciaForm.descricao"
+                class="textarea-input"
+                placeholder="Descreva detalhadamente o gargalo..."
+                rows="3"
+                required
+              ></textarea>
+            </div>
+
+            <!-- Tipo e Gravidade Grid -->
+            <div class="form-grid-2">
+              <div class="field-group">
+                <label for="modal-tipo" class="field-label">Tipo de Ocorrencia</label>
+                <div class="select-wrapper">
+                  <select id="modal-tipo" v-model="ocorrenciaForm.tipoOcorrencia" class="select-input" required>
+                    <option value="GARGALO_MAQUINA">Gargalo de Maquina</option>
+                    <option value="FALTA_MATERIAL">Falta de Material</option>
+                    <option value="PROBLEMA_QUALIDADE">Problema de Qualidade</option>
+                    <option value="BLOQUEIO_PROCESSO">Bloqueio de Processo</option>
+                    <option value="ACIDENTE_TRABALHO">Acidente de Trabalho</option>
+                    <option value="OUTRO">Outro</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label for="modal-gravidade" class="field-label">Gravidade</label>
+                <div class="select-wrapper">
+                  <select id="modal-gravidade" v-model="ocorrenciaForm.gravidade" class="select-input" required>
+                    <option value="BAIXA">Baixa</option>
+                    <option value="MEDIA">Media</option>
+                    <option value="ALTA">Alta</option>
+                    <option value="CRITICA">Critica</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Toggle Interromper SLA -->
+            <div class="toggle-row">
+              <div class="toggle-info">
+                <span class="toggle-title">Interromper SLA (Pausar Relogio)</span>
+                <span class="toggle-desc">Pausa sistemicamente o SLA de permanencia neste setor</span>
+              </div>
+              <label class="switch" for="modal-sla-toggle">
+                <input
+                  id="modal-sla-toggle"
+                  type="checkbox"
+                  v-model="ocorrenciaForm.interrompeSla"
+                />
+                <span class="slider round"></span>
+              </label>
+            </div>
+
+            <!-- Upload de Imagem -->
+            <div class="field-group">
+              <span class="field-label">Foto do Gargalo</span>
+              <div v-if="!fotoPreview" class="photo-upload-box" @click="fotoInputRef?.click()">
+                <Upload :size="24" class="upload-box-icon" aria-hidden="true" />
+                <span class="upload-box-text">Tirar foto do Tablet ou selecionar imagem</span>
+                <input
+                  type="file"
+                  ref="fotoInputRef"
+                  accept="image/*"
+                  capture="environment"
+                  class="hidden-file-input"
+                  style="display: none;"
+                  @change="aoSelecionarFoto"
+                />
+              </div>
+              <div v-else class="photo-preview-box">
+                <img :src="fotoPreview" class="photo-preview-image" alt="Visualizacao do anexo" />
+                <button type="button" class="btn-remove-photo" @click="removerFoto" aria-label="Remover foto">
+                  <X :size="16" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <!-- Botões de Ação -->
+            <div class="modal-action-row">
+              <button
+                type="button"
+                class="btn-modal-cancel"
+                @click="fecharModalOcorrencia"
+                :disabled="loadingOcorrencia"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                class="btn-modal-submit"
+                :disabled="loadingOcorrencia"
+              >
+                <Loader2 v-if="loadingOcorrencia" :size="18" class="spinner" aria-hidden="true" />
+                <Check v-else :size="18" aria-hidden="true" />
+                <span>{{ loadingOcorrencia ? 'Enviando...' : 'Confirmar Ocorrencia' }}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -1111,4 +1396,373 @@ async function irParaConferencia() {
 .field-reveal-leave-active { transition: all 0.15s ease; }
 .field-reveal-enter-from   { opacity: 0; transform: translateY(-4px); max-height: 0; }
 .field-reveal-leave-to     { opacity: 0; max-height: 0; }
+
+/* ═══════════════════════════════════════════════════════
+   OCORRÊNCIA TRIGGER & MODAL
+   ═══════════════════════════════════════════════════════ */
+.ocorrencia-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0.5rem 0;
+  width: 100%;
+}
+
+.btn-ocorrencia {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 3.5rem;
+  padding: 0.875rem 1.5rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  font-family: inherit;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1.5px solid #fecaca;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-ocorrencia:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.08);
+}
+
+.btn-ocorrencia:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-ocorrencia:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #94a3b8;
+}
+
+.ocorrencia-icon {
+  color: #dc2626;
+  flex-shrink: 0;
+}
+
+.active-op-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.875rem 1rem;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 0.5rem;
+  color: #475569;
+}
+
+.active-op-text {
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+/* Modal Layout */
+.ocorrencia-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 10000;
+  overflow-y: auto;
+}
+
+.ocorrencia-modal-content {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  width: 100%;
+  max-width: 32rem;
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.ocorrencia-modal-header {
+  display: flex;
+  flex-direction: column;
+}
+
+.ocorrencia-modal-title {
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.ocorrencia-modal-desc {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 0.125rem;
+}
+
+.ocorrencia-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* Inputs adicionais */
+.text-input {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  font-weight: 600;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 0.5rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.text-input:focus {
+  border-color: #1e40af;
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.08);
+}
+
+.textarea-input {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  font-weight: 600;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 0.5rem;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+
+.textarea-input:focus {
+  border-color: #1e40af;
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.08);
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+/* Toggle Switch */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 0.5rem;
+}
+
+.toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.toggle-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.toggle-desc {
+  font-size: 0.6875rem;
+  color: #64748b;
+}
+
+/* Switch slider */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 2.75rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: #cbd5e1;
+  transition: .2s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 1.125rem;
+  width: 1.125rem;
+  left: 0.1875rem;
+  bottom: 0.1875rem;
+  background-color: white;
+  transition: .2s;
+}
+
+input:checked + .slider {
+  background-color: #b91c1c;
+}
+
+input:focus + .slider {
+  box-shadow: 0 0 1px #b91c1c;
+}
+
+input:checked + .slider:before {
+  transform: translateX(1.25rem);
+}
+
+.slider.round {
+  border-radius: 34px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
+}
+
+/* Photo Upload Group */
+.photo-upload-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  border: 2px dashed #cbd5e1;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  cursor: pointer;
+  text-align: center;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.photo-upload-box:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.upload-box-icon {
+  color: #64748b;
+}
+
+.upload-box-text {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.photo-preview-box {
+  position: relative;
+  width: 100%;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1.5px solid #e2e8f0;
+}
+
+.photo-preview-image {
+  width: 100%;
+  max-height: 12rem;
+  object-fit: cover;
+  display: block;
+}
+
+.btn-remove-photo {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  background: rgba(15, 23, 42, 0.75);
+  border: none;
+  border-radius: 50%;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.btn-remove-photo:hover {
+  background: rgba(239, 68, 68, 0.9);
+}
+
+/* Modal Actions */
+.modal-action-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.btn-modal-cancel {
+  padding: 0.625rem 1.25rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #475569;
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.btn-modal-cancel:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.btn-modal-submit {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: #b91c1c;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.btn-modal-submit:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 4px 12px rgba(185, 28, 28, 0.2);
+}
+
+.btn-modal-submit:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn-modal-submit:disabled, .btn-modal-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 </style>

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { OcorrenciasController } from '../controllers/ocorrencias.controller';
+import { upload } from '../middlewares/upload.middleware';
 
 const router = Router();
 const ocorrenciasController = new OcorrenciasController();
@@ -37,7 +38,7 @@ const ocorrenciasController = new OcorrenciasController();
  *                 example: "550e8400-e29b-41d4-a716-446655440000"
  *               tipoOcorrencia:
  *                 type: string
- *                 enum: [ATRASO_MATERIA_PRIMA, GARGALO_MAQUINA, FALHA_LOGISTICA, OUTROS]
+ *                 enum: [GARGALO_MAQUINA, FALTA_MATERIAL, PROBLEMA_QUALIDADE, BLOQUEIO_PROCESSO, ACIDENTE_TRABALHO, OUTRO]
  *                 example: "GARGALO_MAQUINA"
  *               gravidade:
  *                 type: string
@@ -64,6 +65,45 @@ const ocorrenciasController = new OcorrenciasController();
  *         description: Erro interno do servidor
  */
 router.post('/', ocorrenciasController.createOcorrencia);
+
+/**
+ * @swagger
+ * /api/ocorrencias/{id}/anexos:
+ *   post:
+ *     summary: Faz o upload de uma foto para a ocorrência
+ *     description: Salva a foto no servidor e vincula como anexo à ocorrência de produção.
+ *     tags:
+ *       - ocorrencias
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       201:
+ *         description: Foto salva com sucesso
+ *       400:
+ *         description: Arquivo inválido ou ausente
+ *       404:
+ *         description: Ocorrência não encontrada
+ *       500:
+ *         description: Erro no upload
+ */
+router.post('/:id/anexos', upload.single('file'), ocorrenciasController.uploadAnexo);
 
 /**
  * @swagger
