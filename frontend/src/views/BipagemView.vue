@@ -15,7 +15,8 @@ import {
   Layers,
   Box,
   Camera,
-  Lock
+  Lock,
+  ClipboardList
 } from '@lucide/vue'
 
 // ─── Interfaces ──────────────────────────────────────────────────────────
@@ -272,6 +273,55 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
     forcarFocoInput()
   }
 }
+
+async function irParaConferencia() {
+  const codigo = codigoLeitura.value.trim()
+  if (!codigo) {
+    triggerToast('Insira ou bipa um codigo de barras valido para prosseguir.', 'error')
+    forcarFocoInput()
+    return
+  }
+
+  if (!selecionouSetorId.value) {
+    triggerToast('Por favor, selecione o seu Setor operacional atual.', 'error')
+    return
+  }
+
+  loadingBip.value = true
+  try {
+    const resLotes = await api.get('/lotes')
+    const lotesList: OrdemTeste[] = resLotes.data
+    
+    const loteEncontrado = lotesList.find(
+      l => l.codigoBarras.toUpperCase() === codigo.toUpperCase() || l.id === codigo
+    )
+
+    let ordemTesteId = ''
+    if (loteEncontrado) {
+      ordemTesteId = loteEncontrado.id
+    } else {
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(codigo)
+      if (isUUID) {
+        ordemTesteId = codigo
+      } else {
+        throw new Error('LOTE_NOT_FOUND')
+      }
+    }
+
+    // Redireciona para o checklist
+    router.push(`/dashboard/checklist/${ordemTesteId}/${selecionouSetorId.value}`)
+    codigoLeitura.value = ''
+  } catch (err: any) {
+    console.error('[BipagemView.irParaConferencia] Erro:', err)
+    if (err.message === 'LOTE_NOT_FOUND') {
+      triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
+    } else {
+      triggerToast('Erro de conexao com o servidor.', 'error')
+    }
+  } finally {
+    loadingBip.value = false
+  }
+}
 </script>
 
 <template>
@@ -449,6 +499,19 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
           </button>
 
           <button
+            v-if="SETORES_FASE_INICIAL.includes(selecionouSetorId)"
+            type="button"
+            class="btn-action btn-action--conferencia"
+            :disabled="loadingBip"
+            @click="irParaConferencia"
+          >
+            <Loader2 v-if="loadingBip" :size="20" class="spinner" aria-hidden="true" />
+            <ClipboardList v-else :size="20" aria-hidden="true" />
+            <span>Realizar Conferência (Checklist)</span>
+          </button>
+
+          <button
+            v-else
             type="button"
             class="btn-action btn-action--saida"
             :disabled="loadingBip"
@@ -867,6 +930,14 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
 
 .btn-action--saida:hover:not(:disabled) {
   box-shadow: 0 6px 20px rgba(71, 85, 105, 0.25);
+}
+
+.btn-action--conferencia {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+}
+
+.btn-action--conferencia:hover:not(:disabled) {
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.25);
 }
 
 .spinner {

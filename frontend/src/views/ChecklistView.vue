@@ -86,32 +86,46 @@ async function carregarDados() {
       return
     }
 
-    // 3. Busca templates de checklist da API
+    // 3. Busca templates de checklist para obter o templateId adequado (caso exista)
     const resTemplates = await api.get('/checklists/templates')
     const templatesList = resTemplates.data || []
-    
-    // Filtra o template que corresponde ao tipoOpcaoId do setor atual
     template.value = templatesList.find(
       (t: any) => t.setorTipoOpcaoId === setor.value.tipoOpcaoId
     )
 
     if (!template.value) {
-      // Se nao houver template cadastrado no banco, usamos um fallback generico
       template.value = {
         id: '00000000-0000-0000-0000-000000000000',
-        nome: `Checklist - ${setor.value.nome}`,
+        nome: `Checklist — ${setor.value.nome}`,
         itens: []
       }
     }
 
-    // Inicializa os itens estáticos com conformidade marcada como true
-    itensEstaticos.value = (template.value.itens || []).map((it: any) => ({
-      id: it.id,
-      descricao: it.descricao,
-      conforme: true,
-      valorResposta: '',
-      observacao: ''
-    }))
+    // 4. Busca as peças cadastradas para o modelo
+    const resPecas = await api.get(`/pecas/modelo/${lote.value.modeloId}`)
+    const pecasList = resPecas.data || []
+
+    // 5. Geração dinâmica de itens baseada em peças e setor
+    itensEstaticos.value = pecasList.map((peca: any) => {
+      let descricao = `Peca ${peca.nome} inspecionada?`
+      const sId = setorId.toLowerCase()
+      
+      if (sId === 'd40e4883-4f99-45cf-9c5c-c9da2ff53c26') { // Navalha
+        descricao = `Navalha da peca ${peca.nome} foi revisada e recebida?`
+      } else if (sId === 'ecb2d21d-51db-41a7-8261-17e8a5f03fed') { // Almoxarifado
+        descricao = `Material da peca ${peca.nome} recebido completo?`
+      } else if (sId === '8686f071-1a7c-4df5-861b-e3316d4ec01c') { // Telas
+        descricao = `Tela da peca ${peca.nome} recebida e revisada?`
+      }
+
+      return {
+        id: peca.id,
+        descricao,
+        conforme: true,
+        valorResposta: '',
+        observacao: ''
+      }
+    })
 
   } catch (err: any) {
     console.error('[ChecklistView] Erro ao carregar dados:', err)
@@ -152,12 +166,14 @@ async function finalizarChecklist() {
     // 1. Monta as respostas
     const respostasPayload = [
       ...itensEstaticos.value.map(it => ({
-        templateItemId: it.id,
+        templateItemId: null, // Como são peças dinâmicas, templateItemId deve ser nulo
+        descricaoAvulsa: it.descricao, // Enviado na propriedade descricaoAvulsa
         conforme: it.conforme,
         valorResposta: it.valorResposta || null,
         observacao: it.observacao || null
       })),
       ...itensAvulsos.value.map(it => ({
+        templateItemId: null,
         descricaoAvulsa: it.descricaoAvulsa,
         conforme: it.conforme,
         valorResposta: it.valorResposta || null,
@@ -204,7 +220,7 @@ async function finalizarChecklist() {
       } catch (e) {}
 
       setTimeout(() => {
-        router.push({ name: 'bipagem' })
+        router.push('/dashboard/ordens')
       }, 1500)
     } else {
       erroMsg.value = 'Checklist salvo, porem ocorreu uma falha ao registrar a bipagem de saida.'
@@ -488,7 +504,7 @@ onMounted(() => {
                   :disabled="salvando"
                 >
                   <Loader2 v-if="salvando" class="ck-spinner" :size="16" />
-                  <span>{{ salvando ? 'Processando...' : 'Finalizar Checklist e Bipar Saída' }}</span>
+                  <span>{{ salvando ? 'Processando...' : 'Finalizar Conferência e Liberar Setor' }}</span>
                 </button>
               </div>
             </div>
