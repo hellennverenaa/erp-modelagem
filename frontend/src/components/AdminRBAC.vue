@@ -28,6 +28,11 @@ interface User {
     id: string
     nome: string
   }
+  setorId: string | null
+  setor: {
+    id: string
+    nome: string
+  } | null
 }
 
 interface Perfil {
@@ -160,6 +165,47 @@ async function alterarPerfilColaborador(usuarioId: string, event: Event) {
     await fetchUsers()
   } finally {
     updatingUserProfile.value[usuarioId] = false
+  }
+}
+
+const showEditModal = ref(false)
+const selectedUser = ref<User | null>(null)
+const formUsuario = ref({
+  perfilId: '',
+  setorId: ''
+})
+
+function abrirEditarUsuario(user: User) {
+  selectedUser.value = user
+  formUsuario.value = {
+    perfilId: user.perfil?.id || '',
+    setorId: user.setorId || ''
+  }
+  showEditModal.value = true
+}
+
+async function salvarUsuario() {
+  if (!selectedUser.value) return
+  
+  const id = selectedUser.value.id
+  updatingUserProfile.value[id] = true
+  try {
+    const payload = {
+      perfilId: formUsuario.value.perfilId,
+      setorId: formUsuario.value.setorId || null
+    }
+    
+    await api.put(`/admin/usuarios/${id}/perfil`, payload)
+    
+    showToast('Colaborador atualizado com sucesso.')
+    showEditModal.value = false
+    await fetchUsers()
+  } catch (error: any) {
+    showToast('Falha ao atualizar colaborador.', 'error')
+  } finally {
+    if (selectedUser.value && selectedUser.value.id === id) {
+      updatingUserProfile.value[id] = false
+    }
   }
 }
 
@@ -337,8 +383,10 @@ onMounted(() => {
                     <th>Usuário</th>
                     <th>Cargo</th>
                     <th>Perfil Acesso</th>
+                    <th>Setor Lotação</th>
                     <th>Planta Fabril</th>
                     <th class="text-center">Status</th>
+                    <th class="text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -366,6 +414,9 @@ onMounted(() => {
                         <RefreshCw v-if="updatingUserProfile[user.id]" :size="12" class="spin-anim select-spinner" aria-hidden="true" />
                       </div>
                     </td>
+                    <td>
+                      <span class="text-muted">{{ user.setor?.nome || 'Geral/Global' }}</span>
+                    </td>
                     <td class="text-muted">{{ user.planta?.nome || '-' }}</td>
                     <td class="text-center">
                       <span :class="['status-pill', user.ativo ? 'status-pill--active' : 'status-pill--inactive']">
@@ -374,9 +425,19 @@ onMounted(() => {
                         <span>{{ user.ativo ? 'Ativo' : 'Inativo' }}</span>
                       </span>
                     </td>
+                    <td class="text-center">
+                      <button
+                        type="button"
+                        class="btn-edit-user"
+                        @click="abrirEditarUsuario(user)"
+                        :aria-label="`Editar colaborador ${user.nomeCompleto}`"
+                      >
+                        <span>Editar</span>
+                      </button>
+                    </td>
                   </tr>
                   <tr v-if="filteredUsers.length === 0">
-                    <td colspan="6" class="table-empty">
+                    <td colspan="8" class="table-empty">
                       Nenhum colaborador corresponde aos filtros de busca.
                     </td>
                   </tr>
@@ -485,6 +546,73 @@ onMounted(() => {
         </div>
       </Transition>
     </div>
+
+    <!-- MODAL DE EDICAO DE COLABORADOR -->
+    <Transition name="fade-slide">
+      <div v-if="showEditModal && selectedUser" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-window">
+          <header class="modal-header">
+            <h2 id="modal-title" class="modal-title-text">Editar Colaborador</h2>
+            <button type="button" class="btn-close-modal" @click="showEditModal = false" aria-label="Fechar modal">
+              &times;
+            </button>
+          </header>
+          
+          <main class="modal-body-content">
+            <div class="modal-field-group">
+              <span class="modal-field-label">Nome Completo</span>
+              <strong class="modal-field-val">{{ selectedUser.nomeCompleto }}</strong>
+            </div>
+            
+            <div class="modal-field-group">
+              <span class="modal-field-label">Usuario</span>
+              <code class="modal-field-code">{{ selectedUser.usuario }}</code>
+            </div>
+            
+            <div class="modal-field-group">
+              <span class="modal-field-label">Cargo</span>
+              <span class="modal-field-val text-muted">{{ selectedUser.cargo }}</span>
+            </div>
+
+            <form @submit.prevent="salvarUsuario" class="modal-form">
+              <div class="form-input-group">
+                <label for="modal-perfil" class="input-label-tag">Perfil de Acesso</label>
+                <div class="select-wrapper">
+                  <select id="modal-perfil" v-model="formUsuario.perfilId" class="modal-select-input" required>
+                    <option v-for="prof in profiles" :key="prof.id" :value="prof.id">
+                      {{ prof.nome }}
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-input-group">
+                <label for="modal-setor" class="input-label-tag">Setor de Lotacao</label>
+                <div class="select-wrapper">
+                  <select id="modal-setor" v-model="formUsuario.setorId" class="modal-select-input">
+                    <option value="">Geral / Sem Setor Mapeado</option>
+                    <option v-for="sec in sectors" :key="sec.id" :value="sec.id">
+                      {{ sec.nome }}
+                    </option>
+                  </select>
+                </div>
+                <p class="field-hint-text">Necessario para controle de bipagem e permissoes nos setores do chao de fabrica.</p>
+              </div>
+
+              <div class="modal-actions-row">
+                <button type="button" class="btn-cancel" @click="showEditModal = false">
+                  Cancelar
+                </button>
+                <button type="submit" class="btn-save" :disabled="updatingUserProfile[selectedUser.id]">
+                  <RefreshCw v-if="updatingUserProfile[selectedUser.id]" :size="14" class="spin-anim" aria-hidden="true" />
+                  <span>Salvar Alteracoes</span>
+                </button>
+              </div>
+            </form>
+          </main>
+        </div>
+      </div>
+    </Transition>
 
     <!-- TOAST NOTIFICATION CONTAINER -->
     <div class="toast-container" aria-live="polite">
@@ -1222,5 +1350,213 @@ onMounted(() => {
   .perfil-select { font-size: 1.25rem; }
   .action-title-label { font-size: 1.25rem; }
   .matrix-table { font-size: 1.25rem; }
+}
+/* ═══════════════════════════════════════
+   BOTOES E MODAL DE COLABORADOR
+   Sleek Industrial Theme (Sem Emojis)
+═══════════════════════════════════════ */
+.btn-edit-user {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-edit-user:hover {
+  background: #cbd5e1;
+  color: #0f172a;
+}
+
+/* Modal Overlay & window styling */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.modal-window {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  width: 100%;
+  max-width: 28rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+}
+
+.modal-title-text {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.btn-close-modal {
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  font-weight: 300;
+  color: #94a3b8;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.btn-close-modal:hover {
+  color: #0f172a;
+}
+
+.modal-body-content {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.modal-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.modal-field-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.modal-field-val {
+  font-size: 0.875rem;
+  color: #0f172a;
+}
+
+.modal-field-code {
+  font-family: monospace;
+  font-weight: 600;
+  background: #f1f5f9;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.8125rem;
+  color: #475569;
+  align-self: flex-start;
+}
+
+/* Modal Form control */
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 1rem;
+}
+
+.form-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.input-label-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.modal-select-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #0f172a;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 0.375rem;
+  outline: none;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.modal-select-input:focus {
+  border-color: #1e40af;
+}
+
+.field-hint-text {
+  font-size: 0.6875rem;
+  color: #64748b;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.modal-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.btn-cancel {
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  color: #475569;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-cancel:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.btn-save {
+  background: #0f172a;
+  border: 1px solid #0f172a;
+  color: #ffffff;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.15s ease;
+}
+
+.btn-save:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

@@ -288,7 +288,7 @@ export class AdminController {
   public async updateUsuarioPerfil(req: Request, res: Response): Promise<Response> {
     try {
       const id = String(req.params.id);
-      const { perfilId } = req.body;
+      const { perfilId, setorId } = req.body;
 
       if (!perfilId) {
         return res.status(400).json({ error: 'perfilId é obrigatório.' });
@@ -299,7 +299,7 @@ export class AdminController {
 
       const user = await userRepo.findOne({
         where: { id },
-        relations: { perfil: true }
+        relations: { perfil: true, setor: true }
       });
 
       if (!user) {
@@ -313,6 +313,18 @@ export class AdminController {
 
       user.perfil = novoPerfil;
       user.perfilId = novoPerfil.id;
+
+      if (setorId) {
+        const setorRepo = AppDataSource.getRepository(Setor);
+        const setor = await setorRepo.findOne({ where: { id: setorId } });
+        if (setor) {
+          user.setor = setor;
+          user.setorId = setor.id;
+        }
+      } else {
+        user.setor = null;
+        user.setorId = null;
+      }
       
       const salvo = await userRepo.save(user);
 

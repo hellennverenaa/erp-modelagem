@@ -23,7 +23,7 @@ import {
   Printer
 } from '@lucide/vue'
 import api from '../api/axios'
-import JsBarcode from 'jsbarcode'
+import { authStore } from '../api/auth.store'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 interface OrdemTeste {
@@ -120,236 +120,34 @@ const showTimeline = ref(false)
 const timelineOrdem = ref<OrdemTeste | null>(null)
 const timelineData = ref<RastreamentoHistorico[]>([])
 const loadingTimeline = ref(false)
+const loadingPdfId = ref<string | null>(null)
+const user = computed(() => authStore.user.value)
 
-function imprimirOrdem(ordem: OrdemTeste) {
-  const modelName = getModeloNome(ordem.modeloId)
-  const modelCode = getModeloReferencia(ordem.modeloId)
-  const barcode = ordem.codigoBarras
-  const dateStr = formatDate(ordem.createdAt)
+async function imprimirOrdem(ordem: OrdemTeste) {
+  if (loadingPdfId.value) return
   
-  const planta = plantas.value.find(p => p.id === ordem.plantaId)
-  const plantaNome = planta ? `${planta.nome} (${planta.cidade || ''})` : 'DASS MATRIZ'
-
-  // Criar SVG do código de barras
-  const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+  loadingPdfId.value = ordem.id
   try {
-    JsBarcode(svgElement, barcode, {
-      format: 'CODE128',
-      displayValue: true,
-      fontSize: 14,
-      fontOptions: 'bold',
-      font: 'monospace',
-      height: 45, // Levemente reduzido para caber melhor no layout
-      width: 2.0,
-      margin: 0, // Removida a margem do SVG para controlar no CSS
-      lineColor: '#000000',
-      background: 'transparent'
+    const response = await api.post('/etiquetas/gerar', {
+      ordemTesteIds: [ordem.id],
+      setorId: user.value?.setorId || 'ecb2d21d-51db-41a7-8261-17e8a5f03fed'
+    }, {
+      responseType: 'blob'
     })
+    
+    const blob = new Blob([response.data], { type: 'application/pdf' })
+    const pdfUrl = window.URL.createObjectURL(blob)
+    window.open(pdfUrl, '_blank')
+    
+    setTimeout(() => {
+      window.URL.revokeObjectURL(pdfUrl)
+    }, 60000)
   } catch (err) {
-    console.error('[JsBarcode] Erro ao gerar codigo de barras:', err)
+    console.error('[Imprimir] Erro ao gerar etiquetas em PDF:', err)
+    addToast('error', 'Erro ao gerar etiqueta em PDF.')
+  } finally {
+    loadingPdfId.value = null
   }
-  const barcodeSvgHtml = svgElement.outerHTML
-
-  const printWindow = window.open('', '_blank', 'width=600,height=450')
-  if (!printWindow) {
-    addToast('error', 'Bloqueio de pop-up detectado. Ative pop-ups para imprimir.')
-    return
-  }
-
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <title>Etiqueta de Teste de Producao</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=JetBrains+Mono:wght@700;800&display=swap');
-    
-    @page {
-      size: 100mm 50mm;
-      margin: 0;
-    }
-    
-    body, html {
-      margin: 0;
-      padding: 0;
-      width: 100mm;
-      height: 50mm;
-      background-color: white;
-      color: #000000;
-      font-family: 'Inter', sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-sizing: border-box;
-    }
-    
-    .etiqueta-container {
-      width: 96mm;
-      height: 46mm;
-      border: 2px solid #000;
-      border-radius: 4px;
-      box-sizing: border-box;
-      padding: 2.5mm 3mm;
-      display: flex;
-      flex-direction: column;
-      position: relative;
-    }
-    
-    .header-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-bottom: 2px solid #000;
-      padding-bottom: 2mm;
-      margin-bottom: 1.5mm;
-    }
-    
-    .header-brand {
-      font-size: 12px;
-      font-weight: 900;
-      letter-spacing: -0.03em;
-      line-height: 1;
-      margin: 0;
-    }
-    
-    .badge-teste {
-      background: #000;
-      color: #fff;
-      font-size: 7px;
-      font-weight: 800;
-      text-transform: uppercase;
-      padding: 2.5px 5px;
-      border-radius: 2px;
-      letter-spacing: 0.05em;
-    }
-    
-    .info-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-      margin-bottom: 1mm;
-    }
-    
-    .header-model {
-      font-size: 14px;
-      font-weight: 900;
-      text-transform: uppercase;
-      margin: 0;
-      line-height: 1.1;
-      max-width: 65%;
-      word-break: break-word;
-    }
-    
-    .ref-box {
-      text-align: right;
-    }
-    
-    .ref-label {
-      font-size: 6px;
-      font-weight: 800;
-      text-transform: uppercase;
-      color: #555;
-      margin-bottom: 1px;
-    }
-    
-    .ref-val {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      font-weight: 800;
-      line-height: 1;
-    }
-    
-    .barcode-wrapper {
-      flex: 1;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      width: 100%;
-      overflow: hidden;
-      margin: 0.5mm 0;
-    }
-    
-    .barcode-wrapper svg {
-      height: 100%;
-      max-height: 16mm;
-      width: auto;
-      max-width: 100%;
-    }
-    
-    .footer-grid {
-      display: grid;
-      grid-template-columns: 1.2fr 0.8fr;
-      border-top: 1px dashed #000;
-      padding-top: 1.5mm;
-      gap: 2mm;
-    }
-    
-    .footer-item {
-      display: flex;
-      flex-direction: column;
-    }
-    
-    .footer-label {
-      font-size: 6px;
-      font-weight: 800;
-      text-transform: uppercase;
-      color: #444;
-      margin-bottom: 1px;
-    }
-    
-    .footer-val {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 7.5px;
-      font-weight: 700;
-      color: #000;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-  </style>
-</head>
-<body>
-  <div class="etiqueta-container">
-    <div class="header-row">
-      <h1 class="header-brand">DASS MODELAGEM</h1>
-      <div class="badge-teste">Teste de Produção</div>
-    </div>
-    
-    <div class="info-row">
-      <h2 class="header-model">${modelName}</h2>
-      <div class="ref-box">
-        <div class="ref-label">Referência</div>
-        <div class="ref-val">${modelCode}</div>
-      </div>
-    </div>
-    
-    <div class="barcode-wrapper">
-      ${barcodeSvgHtml}
-    </div>
-    
-    <div class="footer-grid">
-      <div class="footer-item">
-        <span class="footer-label">Planta / Origem</span>
-        <span class="footer-val">${plantaNome}</span>
-      </div>
-      <div class="footer-item">
-        <span class="footer-label">Gerado Em</span>
-        <span class="footer-val">${dateStr}</span>
-      </div>
-    </div>
-  </div>
-  ` + '<' + 'script>' + `
-    window.onload = function() {
-      window.focus();
-      window.print();
-      setTimeout(function() { window.close(); }, 500);
-    };
-  ` + '<' + '/script>' + `
-</body>
-</html>`
-
-  printWindow.document.open()
-  printWindow.document.write(html)
-  printWindow.document.close()
 }
 
 async function openTimeline(ordem: OrdemTeste) {
@@ -757,11 +555,13 @@ onMounted(async () => {
                     type="button"
                     class="btn-action-print"
                     @click="imprimirOrdem(ordem)"
+                    :disabled="loadingPdfId === ordem.id"
                     :aria-label="`Imprimir etiqueta da ordem ${ordem.codigoBarras}`"
                     title="Imprimir Etiqueta"
                   >
-                    <Printer :size="14" aria-hidden="true" />
-                    <span>Imprimir</span>
+                    <Loader2 v-if="loadingPdfId === ordem.id" :size="14" class="animate-spin" aria-hidden="true" />
+                    <Printer v-else :size="14" aria-hidden="true" />
+                    <span>{{ loadingPdfId === ordem.id ? 'Gerando PDF...' : 'Imprimir' }}</span>
                   </button>
                 </div>
               </td>

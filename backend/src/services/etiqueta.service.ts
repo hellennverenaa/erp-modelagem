@@ -4,7 +4,7 @@ import { OrdemTeste } from '../entities/OrdemTeste';
 
 export class EtiquetaService {
   /**
-   * Gera o buffer do código de barras em base64 (Code 128) usando a biblioteca bwip-js.
+   * Gera o buffer do codigo de barras em base64 (Code 128) usando a biblioteca bwip-js.
    */
   private static gerarCodigoBarrasBase64(texto: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -13,8 +13,7 @@ export class EtiquetaService {
         text: texto,
         scale: 3,
         height: 10,
-        includetext: true,
-        textxalign: 'center',
+        includetext: false, // O numero sera renderizado manualmente abaixo com JetBrains Mono
       }, (err, png) => {
         if (err) {
           reject(err);
@@ -31,7 +30,7 @@ export class EtiquetaService {
   public async gerarEtiquetasPdf(ordens: OrdemTeste[]): Promise<Buffer> {
     let browser;
     try {
-      // 1. Gerar imagens base64 dos códigos de barras para cada ordem
+      // 1. Gerar imagens base64 dos codigos de barras para cada ordem
       const etiquetasData = await Promise.all(
         ordens.map(async (ordem) => {
           const barcodeBase64 = await EtiquetaService.gerarCodigoBarrasBase64(ordem.codigoBarras);
@@ -42,7 +41,7 @@ export class EtiquetaService {
         })
       );
 
-      // 2. Montar o HTML agrupando em páginas de no máximo 10 etiquetas
+      // 2. Dividir em chunks de exatos 10 itens para paginacao
       const itemsPerPage = 10;
       const paginas: any[][] = [];
       for (let i = 0; i < etiquetasData.length; i += itemsPerPage) {
@@ -54,6 +53,8 @@ export class EtiquetaService {
         <html lang="pt-BR">
         <head>
           <meta charset="UTF-8">
+          <title>Etiquetas de Rastreamento</title>
+          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=JetBrains+Mono:wght@400;700&display=swap">
           <style>
             @page {
               size: A4;
@@ -62,124 +63,126 @@ export class EtiquetaService {
             body {
               margin: 0;
               padding: 0;
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
               background: #ffffff;
               color: #0f172a;
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
             }
-            .page {
-              width: 190mm;
-              height: 277mm;
-              page-break-after: always;
-              box-sizing: border-box;
-              display: flex;
-              flex-direction: column;
-              justify-content: flex-start;
-              align-items: center;
-            }
-            .page:last-child {
-              page-break-after: avoid;
-            }
-            .grid-container {
+            .page-a4 {
               display: grid;
               grid-template-columns: repeat(2, 90mm);
               grid-template-rows: repeat(5, 46mm);
-              gap: 5mm 10mm;
               justify-content: center;
-              align-content: start;
-              box-sizing: border-box;
+              gap: 2mm;
+              height: 277mm;
               width: 100%;
-              height: 100%;
+              box-sizing: border-box;
+              page-break-after: always;
+            }
+            .page-a4:last-child {
+              page-break-after: avoid;
             }
             .etiqueta {
               width: 90mm;
               height: 46mm;
-              border: 1px dashed #cbd5e1;
+              border: 1px dashed #ccc;
+              padding: 4mm;
               box-sizing: border-box;
-              padding: 3mm 4mm;
               display: flex;
               flex-direction: column;
               justify-content: space-between;
+              overflow: hidden;
+              page-break-inside: avoid;
               background-color: #ffffff;
             }
             .etiqueta-header {
               display: flex;
               justify-content: space-between;
               align-items: center;
-              border-bottom: 1.5px solid #e2e8f0;
-              padding-bottom: 1mm;
-              margin-bottom: 1mm;
+              width: 100%;
             }
             .modelo-nome {
-              font-size: 7.5pt;
+              font-family: 'Inter', sans-serif;
+              font-size: 11px;
               font-weight: 800;
-              color: #0f172a;
+              color: #000000;
               text-transform: uppercase;
               white-space: nowrap;
               overflow: hidden;
               text-overflow: ellipsis;
-              max-width: 60mm;
+              max-width: 52mm;
             }
-            .lote-tipo {
-              font-size: 6.5pt;
+            .badge-teste {
+              background-color: #000000;
+              color: #ffffff;
+              padding: 2px 6px;
+              font-family: 'Inter', sans-serif;
               font-weight: 700;
-              color: #475569;
-              background: #f1f5f9;
-              padding: 0.2mm 1.5mm;
-              border-radius: 1mm;
-              border: 0.5px solid #e2e8f0;
+              font-size: 8px;
+              text-transform: uppercase;
+              border-radius: 2px;
+              letter-spacing: 0.5px;
+              white-space: nowrap;
             }
-            .etiqueta-body {
+            .barcode-container {
               display: flex;
               flex-direction: column;
               align-items: center;
               justify-content: center;
               flex-grow: 1;
-              margin: 1mm 0;
+              margin: 1.5mm 0;
             }
             .barcode-img {
-              max-width: 80mm;
-              max-height: 18mm;
+              width: 100%;
+              height: 22mm;
               object-fit: contain;
+            }
+            .barcode-number {
+              font-family: 'JetBrains Mono', monospace;
+              font-size: 9px;
+              font-weight: 700;
+              text-align: center;
+              letter-spacing: 2px;
+              margin-top: 1px;
+              color: #000000;
             }
             .etiqueta-footer {
               display: flex;
               justify-content: space-between;
               align-items: center;
-              font-size: 6pt;
+              font-family: 'Inter', sans-serif;
+              font-size: 8px;
               color: #64748b;
               border-top: 1px solid #f1f5f9;
               padding-top: 1mm;
-              margin-top: 1mm;
             }
-            .planta-nome {
+            .ref-mono {
+              font-family: 'JetBrains Mono', monospace;
               font-weight: 700;
-              text-transform: uppercase;
+              color: #475569;
             }
           </style>
         </head>
         <body>
           ${paginas.map((items) => `
-            <div class="page">
-              <div class="grid-container">
-                ${items.map(({ ordem, barcodeBase64 }) => `
-                  <div class="etiqueta">
-                    <div class="etiqueta-header">
-                      <span class="modelo-nome">${ordem.modelo?.nome || 'Modelo N/A'}</span>
-                      <span class="lote-tipo">${ordem.possuiCaixaTeste ? 'Caixa Teste' : 'Lote Principal'}</span>
-                    </div>
-                    <div class="etiqueta-body">
-                      <img class="barcode-img" src="${barcodeBase64}" alt="Código de barras" />
-                    </div>
-                    <div class="etiqueta-footer">
-                      <span class="planta-nome">${ordem.planta?.nome || 'Planta DASS'}</span>
-                      <span>Ref: ${ordem.modelo?.codigoProduto || 'N/A'}</span>
-                      <span>Gerado: ${new Date().toLocaleDateString('pt-BR')}</span>
-                    </div>
+            <div class="page-a4">
+              ${items.map(({ ordem, barcodeBase64 }) => `
+                <div class="etiqueta">
+                  <div class="etiqueta-header">
+                    <span class="modelo-nome">${ordem.modelo?.nome || 'Modelo N/A'}</span>
+                    <span class="badge-teste">${ordem.possuiCaixaTeste ? 'TESTE DE PRODUCAO' : 'LOTE PRINCIPAL'}</span>
                   </div>
-                `).join('')}
-              </div>
+                  <div class="barcode-container">
+                    <img class="barcode-img" src="${barcodeBase64}" alt="Codigo de barras" />
+                    <div class="barcode-number">${ordem.codigoBarras}</div>
+                  </div>
+                  <div class="etiqueta-footer">
+                    <span>${ordem.planta?.nome || 'Planta DASS'}</span>
+                    <span class="ref-mono">REF: ${ordem.modelo?.codigoProduto || 'N/A'}</span>
+                    <span>${new Date().toLocaleDateString('pt-BR')}</span>
+                  </div>
+                </div>
+              `).join('')}
             </div>
           `).join('')}
         </body>
