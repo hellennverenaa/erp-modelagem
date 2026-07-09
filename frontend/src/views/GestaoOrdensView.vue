@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   ClipboardList,
   Plus,
@@ -92,6 +93,7 @@ interface HistoricoResponse {
 }
 
 // ─── Estado Reativo ────────────────────────────────────────────
+const router = useRouter()
 const ordens = ref<OrdemTeste[]>([])
 const modelos = ref<Modelo[]>([])
 const catalogoModelos = ref<Modelo[]>([])
@@ -551,6 +553,16 @@ onMounted(async () => {
                   >
                     <Activity :size="14" aria-hidden="true" />
                     <span>Timeline</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-action-timeline"
+                    style="background: #e0f2fe; color: #0369a1; border-color: #bae6fd; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #bae6fd;"
+                    @click="router.push({ name: 'rastreamento-ordem', params: { ordemTesteId: ordem.id } })"
+                    title="Ver Rastreamento Dual Dinâmico"
+                  >
+                    <Activity :size="14" aria-hidden="true" />
+                    <span>Rastrear Dual</span>
                   </button>
                   <template v-if="ordem.possuiCaixaTeste">
                     <button

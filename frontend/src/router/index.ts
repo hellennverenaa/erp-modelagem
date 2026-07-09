@@ -67,6 +67,11 @@ const router = createRouter({
           component: () => import('../views/ChecklistView.vue'),
         },
         {
+          path: 'rastreamento/:ordemTesteId',
+          name: 'rastreamento-ordem',
+          component: () => import('../views/RastreamentoOrdemView.vue'),
+        },
+        {
           path: 'acesso-negado',
           name: 'acesso-negado',
           component: {

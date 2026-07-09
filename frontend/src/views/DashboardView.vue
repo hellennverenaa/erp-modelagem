@@ -58,6 +58,7 @@ const activeLabel = computed(() => {
   if (route.path.endsWith('/rotas'))      return 'Construtor de Rota'
   if (route.path.endsWith('/bipagem'))    return 'Bipagem Operacional'
   if (route.path.endsWith('/rbac'))       return 'Permissões RBAC'
+  if (route.path.includes('/rastreamento/')) return 'Rastreamento Dual'
   return 'Dashboard'
 })
 
