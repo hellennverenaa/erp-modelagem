@@ -3,12 +3,14 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
+import { createServer } from 'http';
 import { AppDataSource } from './config/database';
 import { corsOptions } from './config/cors';
 import { globalLimiter, authLimiter, heavyLimiter } from './config/rateLimits';
 import { swaggerSetup } from './config/swagger';
 import apiRoutes from './routes';
 import { errorHandler } from './middlewares/errorHandler';
+import { webSocketService } from './services/websocket.service';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ERP Chão de Fábrica v4.0 — Servidor Principal
@@ -36,6 +38,7 @@ app.use(helmet({
       imgSrc: ["'self'", 'data:', 'https:'],
     },
   },
+  crossOriginResourcePolicy: { policy: "cross-origin" },
   frameguard: { action: 'deny' },         // Anti-clickjacking
   hidePoweredBy: true,                     // Oculta X-Powered-By
   noSniff: true,                           // Anti MIME-sniffing
@@ -89,8 +92,11 @@ console.log('🔧 Verificando configurações de ambiente...');
 console.log(`🔌 Banco de Dados - Host: ${process.env.DB_HOST || 'localhost'} | Porta: ${process.env.DB_PORT || 5432}`);
 console.log(`🔌 Redis Cache - Host: ${process.env.REDIS_HOST || 'Não configurado'}`);
 
+const httpServer = createServer(app);
+webSocketService.init(httpServer);
+
 // Inicializa o servidor Express primeiro (Garante que a aplicação esteja de pé para responder diagnósticos)
-app.listen(port, () => {
+httpServer.listen(port, () => {
   console.log(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
   console.log(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
   console.log(`🔒 Helmet, CORS e Rate Limiting ativos`);

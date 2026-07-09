@@ -5,6 +5,7 @@ import { OcorrenciaProducao, TipoOcorrencia, GravidadeOcorrencia, StatusOcorrenc
 import { Anexo } from '../entities/Anexo';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { Setor } from '../entities/Setor';
+import { webSocketService } from '../services/websocket.service';
 
 const criarOcorrenciaSchema = z.object({
   ordemTesteId: z.string().uuid({ message: 'ordemTesteId deve ser um UUID valido.' }),
@@ -63,6 +64,9 @@ export class OcorrenciasController {
       const ocorrenciaRepo = AppDataSource.getRepository(OcorrenciaProducao);
       const ocorrenciaSalva = await ocorrenciaRepo.save(ocorrencia);
 
+      // Emitir evento via WebSocket
+      webSocketService.emit('gargalo:update', { action: 'create', data: ocorrenciaSalva });
+
       return res.status(201).json(ocorrenciaSalva);
     } catch (error: any) {
       console.error('[OcorrenciasController] Erro ao criar ocorrencia:', error);
@@ -110,6 +114,9 @@ export class OcorrenciasController {
 
       await ocorrenciaRepo.save(ocorrencia);
 
+      // Emitir evento via WebSocket
+      webSocketService.emit('gargalo:update', { action: 'resolve', data: ocorrencia });
+
       return res.json(ocorrencia);
     } catch (error: any) {
       console.error('[OcorrenciasController] Erro ao resolver ocorrencia:', error);
@@ -145,6 +152,9 @@ export class OcorrenciasController {
 
       const anexoRepo = AppDataSource.getRepository(Anexo);
       const anexoSalvo = await anexoRepo.save(anexo);
+
+      // Emitir evento via WebSocket
+      webSocketService.emit('gargalo:update', { action: 'upload', data: anexoSalvo });
 
       return res.status(201).json(anexoSalvo);
     } catch (error: any) {

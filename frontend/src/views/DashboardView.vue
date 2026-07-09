@@ -23,15 +23,21 @@ const user = computed(() => authStore.user.value)
 const sidebarOpen = ref(true)
 
 const navItems = [
-  { to: '/dashboard/modelos',  label: 'Catálogo de Modelos',   icon: Layers },
-  { to: '/dashboard/ordens',   label: 'Gestão de Ordens',     icon: ClipboardList },
-  { to: '/dashboard/rotas',    label: 'Construtor de Rota',   icon: ListOrdered },
-  { to: '/dashboard/bipagem',  label: 'Bipagem Operacional',  icon: Barcode },
-  { to: '/dashboard/rbac',     label: 'Permissões RBAC',      icon: ShieldCheck },
+  { to: '/dashboard/gerencial', label: 'Torre de Controle',     icon: LayoutDashboard },
+  { to: '/dashboard/modelos',   label: 'Catálogo de Modelos',   icon: Layers },
+  { to: '/dashboard/ordens',    label: 'Gestão de Ordens',     icon: ClipboardList },
+  { to: '/dashboard/rotas',     label: 'Construtor de Rota',   icon: ListOrdered },
+  { to: '/dashboard/bipagem',   label: 'Bipagem Operacional',  icon: Barcode },
+  { to: '/dashboard/rbac',      label: 'Permissões RBAC',      icon: ShieldCheck },
 ]
 
 const visibleNavItems = computed(() => {
   return navItems.filter(item => {
+    // Torre de Controle (Gerencial)
+    if (item.to === '/dashboard/gerencial') {
+      const perfil = authStore.user.value?.perfilNome?.toUpperCase() || ''
+      return authStore.isAdmin.value || authStore.isGerente.value || perfil === 'SUPERVISOR_SETOR'
+    }
     // Permissões RBAC é exclusivo para ADMIN
     if (item.to === '/dashboard/rbac') {
       return authStore.isAdmin.value
@@ -45,6 +51,7 @@ const visibleNavItems = computed(() => {
 })
 
 const activeLabel = computed(() => {
+  if (route.path.endsWith('/gerencial'))  return 'Torre de Controle'
   if (route.path.endsWith('/novo-teste')) return 'Iniciar Novo Teste'
   if (route.path.endsWith('/modelos'))    return 'Catálogo de Modelos'
   if (route.path.endsWith('/ordens'))     return 'Gestão de Ordens'

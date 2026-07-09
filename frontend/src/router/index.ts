@@ -52,6 +52,11 @@ const router = createRouter({
           component: () => import('../views/GestaoModelosView.vue'),
         },
         {
+          path: 'gerencial',
+          name: 'gerencial',
+          component: () => import('../views/DashboardGerencialView.vue'),
+        },
+        {
           path: 'novo-teste',
           name: 'novo-teste',
           component: () => import('../views/WizardCriacaoTesteView.vue'),
@@ -98,6 +103,12 @@ router.beforeEach((to, _from, next) => {
 
     if ((to.name === 'rotas' || to.name === 'novo-teste') && 
         perfil !== 'ADMIN' && perfil !== 'MODELISTA' && perfil !== 'GERENTE') {
+      next({ name: 'acesso-negado' })
+      return
+    }
+
+    if (to.name === 'gerencial' && 
+        perfil !== 'ADMIN' && perfil !== 'GERENTE' && perfil !== 'SUPERVISOR_SETOR') {
       next({ name: 'acesso-negado' })
       return
     }

@@ -9,6 +9,7 @@ import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
+import { webSocketService } from '../services/websocket.service';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RastreamentosController — Motor do ERP (Bipagem de Entrada/Saída)
@@ -193,6 +194,9 @@ export class RastreamentosController {
       });
 
       const salvo = await rastreamentoRepo.save(novoRastreamento);
+
+      // Emitir avanço via WebSocket
+      webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
 
       return res.status(201).json({
         message: 'Bipagem de entrada registrada com sucesso.',
@@ -407,6 +411,9 @@ export class RastreamentosController {
 
       const atualizado = await rastreamentoRepo.save(rastreamento);
 
+      // Emitir avanço via WebSocket
+      webSocketService.emit('peca:avanco', { action: 'saida', data: atualizado });
+
       // 5. Handoff Automático (se aplicável)
       // Se for um setor de Handoff Automático (Categoria A), transfere automaticamente para o próximo setor lógico da rota
       if (isSetorHandoffAutomatico) {
@@ -514,7 +521,8 @@ export class RastreamentosController {
                       dataEntrada:      new Date(),
                       status:           RastreamentoStatus.EM_PROCESSO,
                     });
-                    await rastreamentoRepo.save(proximoRastreamento);
+                    const salvoHandoff = await rastreamentoRepo.save(proximoRastreamento);
+                    webSocketService.emit('peca:avanco', { action: 'handoff', data: salvoHandoff });
                     console.log(`[Handoff Automático] Peça transferida automaticamente de ${setorId} para ${proxima.setorId}`);
                   } else {
                     console.log(`[Handoff Automático] Evitada duplicidade. Entrada para o setor ${proxima.setorId} já existe.`);
