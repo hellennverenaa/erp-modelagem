@@ -562,7 +562,7 @@ onMounted(async () => {
                     title="Ver Rastreamento Dual Dinâmico"
                   >
                     <Activity :size="14" aria-hidden="true" />
-                    <span>Rastrear Dual</span>
+                    <span>Rastrear</span>
                   </button>
                   <template v-if="ordem.possuiCaixaTeste">
                     <button

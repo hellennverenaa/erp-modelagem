@@ -13,7 +13,8 @@ import {
   Barcode,
   ClipboardList,
   Layers,
-  PlusCircle
+  PlusCircle,
+  Activity
 } from '@lucide/vue'
 
 const router = useRouter()
@@ -26,6 +27,7 @@ const navItems = [
   { to: '/dashboard/gerencial', label: 'Torre de Controle',     icon: LayoutDashboard },
   { to: '/dashboard/modelos',   label: 'Catálogo de Modelos',   icon: Layers },
   { to: '/dashboard/ordens',    label: 'Gestão de Ordens',     icon: ClipboardList },
+  { to: '/dashboard/rastreamento', label: 'Rastreamento de Lote', icon: Activity },
   { to: '/dashboard/rotas',     label: 'Construtor de Rota',   icon: ListOrdered },
   { to: '/dashboard/bipagem',   label: 'Bipagem Operacional',  icon: Barcode },
   { to: '/dashboard/rbac',      label: 'Permissões RBAC',      icon: ShieldCheck },
