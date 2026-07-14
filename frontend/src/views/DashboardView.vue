@@ -13,7 +13,8 @@ import {
   Barcode,
   ClipboardList,
   Layers,
-  PlusCircle
+  PlusCircle,
+  MonitorPlay
 } from '@lucide/vue'
 
 const router = useRouter()
@@ -28,6 +29,7 @@ const navItems = [
   { to: '/dashboard/ordens',    label: 'Gestão de Ordens',     icon: ClipboardList },
   { to: '/dashboard/rotas',     label: 'Construtor de Rota',   icon: ListOrdered },
   { to: '/dashboard/bipagem',   label: 'Bipagem Operacional',  icon: Barcode },
+  { to: '/dashboard/rastreamento', label: 'TV Rastreamento',    icon: MonitorPlay },
   { to: '/dashboard/rbac',      label: 'Permissões RBAC',      icon: ShieldCheck },
 ]
 
@@ -58,7 +60,7 @@ const activeLabel = computed(() => {
   if (route.path.endsWith('/rotas'))      return 'Construtor de Rota'
   if (route.path.endsWith('/bipagem'))    return 'Bipagem Operacional'
   if (route.path.endsWith('/rbac'))       return 'Permissões RBAC'
-  if (route.path.includes('/rastreamento/')) return 'Rastreamento Dual'
+  if (route.path.includes('/rastreamento')) return 'Rastreamento Dual'
   return 'Dashboard'
 })
 
