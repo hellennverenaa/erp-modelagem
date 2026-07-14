@@ -33,11 +33,20 @@ export class AuthController {
         );
         console.log('=== PAYLOAD DO UNIX ===', JSON.stringify(response.data, null, 2));
       } catch (axiosError: any) {
-        console.error('[AuthController] Falha de comunicação com o serviço de autenticação DASS:', axiosError.message || axiosError);
-        
+        const status = axiosError.response?.status;
         const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout');
         const isConnRefused = axiosError.code === 'ECONNREFUSED';
         
+        if (status === 401) {
+          console.warn('[AuthController] Tentativa de login recusada pelo DASS: Credenciais inválidas.');
+          return res.status(401).json({
+            error: 'Credenciais inválidas.',
+            code: 'AUTH_INVALID_CREDENTIALS'
+          });
+        }
+
+        console.error('[AuthController] Falha de comunicação com o serviço de autenticação DASS:', axiosError.message || axiosError);
+
         if (isTimeout || isConnRefused) {
           return res.status(503).json({
             error: 'Serviço de autenticação DASS temporariamente indisponível. Tente novamente mais tarde.',
@@ -45,9 +54,9 @@ export class AuthController {
           });
         }
 
-        return res.status(401).json({
-          error: 'Credenciais inválidas ou serviço de autenticação indisponível.',
-          code: 'AUTH_INVALID_CREDENTIALS'
+        return res.status(502).json({
+          error: 'Erro de comunicação com o serviço de autenticação legado.',
+          code: 'AUTH_COMMUNICATION_ERROR'
         });
       }
 

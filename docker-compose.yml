@@ -24,14 +24,14 @@ services:
       
       # Conexão com o PostgreSQL dedicado
       DB_HOST: ${DB_HOST:-erp-postgres}
-      DB_PORT: ${DB_PORT:-5432}
+      DB_PORT: 5432
       DB_NAME: ${DB_NAME:-erp_modelagem}
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS}
       
       # Conexão com o Redis (Cache e Rate Limiting)
       REDIS_HOST: ${REDIS_HOST:-erp-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PORT: 6379
       REDIS_PASS: ${REDIS_PASS}
       
       # JWT (Chave secreta compartilhada com dass_auth_service para SSO)
@@ -174,4 +174,4 @@ networks:
   # Rede interna privada para isolamento do Postgres e Redis
   erp_internal:
     driver: bridge
-    internal: true
+    # internal: true

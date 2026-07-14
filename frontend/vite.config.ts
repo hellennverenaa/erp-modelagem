@@ -7,8 +7,8 @@ export default defineConfig({
     include: ['socket.io-client'],
   },
   plugins: [
-    vue(),
     tailwindcss(),
+    vue()
   ],
   server: {
     // Força o empacotamento via polling se o WebSocket falhar
