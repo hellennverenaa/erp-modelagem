@@ -23,7 +23,13 @@ export class AuthController {
       }
 
       // Conexão de rede Docker via variável de ambiente (Zero Hardcode)
-      const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://dass-auth-service:2399';
+      const authServiceUrl = process.env.AUTH_SERVICE_URL;
+      if (!authServiceUrl) {
+        return res.status(500).json({
+          error: 'A variável de ambiente AUTH_SERVICE_URL não está configurada.',
+          code: 'AUTH_SERVICE_URL_MISSING'
+        });
+      }
 
       let response;
       try {
@@ -34,25 +40,17 @@ export class AuthController {
         console.log('=== PAYLOAD DO UNIX ===', JSON.stringify(response.data, null, 2));
       } catch (axiosError: any) {
         const status = axiosError.response?.status;
-        const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout');
-        const isConnRefused = axiosError.code === 'ECONNREFUSED';
-        
-        if (status === 401) {
-          console.warn('[AuthController] Tentativa de login recusada pelo DASS: Credenciais inválidas.');
+        const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout') || axiosError.message?.includes('timeout of');
+
+        if (status === 401 || isTimeout) {
+          console.warn('[AuthController] Tentativa de login recusada pelo DASS: Credenciais inválidas ou tempo de resposta esgotado.');
           return res.status(401).json({
-            error: 'Credenciais inválidas.',
-            code: 'AUTH_INVALID_CREDENTIALS'
+            error: 'Credenciais inválidas ou serviço de autenticação temporariamente indisponível.',
+            code: 'AUTH_UNAUTHORIZED'
           });
         }
 
         console.error('[AuthController] Falha de comunicação com o serviço de autenticação DASS:', axiosError.message || axiosError);
-
-        if (isTimeout || isConnRefused) {
-          return res.status(503).json({
-            error: 'Serviço de autenticação DASS temporariamente indisponível. Tente novamente mais tarde.',
-            code: 'AUTH_SERVICE_UNAVAILABLE'
-          });
-        }
 
         return res.status(502).json({
           error: 'Erro de comunicação com o serviço de autenticação legado.',
