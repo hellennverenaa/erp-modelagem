@@ -57,7 +57,6 @@ router.post('/imprimir', verificarPermissaoSetor('BIPAR_ENTRADA'), imprimirEtiqu
  */
 router.post(
   '/gerar',
-  verificarPermissaoSetor('IMPRIMIR_ETIQUETA', 'body'),
   gerarEtiquetas
 );
 
