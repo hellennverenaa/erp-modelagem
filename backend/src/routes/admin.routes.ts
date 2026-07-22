@@ -68,6 +68,27 @@ router.get('/setores', adminController.getSetores);
 
 /**
  * @swagger
+ * /api/admin/config-opcoes:
+ *   get:
+ *     summary: Lista config_opcoes filtradas por categoria (ex: setor_tipo)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: categoria
+ *         schema: { type: string }
+ *         description: Filtrar por valor da categoria (ex. setor_tipo)
+ *     responses:
+ *       200:
+ *         description: Lista de opções
+ *       401:
+ *         description: Não autorizado
+ */
+router.get('/config-opcoes', adminController.getConfigOpcoes);
+
+/**
+ * @swagger
  * /api/admin/modelos:
  *   get:
  *     summary: Lista todos os modelos ativos (para dropdowns de Gestão de Ordens)

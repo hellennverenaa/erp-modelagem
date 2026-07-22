@@ -209,6 +209,7 @@ const form = ref({
   plantaId: '',
   prioridadePcp: '',
   observacoes: '',
+  possuiCaixaTeste: false,
 })
 const formErrors = ref<Record<string, string>>({})
 
@@ -324,6 +325,7 @@ async function handleCreateOrdem() {
       plantaId:      form.value.plantaId,
       prioridadePcp: form.value.prioridadePcp,
       observacoes:   form.value.observacoes || null,
+      possuiCaixaTeste: form.value.possuiCaixaTeste,
     })
     addToast('success', 'Ordem de teste criada com sucesso.')
     // Recarrega dropdown para remover o modelo que agora tem ordem ativa
@@ -353,7 +355,7 @@ async function handleCreateOrdem() {
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
 function openModal() {
-  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '' }
+  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '', possuiCaixaTeste: false }
   formErrors.value = {}
   showModal.value = true
 }
@@ -729,6 +731,24 @@ onMounted(async () => {
                   <AlertCircle :size="12" aria-hidden="true" />
                   {{ formErrors.prioridadePcp }}
                 </span>
+              </div>
+
+              <!-- Possui Caixa Teste -->
+              <div class="form-field toggle-field" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 16px;">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <label for="chk-caixa-teste" style="font-weight: 600; color: #1e293b; font-size: 0.875rem; margin: 0; cursor: pointer;">
+                    Bifurcação de Fluxo (Caixa Teste)
+                  </label>
+                  <span style="font-size: 0.75rem; color: #64748b;">
+                    Gera lote principal e caixa de teste separados.
+                  </span>
+                </div>
+                <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                  <input type="checkbox" id="chk-caixa-teste" v-model="form.possuiCaixaTeste" style="opacity: 0; width: 0; height: 0;">
+                  <span class="slider round" :style="{ backgroundColor: form.possuiCaixaTeste ? '#0284c7' : '#cbd5e1', position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, transition: '.4s', borderRadius: '34px' }">
+                    <span style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: '.4s', borderRadius: '50%'" :style="form.possuiCaixaTeste ? 'transform: translateX(20px);' : ''"></span>
+                  </span>
+                </label>
               </div>
 
               <!-- Observações (opcional) -->

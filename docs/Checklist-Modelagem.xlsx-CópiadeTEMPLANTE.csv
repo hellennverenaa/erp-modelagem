@@ -1,0 +1,154 @@
+Check List Modelagem,,,,Status
+APOIO,1,Arquivo de corte,,OK
+,2,Base de Fuse,,N/A
+,3,Carimbo de palmilha,,N/A
+,4,Cartela Bordado,,N/A
+,5,Cartela de Dublagem,,OK
+,6,Cartela de Frequência,,N/A
+,7,Cartela de Fuse,,N/A
+,8,Cartela de Serigrafia,,OK
+,9,Cartela de Sublimação,,N/A
+,10,Conferidor de centro de Bordado,,N/A
+,11,Conferidor de peças,,OK
+,12,Ficha de peças,,
+,13,Ficha de peças,,
+,14,Ficha Técnica,,
+,15,Ficha Técnica,,
+,16,Fita do gorgurão,,
+,17,Fotolito conferidfor de Fuse,,
+,18,Fotolito conferidor de matriz de recorte,,
+,19,Fotolito conferidor de navalha,,
+,20,Fotolito de Bordado,,
+,21,Fotolito de conferidor de programada,,
+,22,Fotolito de Laser,,OK
+,23,Fotolito de Recorte,,
+,24,Fotolito de serigrafia,,OK
+,25,Fotolito do Giz,,N/A
+,26,Gabaito de PVC Pinado,,N/A
+,27,Gabarito conferidor de costura dynamic,,N/A
+,28,Gabarito conferidor de Fuse,,N/A
+,29,Gabarito de Ajuste,,OK
+,30,Gabarito de Armalon,,N/A
+,31,Gabarito de bater etiqueta,,OK
+,32,Gabarito de Bordado,,N/A
+,33,Gabarito de conferidor de programada,,OK
+,34,Gabarito de costura dynamic,,N/A
+,35,Gabarito de encolhimento,,N/A
+,36,Gabarito de fenolite,,PENDENTE
+,37,Gabarito de Fuse Acrilico ( preparação ),,N/A
+,38,Gabarito MDF de preparação para presangem de reforço,,OK
+,39,Gabarito de preparar fita gorguraão ,,N/A
+,40,Gabarito de programada,,OK
+,41,Gabarito de Riscação,,OK
+,42,Gabarito mesa pinada,,N/A
+,43,Gabrito de conferir fita gorgurão,,
+,44,Gabrito de MDF Presangem,,OK
+,45,Materia prima,,
+,46,Matirz de conformação da palmilha de montagem,,
+,47,Matriz de Frequência,,
+,48,Matriz de Fuse,,
+,49,Matriz de Recorte,,
+,50,Navalha de recorte,,
+,51,Navalhamento,,
+,52,Papel de sublimação,,
+,53,Pé aberto,,
+,54,Pé confirmado ,,
+,55,Pezinho,,
+,56,PFC/MFM,,
+,57,PFC/MFM,,
+,58,Programa de Bordado,,
+,59,Programa de programa 15 x 10,,
+,60,Programa de programa 25x 20,,
+,61,Programa de programada ( supreme ),,
+,62,Programa de programada garudan,,
+,63,Programa de programada JYL,,
+,64,Protetor de armalon,,
+,65,Relatório de Teste,,
+,66,Relatório do Teste,,
+,67,Silicone de presagem,,
+,68,Tela de Giz,,
+,69,Tela de Serigrafia,,
+,70,Tintas,,
+Pré Costura Costura,71,Cartela de aviamento atacador,,
+,72,Cartela de aviamento de fita,,
+,73,Cartela de aviamento etiqueta,,
+,74,cartela de aviamento ilhos/arruela,,
+,75,Cartela de contra forte,,
+,76,Componentes Atacador,,
+,77,Componentes Contra forte,,
+,78,Componentes etiqueta,,
+,79,Componentes Fita,,
+,80,Componentes ilhois,,
+,81,Componentes linhas,,
+,82,Dispositivo 3D para forro,,
+,83,Dispositivo de fecha forro,,
+,84,Dispositivo para forro paraqueda,,
+,85,Dispósito de Atacador,,
+,86,Dispósito de Espuma,,
+,87,Ferramental de Costura Guia Debrum,,
+,88,Ferramental para ilhois,,
+,89,Ficha tecnica,,
+,90,Fotolito da matriz de recorte,,
+,91,Fotolito de Programada,,
+,92,Fotolito de Serigrafia,,
+,93,Gabarito 3D costura,,
+,94,Gabarito de conferir centro da programada,,
+,95,Gabarito de conferir fita,,
+,96,Gabarito de costura programada,,
+,97,Gabarito de prepara fita,,
+,98,Gabarito de riscação (gaspeas/lateral/traseiro/linguerta),,
+,99,Gabarito de riscação do forro,,
+,100,Matirz tijolinho,,
+,101,Matriz de pré conformação,,
+,102,Matriz de recorte,,
+,103,Matriz girafinha,,
+,104,Pé aberto,,
+,105,Pé confirmado,,
+,106,Pezinho,,
+,107,PFC/MFM,,
+,108,Programa de programa 15 x 10,,
+,109,Programa de programa 25x 20,,
+,110,Programa de programada (supreme),,
+,111,Programa de programada garudan,,
+,112,Programa de programada JYL,,
+,113,Relatório do Teste,,
+,114,Video POP,,
+Montagem,115,Cartela de palmilha,,
+,116,Ferramental de Montagem Calceira,,
+,117,Ferramental de Montagem modelador de biqueira,,
+,118,Ferramental de Montagem Monta Bico,,
+,119,Forma de montagem,,
+,120,Gabarito  Regua ponta a ponto,,
+,121,Gabarito de conferir fitilho,,
+,122,Gabaritos de Montagem( altura ),,
+,123,Massa de Vulcanizado,,
+,124,Matriz de Conformação fria,,
+,125,Matriz de conformação quente,,
+,126,MFM/PFC,,
+,127,PAD de Bucha,,
+,128,PAD de bucha de caixa,,
+,129,PAD de Riscação,,
+,130,PAD Prensagem ,,
+,131,Palmilha de montagem,,
+,132,Pé aberto,,
+,133,Pé confirmado,,
+,134,Proteção de Lingueta,,
+,135,Protetor de DackTaill,,
+,136,Relatório do Teste,,
+,137,Solado,,
+,138,Video POP,,
+Pre-Fabricado,139,Alma de solado,,
+,140,Chaplona e Regua,,
+,141,Clichê de tampografia,,
+,142,Confirmação de sola,,
+,143,Forma de prensagem pré,,
+,144,Fotolito de conferido de matriz de recorte,,
+,145,Gabairto 3D,,
+,146,Gabarito  Regua ponta a ponto,,
+,147,Navalha de recorte da borracha,,
+,148,"Pacote tecnico Pré ( EVA, Borracha, enchimento e estabilizador)",,
+,149,PFC/MFM/POP,,
+,150,Planta e salto,,
+,151,Rampa de centração,,
+,152,Tampão de silicone,,
+,153,Video POP,,

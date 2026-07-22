@@ -33,6 +33,9 @@ import { AuditLog } from '../entities/AuditLog';
 import { InsightQualidade } from '../entities/InsightQualidade';
 import { OcorrenciaProducao } from '../entities/OcorrenciaProducao';
 import { DossieModelo } from '../entities/DossieModelo';
+import { CatalogoPeca } from '../entities/CatalogoPeca';
+import { CatalogoItemChecklist } from '../entities/CatalogoItemChecklist';
+import { EtapaCortePeca } from '../entities/EtapaCortePeca';
 
 // Carrega as variáveis de ambiente do arquivo .env
 dotenv.config();
@@ -63,6 +66,7 @@ export const AppDataSource = new DataSource({
     Rastreamento,
     EtapaApoio,
     EtapaCorte,
+    EtapaCortePeca,
     ChecklistTemplate,
     ChecklistTemplateItem,
     Checklist,
@@ -80,7 +84,9 @@ export const AppDataSource = new DataSource({
     AuditLog,
     InsightQualidade,
     OcorrenciaProducao,
-    DossieModelo
+    DossieModelo,
+    CatalogoPeca,
+    CatalogoItemChecklist
   ],
   migrations: [__dirname + '/../migrations/**/*.{js,ts}'],
   subscribers: [],

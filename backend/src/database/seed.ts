@@ -4,6 +4,8 @@ import { Planta } from '../entities/Planta';
 import { Modelo, ModeloStatus } from '../entities/Modelo';
 import { ConfigCategoria } from '../entities/ConfigCategoria';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
+import { seedCatalogoPecas } from './seeds/seedCatalogoPecas';
+import { seedCatalogoChecklist } from './seeds/seedCatalogoChecklist';
 
 async function runSeed() {
   console.log('Iniciando o Database Seeding...');
@@ -51,7 +53,7 @@ async function runSeed() {
         slug: 'setor_tipo',
         nomeExibicao: 'Tipo de Setor',
         descricao: 'Categorização principal dos setores na fábrica',
-        opcoes: ['Almoxarifado', 'Navalha', 'Telas', 'Corte', 'Costura', 'Montagem', 'Acabamento']
+        opcoes: ['Almoxarifado', 'Navalha', 'Telas', 'Corte', 'Apoio', 'Costura', 'Pré-Fabricado', 'Montagem', 'Acabamento']
       },
       {
         slug: 'subsetor_corte',
@@ -122,6 +124,12 @@ async function runSeed() {
         console.log(`Modelo '${modData.nome}' já existe.`);
       }
     }
+
+    // 5. Inserir Catálogo de Peças (Dados.csv)
+    await seedCatalogoPecas(AppDataSource);
+
+    // 6. Inserir Catálogo de Itens de Checklist (Checklist-Modelagem.xlsx-CópiadeTEMPLANTE.csv)
+    await seedCatalogoChecklist(AppDataSource);
 
     console.log('Database Seeding concluído com sucesso!');
   } catch (error) {

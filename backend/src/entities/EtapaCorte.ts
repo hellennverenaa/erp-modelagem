@@ -6,11 +6,13 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
+  OneToMany,
   JoinColumn,
 } from 'typeorm';
 import { Rastreamento } from './Rastreamento';
 import { EstacaoTrabalho } from './EstacaoTrabalho';
 import { Usuario } from './Usuario';
+import { EtapaCortePeca } from './EtapaCortePeca';
 import { uuidv7 } from 'uuidv7';
 
 export enum EtapaCorteTipo {
@@ -72,6 +74,10 @@ export class EtapaCorte {
   // Justificativa obrigatória caso resultado_conformidade seja NAO_OK
   @Column({ type: 'text', nullable: true })
   observacao: string | null;
+
+  // Avaliação individual por peça (v5.1 - Fechamento Peça a Peça)
+  @OneToMany('EtapaCortePeca', 'etapaCorte')
+  pecasAvaliadas: EtapaCortePeca[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

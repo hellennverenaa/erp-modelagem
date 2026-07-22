@@ -20,7 +20,8 @@ import {
   AlertOctagon,
   Upload,
   X,
-  Check
+  Check,
+  Plus
 } from '@lucide/vue'
 
 // ─── Interfaces ──────────────────────────────────────────────────────────
@@ -29,6 +30,14 @@ interface Setor {
   nome: string
   codigo: string
   tipoOpcaoId: string
+  tipoOpcaoValor: string | null  // Incluído pelo backend: 'ALMOXARIFADO', 'NAVALHA', 'TELAS', etc.
+  tipoOpcaoLabel: string | null
+}
+
+interface ConfigOpcao {
+  id: string
+  valor: string   // Ex: 'ALMOXARIFADO', 'NAVALHA', 'TELAS'
+  label: string
 }
 
 interface OrdemTeste {
@@ -40,11 +49,18 @@ interface OrdemTeste {
 
 const router = useRouter()
 
-const SETORES_FASE_INICIAL = [
-  'ecb2d21d-51db-41a7-8261-17e8a5f03fed', // Almoxarifado da Modelagem
-  'd40e4883-4f99-45cf-9c5c-c9da2ff53c26', // Setor de Navalha
-  '8686f071-1a7c-4df5-861b-e3316d4ec01c'  // Setor de Telas
-]
+// Zero Hardcode: setores de fase inicial identificados pelo `valor` em config_opcoes
+// Espelha exatamente SETORES_HANDOFF_AUTOMATICO_VALORES do backend (rastreamentos.controller.ts)
+const VALORES_SETOR_FASE_INICIAL = ['ALMOXARIFADO', 'NAVALHA', 'TELAS'] as const
+
+// Computed DINÂMICO: verifica se o setor selecionado é da fase inicial
+// usa tipoOpcaoValor já retornado pelo endpoint /admin/setores — ZERO HARDCODE de UUID.
+const isSetorFaseInicial = computed<boolean>(() => {
+  if (!selecionouSetorId.value) return false
+  const setor = setores.value.find(s => s.id === selecionouSetorId.value)
+  if (!setor?.tipoOpcaoValor) return false
+  return (VALORES_SETOR_FASE_INICIAL as readonly string[]).includes(setor.tipoOpcaoValor)
+})
 
 // ─── State ───────────────────────────────────────────────────────────────
 const setores = ref<Setor[]>([])
@@ -60,14 +76,42 @@ watch(codigoLeitura, (novoCodigo) => {
     ordemAtiva.value = null
     return
   }
-  
   const loteEncontrado = lotesDisponiveis.value.find(
     l => l.codigoBarras.toUpperCase() === codigo || l.id === codigo
   )
-  if (loteEncontrado) {
-    ordemAtiva.value = loteEncontrado
-  } else {
-    ordemAtiva.value = null
+  ordemAtiva.value = loteEncontrado ?? null
+})
+
+// ─── Checklist State ─────────────────────────────────────────────────────
+const loadingChecklist = ref(false)
+const salvandoChecklist = ref(false)
+const erroChecklist = ref('')
+const templateChecklist = ref<any>(null)
+const itensEstaticos = ref<any[]>([])
+const itensAvulsos = ref<any[]>([])
+const bloqueante = ref(false)
+const observacoesGerais = ref('')
+// Trava de Handoff: só true após POST /checklists/responder retornar 201
+const checklistConcluidoComSucesso = ref(false)
+
+const podeAdicionarItemAvulso = computed(() => {
+  if (!user.value) return false
+  const perfil = user.value.perfilNome?.toUpperCase() || ''
+  return ['ADMIN', 'MODELISTA', 'GERENTE_MODELAGEM', 'ASSISTENTE_MODELAGEM', 'GERENTE'].includes(perfil)
+})
+
+// Reseta a trava do checklist ao mudar de ordem ou setor
+watch([ordemAtiva, selecionouSetorId], async ([novoLote, novoSetor]) => {
+  checklistConcluidoComSucesso.value = false
+  itensEstaticos.value = []
+  itensAvulsos.value = []
+  templateChecklist.value = null
+  erroChecklist.value = ''
+  observacoesGerais.value = ''
+  bloqueante.value = false
+
+  if (novoLote && isSetorFaseInicial.value) {
+    await carregarChecklist(novoLote, novoSetor as string)
   }
 })
 
@@ -193,8 +237,14 @@ async function pararCamera() {
 onMounted(async () => {
   loadingSetores.value = true
   try {
-    const resSetores = await api.get('/admin/setores')
+    // Carrega setores (já inclui tipoOpcaoValor) e lotes em paralelo
+    const [resSetores, resLotes] = await Promise.all([
+      api.get('/admin/setores'),
+      api.get('/lotes'),
+    ])
+
     setores.value = resSetores.data
+    lotesDisponiveis.value = resLotes.data
 
     if (user.value && user.value.setorId && setores.value.some(s => s.id === user.value?.setorId)) {
       selecionouSetorId.value = user.value.setorId
@@ -202,8 +252,6 @@ onMounted(async () => {
       selecionouSetorId.value = setores.value[0].id
     }
 
-    const resLotes = await api.get('/lotes')
-    lotesDisponiveis.value = resLotes.data
   } catch (err: any) {
     console.error('[BipagemView] Erro ao carregar dados iniciais:', err)
     triggerToast('Nao foi possivel carregar os dados iniciais.', 'error')
@@ -250,12 +298,10 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
       }
     }
 
-    if (acao === 'saida' && SETORES_FASE_INICIAL.includes(selecionouSetorId.value)) {
-      triggerToast('Redirecionando para o checklist obrigatorio do setor...', 'success')
-      setTimeout(() => {
-        router.push(`/dashboard/checklist/${ordemTesteId}/${selecionouSetorId.value}`)
-      }, 1000)
-      codigoLeitura.value = ''
+    // Trava de Handoff: setores de fase inicial exigem checklist concluído antes da saída
+    if (acao === 'saida' && isSetorFaseInicial.value && !checklistConcluidoComSucesso.value) {
+      triggerToast('Preencha e salve o checklist obrigatorio antes de registrar a saida.', 'error')
+      forcarFocoInput()
       return
     }
 
@@ -300,52 +346,137 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
   }
 }
 
-async function irParaConferencia() {
-  const codigo = codigoLeitura.value.trim()
-  if (!codigo) {
-    triggerToast('Insira ou bipa um codigo de barras valido para prosseguir.', 'error')
-    forcarFocoInput()
-    return
-  }
-
-  if (!selecionouSetorId.value) {
-    triggerToast('Por favor, selecione o seu Setor operacional atual.', 'error')
-    return
-  }
-
-  loadingBip.value = true
+// ─── Checklist Logic ─────────────────────────────────────────────────────
+async function carregarChecklist(lote: any, setorId: string) {
+  loadingChecklist.value = true
+  erroChecklist.value = ''
   try {
-    const resLotes = await api.get('/lotes')
-    const lotesList: OrdemTeste[] = resLotes.data
-    
-    const loteEncontrado = lotesList.find(
-      l => l.codigoBarras.toUpperCase() === codigo.toUpperCase() || l.id === codigo
+    const setorLocal = setores.value.find(s => s.id === setorId)
+    if (!setorLocal) throw new Error('Setor invalido')
+
+    const resTemplates = await api.get('/checklists/templates')
+    const templatesList = resTemplates.data || []
+    templateChecklist.value = templatesList.find(
+      (t: any) => t.setorTipoOpcaoId === setorLocal.tipoOpcaoId
     )
 
-    let ordemTesteId = ''
-    if (loteEncontrado) {
-      ordemTesteId = loteEncontrado.id
-    } else {
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(codigo)
-      if (isUUID) {
-        ordemTesteId = codigo
+    if (!templateChecklist.value) {
+      if (templatesList.length > 0) {
+        templateChecklist.value = { id: templatesList[0].id, nome: `Checklist — ${setorLocal.nome}`, itens: [] }
       } else {
-        throw new Error('LOTE_NOT_FOUND')
+        templateChecklist.value = { id: '00000000-0000-0000-0000-000000000000', nome: `Checklist — ${setorLocal.nome}`, itens: [] }
       }
     }
 
-    // Redireciona para o checklist
-    router.push(`/dashboard/checklist/${ordemTesteId}/${selecionouSetorId.value}`)
-    codigoLeitura.value = ''
+    const resPecas = await api.get(`/pecas/modelo/${lote.modeloId}`)
+    const pecasList = resPecas.data || []
+
+    itensEstaticos.value = pecasList.map((peca: any) => {
+      let descricao = `Peca ${peca.nome} inspecionada?`
+      const sId = setorId.toLowerCase()
+      
+      if (sId === 'd40e4883-4f99-45cf-9c5c-c9da2ff53c26') { 
+        descricao = `Navalha da peca ${peca.nome} foi revisada e recebida?`
+      } else if (sId === 'ecb2d21d-51db-41a7-8261-17e8a5f03fed') { 
+        descricao = `Material da peca ${peca.nome} recebido completo?`
+      } else if (sId === '8686f071-1a7c-4df5-861b-e3316d4ec01c') { 
+        descricao = `Tela da peca ${peca.nome} recebida e revisada?`
+      }
+
+      return {
+        id: peca.id,
+        descricao,
+        conforme: true,
+        valorResposta: '',
+        observacao: ''
+      }
+    })
+
   } catch (err: any) {
-    console.error('[BipagemView.irParaConferencia] Erro:', err)
-    if (err.message === 'LOTE_NOT_FOUND') {
-      triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
-    } else {
-      triggerToast('Erro de conexao com o servidor.', 'error')
-    }
+    console.error('[BipagemView] Erro ao carregar checklist:', err)
+    erroChecklist.value = 'Falha ao carregar configuracoes do checklist.'
   } finally {
-    loadingBip.value = false
+    loadingChecklist.value = false
+  }
+}
+
+function adicionarItemAvulso() {
+  itensAvulsos.value.push({
+    descricaoAvulsa: '',
+    conforme: true,
+    valorResposta: '',
+    observacao: ''
+  })
+}
+
+function removerItemAvulso(index: number) {
+  itensAvulsos.value.splice(index, 1)
+}
+
+async function finalizarChecklistInline() {
+  erroChecklist.value = ''
+
+  for (const avulso of itensAvulsos.value) {
+    if (!avulso.descricaoAvulsa.trim()) {
+      triggerToast('Preencha a descricao de todos os itens avulsos.', 'error')
+      return
+    }
+  }
+
+  salvandoChecklist.value = true
+
+  try {
+    const respostasPayload = [
+      ...itensEstaticos.value.map(it => ({
+        templateItemId: null,
+        descricaoAvulsa: it.descricao,
+        conforme: it.conforme,
+        valorResposta: it.valorResposta || null,
+        observacao: it.observacao || null
+      })),
+      ...itensAvulsos.value.map(it => ({
+        templateItemId: null,
+        descricaoAvulsa: it.descricaoAvulsa,
+        conforme: it.conforme,
+        valorResposta: it.valorResposta || null,
+        observacao: it.observacao || null
+      }))
+    ]
+
+    const checklistRes = await api.post('/checklists/responder', {
+      ordemTesteId: ordemAtiva.value!.id,
+      templateId: templateChecklist.value.id,
+      setorId: selecionouSetorId.value,
+      bloqueante: bloqueante.value,
+      observacoes: observacoesGerais.value || null,
+      respostas: respostasPayload
+    })
+
+    if (checklistRes.status !== 201) throw new Error('Falha no checklist')
+
+    // Ativa a trava: checklist concluído com sucesso
+    checklistConcluidoComSucesso.value = true
+
+    const bipagemRes = await api.post('/rastreamentos/bipar-saida', {
+      ordemTesteId: ordemAtiva.value!.id,
+      setorId: selecionouSetorId.value,
+      tipoLote: tipoLote.value
+    })
+
+    if (bipagemRes.status === 200 || bipagemRes.status === 201) {
+      triggerToast('Checklist salvo e saida concluida com sucesso. O e-mail foi gerado automaticamente.', 'success')
+      tocarSomSucesso()
+      codigoLeitura.value = ''
+      ordemAtiva.value = null
+      checklistConcluidoComSucesso.value = false // Reset para próxima bipagem
+    }
+  } catch (err: any) {
+    console.error(err)
+    const backendError = err.response?.data?.error || err.message || 'Erro de comunicacao com o servidor.'
+    triggerToast(`Falha operacional: ${backendError}`, 'error')
+  } finally {
+    salvandoChecklist.value = false
+    forcarFocoInput()
   }
 }
 
@@ -622,8 +753,8 @@ async function submeterOcorrencia() {
           <span class="field-hint">Foque este campo e utilize o leitor físico ou clique no ícone da câmera para escanear</span>
         </div>
 
-        <!-- ── TOUCH TARGET BUTTONS (min 56px height) ── -->
-        <div class="action-grid">
+        <!-- ── TOUCH TARGET BUTTONS ── -->
+        <div class="action-grid" :class="{ 'has-checklist': isSetorFaseInicial }">
           <button
             type="button"
             class="btn-action btn-action--entrada"
@@ -635,29 +766,136 @@ async function submeterOcorrencia() {
             <span>Registrar Entrada</span>
           </button>
 
+          <!-- Botão Saída: sempre visível, mas BLOQUEADO até checklist ser concluído nos setores de fase inicial -->
           <button
-            v-if="SETORES_FASE_INICIAL.includes(selecionouSetorId)"
-            type="button"
-            class="btn-action btn-action--conferencia"
-            :disabled="loadingBip"
-            @click="irParaConferencia"
-          >
-            <Loader2 v-if="loadingBip" :size="20" class="spinner" aria-hidden="true" />
-            <ClipboardList v-else :size="20" aria-hidden="true" />
-            <span>Realizar Conferência (Checklist)</span>
-          </button>
-
-          <button
-            v-else
             type="button"
             class="btn-action btn-action--saida"
-            :disabled="loadingBip"
+            :class="{ 'btn-action--locked': isSetorFaseInicial && !checklistConcluidoComSucesso }"
+            :disabled="loadingBip || (isSetorFaseInicial && !checklistConcluidoComSucesso)"
+            :title="isSetorFaseInicial && !checklistConcluidoComSucesso ? 'Preencha o checklist abaixo antes de registrar a saída.' : ''"
             @click="processarBipagem('saida')"
           >
             <Loader2 v-if="loadingBip" :size="20" class="spinner" aria-hidden="true" />
             <ArrowLeft v-else :size="20" aria-hidden="true" />
-            <span>Registrar Saída</span>
+            <span v-if="isSetorFaseInicial && !checklistConcluidoComSucesso">Saida Bloqueada — Preencha o Checklist</span>
+            <span v-else>Registrar Saída</span>
           </button>
+        </div>
+
+        <!-- ── CHECKLIST DINÂMICO INLINE ── -->
+        <div v-if="ordemAtiva && isSetorFaseInicial" class="inline-checklist-container">
+          <div v-if="loadingChecklist" class="ck-loading-box">
+            <Loader2 class="ck-spinner" :size="28" />
+            <span>Carregando configurações do checklist do setor...</span>
+          </div>
+          
+          <div v-else-if="erroChecklist" class="ck-error-box">
+            <AlertTriangle :size="24" />
+            <span>{{ erroChecklist }}</span>
+          </div>
+          
+          <div v-else class="ck-card">
+            <div class="ck-card-header">
+              <h2 class="ck-card-title">{{ templateChecklist?.nome || 'Itens de Verificação' }}</h2>
+              <span class="ck-card-subtitle">Preencha o checklist obrigatório antes de registrar a saída (Handoff).</span>
+            </div>
+
+            <div class="ck-items-list">
+              <!-- Itens Estáticos -->
+              <div v-for="(it, idx) in itensEstaticos" :key="it.id" class="ck-item-row">
+                <div class="ck-item-main">
+                  <span class="ck-item-num">{{ idx + 1 }}</span>
+                  <div class="ck-item-content">
+                    <span class="ck-item-desc">{{ it.descricao }}</span>
+                    <div class="ck-inputs-row">
+                      <div class="ck-input-group">
+                        <label class="ck-input-label">Valor/Medida</label>
+                        <input v-model="it.valorResposta" type="text" class="ck-field-input" placeholder="Ex: Conforme, 12mm..." />
+                      </div>
+                      <div class="ck-input-group">
+                        <label class="ck-input-label">Observação</label>
+                        <input v-model="it.observacao" type="text" class="ck-field-input" placeholder="Obs. se houver..." />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="ck-conformity-box">
+                  <button type="button" class="btn-conf" :class="{ 'btn-conf--on': it.conforme }" @click="it.conforme = true">
+                    <Check :size="16" /><span>OK</span>
+                  </button>
+                  <button type="button" class="btn-conf btn-conf--nok" :class="{ 'btn-conf--nok-on': !it.conforme }" @click="it.conforme = false">
+                    <X :size="16" /><span>N/OK</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Itens Avulsos -->
+              <div v-for="(it, idx) in itensAvulsos" :key="idx" class="ck-item-row ck-item-row--avulso">
+                <div class="ck-item-main">
+                  <span class="ck-item-num ck-item-num--avulso">A</span>
+                  <div class="ck-item-content">
+                    <div class="ck-input-group">
+                      <label class="ck-input-label">Requisito Avulso *</label>
+                      <input v-model="it.descricaoAvulsa" type="text" class="ck-field-input font-bold" placeholder="Ex: Verificar espessura..." required />
+                    </div>
+                    <div class="ck-inputs-row">
+                      <div class="ck-input-group">
+                        <label class="ck-input-label">Valor/Medida</label>
+                        <input v-model="it.valorResposta" type="text" class="ck-field-input" />
+                      </div>
+                      <div class="ck-input-group">
+                        <label class="ck-input-label">Observação</label>
+                        <input v-model="it.observacao" type="text" class="ck-field-input" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="ck-avulso-actions">
+                  <div class="ck-conformity-box">
+                    <button type="button" class="btn-conf" :class="{ 'btn-conf--on': it.conforme }" @click="it.conforme = true">
+                      <Check :size="16" /><span>OK</span>
+                    </button>
+                    <button type="button" class="btn-conf btn-conf--nok" :class="{ 'btn-conf--nok-on': !it.conforme }" @click="it.conforme = false">
+                      <X :size="16" /><span>N/OK</span>
+                    </button>
+                  </div>
+                  <button type="button" class="btn-remove-avulso" @click="removerItemAvulso(idx)">
+                    Excluir
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Add Item Avulso -->
+            <div v-if="podeAdicionarItemAvulso" class="ck-avulso-footer">
+              <button type="button" class="btn-add-avulso" @click="adicionarItemAvulso">
+                <Plus :size="16" /><span>Adicionar Requisito Avulso</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Checklist Footer -->
+          <div v-if="!loadingChecklist && !erroChecklist" class="ck-footer-card">
+            <div class="ck-field-group">
+              <label for="obs-gerais" class="field-label-text">Observações Gerais da Fase</label>
+              <textarea id="obs-gerais" v-model="observacoesGerais" class="ck-textarea" placeholder="Detalhes adicionais sobre desvios..."></textarea>
+            </div>
+            <div class="ck-action-bar">
+              <div class="ck-lock-toggle">
+                <input id="toggle-bloqueante" v-model="bloqueante" type="checkbox" class="ck-checkbox" />
+                <label for="toggle-bloqueante" class="ck-checkbox-label">
+                  <strong>Marcar Pendência como Bloqueante</strong>
+                  <span class="ck-lock-hint">Bloqueia a entrada desta OP nos próximos setores</span>
+                </label>
+              </div>
+              <div class="ck-action-btns">
+                <button type="button" class="btn-submit-ck" :disabled="salvandoChecklist" @click="finalizarChecklistInline">
+                  <Loader2 v-if="salvandoChecklist" class="ck-spinner" :size="16" />
+                  <span>{{ salvandoChecklist ? 'Processando...' : 'Salvar Checklist e Registrar Saída' }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="ocorrencia-divider"></div>
@@ -1225,6 +1463,17 @@ async function submeterOcorrencia() {
   box-shadow: 0 6px 20px rgba(124, 58, 237, 0.25);
 }
 
+/* Trava Visual: botão de Saída bloqueado até checklist ser preenchido */
+.btn-action--locked {
+  background: linear-gradient(135deg, #64748b, #475569) !important;
+  cursor: not-allowed !important;
+  opacity: 0.75;
+}
+.btn-action--locked:hover {
+  box-shadow: none !important;
+  transform: none !important;
+}
+
 .spinner {
   animation: spin 0.8s linear infinite;
 }
@@ -1764,5 +2013,68 @@ input:checked + .slider:before {
 .btn-modal-submit:disabled, .btn-modal-cancel:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ─── CHECKLIST STYLES ─── */
+.inline-checklist-container {
+  margin-top: 2rem;
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ck-loading-box, .ck-error-box { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.75rem; padding: 2rem; text-align: center; color: #64748b; }
+.ck-spinner { animation: spin 0.8s linear infinite; color: #1e40af; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ck-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.75rem; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.02); margin-bottom: 1.25rem; }
+.ck-card-header { padding: 1.25rem; border-bottom: 1px solid #e2e8f0; background: #fafafa; }
+.ck-card-title { font-size: 0.9375rem; font-weight: 700; color: #0f172a; margin: 0 0 0.25rem 0; }
+.ck-card-subtitle { font-size: 0.75rem; color: #64748b; }
+.ck-items-list { display: flex; flex-direction: column; }
+.ck-item-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5rem; padding: 1.25rem; border-bottom: 1px solid #e2e8f0; }
+.ck-item-row--avulso { background: #faf5ff; border-left: 3px solid #c084fc; }
+.ck-item-main { display: flex; align-items: flex-start; gap: 1rem; flex: 1; }
+.ck-item-num { width: 1.5rem; height: 1.5rem; background: #e2e8f0; color: #475569; font-size: 0.75rem; font-weight: 700; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ck-item-num--avulso { background: #f3e8ff; color: #7e22ce; }
+.ck-item-content { flex: 1; display: flex; flex-direction: column; gap: 0.75rem; }
+.ck-item-desc { font-size: 0.875rem; font-weight: 600; color: #1e293b; line-height: 1.4; }
+.ck-inputs-row { display: grid; grid-template-columns: 1fr 1.5fr; gap: 0.75rem; }
+.ck-input-group { display: flex; flex-direction: column; gap: 0.25rem; }
+.ck-input-label { font-size: 0.6875rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
+.ck-field-input { padding: 0.4375rem 0.625rem; font-size: 0.8125rem; font-family: inherit; color: #0f172a; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 0.375rem; outline: none; }
+.ck-field-input:focus { border-color: #1e40af; }
+.ck-textarea { width: 100%; min-height: 5rem; padding: 0.625rem; font-size: 0.875rem; font-family: inherit; color: #0f172a; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 0.5rem; outline: none; resize: vertical; }
+.ck-textarea:focus { border-color: #1e40af; }
+.ck-conformity-box { display: flex; border: 1px solid #cbd5e1; border-radius: 0.375rem; overflow: hidden; flex-shrink: 0; }
+.btn-conf { display: flex; align-items: center; gap: 0.25rem; padding: 0.4375rem 0.75rem; font-size: 0.75rem; font-weight: 700; font-family: inherit; background: #ffffff; color: #64748b; border: none; cursor: pointer; transition: all 0.15s; }
+.btn-conf--on { background: #22c55e; color: #ffffff; }
+.btn-conf--nok-on { background: #ef4444; color: #ffffff; }
+.ck-avulso-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; }
+.btn-remove-avulso { padding: 0.25rem 0.5rem; font-size: 0.75rem; font-weight: 600; color: #ef4444; background: transparent; border: none; cursor: pointer; text-align: right; }
+.ck-avulso-footer { padding: 1.25rem; background: #fafafa; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; }
+.btn-add-avulso { display: flex; align-items: center; gap: 0.375rem; padding: 0.5rem 1rem; font-size: 0.8125rem; font-weight: 700; font-family: inherit; color: #7e22ce; background: #f3e8ff; border: 1px solid #d8b4fe; border-radius: 0.375rem; cursor: pointer; transition: background 0.15s; }
+.btn-add-avulso:hover { background: #e9d5ff; }
+.ck-footer-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 0.75rem; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.02); display: flex; flex-direction: column; gap: 1.25rem; }
+.ck-field-group { display: flex; flex-direction: column; gap: 0.375rem; }
+.field-label-text { font-size: 0.75rem; font-weight: 700; color: #475569; text-transform: uppercase; }
+.ck-action-bar { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; border-top: 1px solid #e2e8f0; padding-top: 1.25rem; }
+.ck-lock-toggle { display: flex; align-items: flex-start; gap: 0.625rem; }
+.ck-checkbox { width: 1rem; height: 1rem; margin-top: 0.125rem; cursor: pointer; }
+.ck-checkbox-label { display: flex; flex-direction: column; font-size: 0.8125rem; color: #334155; cursor: pointer; user-select: none; }
+.ck-lock-hint { font-size: 0.6875rem; color: #64748b; }
+.ck-action-btns { display: flex; align-items: center; gap: 0.75rem; }
+.btn-submit-ck { display: flex; align-items: center; gap: 0.5rem; padding: 0.625rem 1.5rem; font-size: 0.875rem; font-weight: 700; font-family: inherit; color: #ffffff; background: linear-gradient(135deg, #0f172a 0%, #1e40af 100%); border: none; border-radius: 0.5rem; cursor: pointer; transition: opacity 0.15s; }
+.btn-submit-ck:hover { opacity: 0.9; }
+.btn-submit-ck:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.action-grid.has-checklist {
+  display: flex;
+  gap: 1rem;
+}
+.action-grid.has-checklist > button {
+  flex: 1;
 }
 </style>
