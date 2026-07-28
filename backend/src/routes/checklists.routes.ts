@@ -38,6 +38,18 @@ router.get('/templates', checklistsController.getTemplates);
 
 /**
  * @swagger
+ * /api/checklists/catalogo:
+ *   get:
+ *     summary: Busca itens do catálogo de checklist por setor ou termo de busca
+ *     tags:
+ *       - checklists
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get('/catalogo', checklistsController.getCatalogo);
+
+/**
+ * @swagger
  * /api/checklists/responder:
  *   post:
  *     summary: Envia as respostas para o preenchimento de um checklist

@@ -4,6 +4,8 @@ import { AppDataSource } from '../config/database';
 import { Checklist, ChecklistStatus } from '../entities/Checklist';
 import { ChecklistItem } from '../entities/ChecklistItem';
 import { ChecklistTemplate } from '../entities/ChecklistTemplate';
+import { Setor } from '../entities/Setor';
+import { CatalogoItemChecklist } from '../entities/CatalogoItemChecklist';
 import { triggerChecklistEmail } from '../services/email.service';
 
 // ═══ Schema de Validação Zod para a resposta do Checklist ═══
@@ -170,6 +172,58 @@ export class ChecklistsController {
     } catch (error) {
       console.error('[ChecklistsController] Erro ao buscar checklist por ID:', error);
       return res.status(500).json({ error: 'Erro ao buscar dados do checklist' });
+    }
+  };
+
+  /**
+   * GET /api/checklists/catalogo
+   * Busca itens do catálogo de checklist (catalogo_itens_checklist) com filtro por setor e autocomplete por busca
+   */
+  public getCatalogo = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { setorTipoOpcaoId, setorId, q } = req.query;
+      const repo = AppDataSource.getRepository(CatalogoItemChecklist);
+      let targetSetorTipoOpcaoId = setorTipoOpcaoId as string | undefined;
+
+      if (!targetSetorTipoOpcaoId && setorId && typeof setorId === 'string') {
+        const setorRepo = AppDataSource.getRepository(Setor);
+        const setor = await setorRepo.findOne({ where: { id: setorId } });
+        if (setor?.tipoOpcaoId) {
+          targetSetorTipoOpcaoId = setor.tipoOpcaoId;
+        }
+      }
+
+      const searchQuery = typeof q === 'string' ? q.trim() : '';
+
+      const queryBuilder = repo.createQueryBuilder('item')
+        .where('item.ativo = :ativo', { ativo: true });
+
+      // Se há termo de busca 'q', busca globalmente (ou por número/descrição) no catálogo de engenharia
+      if (searchQuery.length > 0) {
+        queryBuilder.andWhere('(item.descricao ILIKE :q OR CAST(item.numeroItem AS TEXT) ILIKE :q)', { q: `%${searchQuery}%` });
+      } else if (targetSetorTipoOpcaoId) {
+        // Se não há termo de busca, filtra pelo setor específico
+        queryBuilder.andWhere('item.setorTipoOpcaoId = :setorTipoOpcaoId', { setorTipoOpcaoId: targetSetorTipoOpcaoId });
+      }
+
+      queryBuilder.orderBy('item.numeroItem', 'ASC');
+
+      let items = await queryBuilder.getMany();
+
+      // Fallback: Se a busca por setor específico não retornou itens e não há busca por termo 'q',
+      // retorna os 50 primeiros itens do catálogo geral para permitir seleção
+      if (items.length === 0 && !searchQuery) {
+        items = await repo.find({
+          where: { ativo: true },
+          order: { numeroItem: 'ASC' },
+          take: 50
+        });
+      }
+
+      return res.json(items);
+    } catch (error) {
+      console.error('[ChecklistsController] Erro ao buscar catálogo de itens:', error);
+      return res.status(500).json({ error: 'Erro ao buscar catálogo de checklist' });
     }
   };
 }

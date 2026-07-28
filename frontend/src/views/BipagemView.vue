@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch, reactive } from 'vue'
-import { useRouter } from 'vue-router'
 import { Html5Qrcode } from 'html5-qrcode'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -21,7 +20,12 @@ import {
   Upload,
   X,
   Check,
-  Plus
+  Plus,
+  Search,
+  Trash2,
+  Mail,
+  ShieldAlert,
+  AlertCircle
 } from '@lucide/vue'
 
 // ─── Interfaces ──────────────────────────────────────────────────────────
@@ -34,20 +38,12 @@ interface Setor {
   tipoOpcaoLabel: string | null
 }
 
-interface ConfigOpcao {
-  id: string
-  valor: string   // Ex: 'ALMOXARIFADO', 'NAVALHA', 'TELAS'
-  label: string
-}
-
 interface OrdemTeste {
   id: string
   codigoBarras: string
   status: string
   possuiCaixaTeste: boolean
 }
-
-const router = useRouter()
 
 // Zero Hardcode: setores de fase inicial identificados pelo `valor` em config_opcoes
 // Espelha exatamente SETORES_HANDOFF_AUTOMATICO_VALORES do backend (rastreamentos.controller.ts)
@@ -82,17 +78,38 @@ watch(codigoLeitura, (novoCodigo) => {
   ordemAtiva.value = loteEncontrado ?? null
 })
 
-// ─── Checklist State ─────────────────────────────────────────────────────
+// ─── Checklist State & Interfaces ─────────────────────────────────────────
+interface ItemChecklistUI {
+  id: string
+  catalogItemId: string | null
+  numeroItem?: number | string
+  descricao: string
+  descricaoAvulsa?: string
+  quantidade: number
+  status: 'OK' | 'NAO_OK' | 'NA'
+  observacao: string
+  isAvulso: boolean
+}
+
 const loadingChecklist = ref(false)
 const salvandoChecklist = ref(false)
 const erroChecklist = ref('')
 const templateChecklist = ref<any>(null)
-const itensEstaticos = ref<any[]>([])
-const itensAvulsos = ref<any[]>([])
+const itensChecklist = ref<ItemChecklistUI[]>([])
 const bloqueante = ref(false)
 const observacoesGerais = ref('')
 // Trava de Handoff: só true após POST /checklists/responder retornar 201
 const checklistConcluidoComSucesso = ref(false)
+
+// Autocomplete State (Catálogo de Engenharia - Zero Hardcode)
+const searchQuery = ref('')
+const autocompleteResults = ref<any[]>([])
+const loadingAutocomplete = ref(false)
+const showAutocompleteDropdown = ref(false)
+
+// Modal Handoff Bloqueado
+const modalBloqueioHandoff = ref(false)
+const mensagemBloqueioHandoff = ref('')
 
 const podeAdicionarItemAvulso = computed(() => {
   if (!user.value) return false
@@ -100,15 +117,31 @@ const podeAdicionarItemAvulso = computed(() => {
   return ['ADMIN', 'MODELISTA', 'GERENTE_MODELAGEM', 'ASSISTENTE_MODELAGEM', 'GERENTE'].includes(perfil)
 })
 
-// Reseta a trava do checklist ao mudar de ordem ou setor
+// Modal de Checklist (Overlay Wide Dialog)
+const showChecklistModal = ref(false)
+
+function abrirModalChecklist() {
+  if (ordemAtiva.value && isSetorFaseInicial.value) {
+    showChecklistModal.value = true
+  }
+}
+
+function fecharModalChecklist() {
+  showChecklistModal.value = false
+}
+
+// Reseta o estado do checklist ao mudar de ordem ou setor
 watch([ordemAtiva, selecionouSetorId], async ([novoLote, novoSetor]) => {
   checklistConcluidoComSucesso.value = false
-  itensEstaticos.value = []
-  itensAvulsos.value = []
+  itensChecklist.value = []
   templateChecklist.value = null
   erroChecklist.value = ''
   observacoesGerais.value = ''
   bloqueante.value = false
+  searchQuery.value = ''
+  showAutocompleteDropdown.value = false
+  modalBloqueioHandoff.value = false
+  showChecklistModal.value = false
 
   if (novoLote && isSetorFaseInicial.value) {
     await carregarChecklist(novoLote, novoSetor as string)
@@ -347,132 +380,216 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
 }
 
 // ─── Checklist Logic ─────────────────────────────────────────────────────
+async function buscarItensCatalogo(queryStr: string = '') {
+  loadingAutocomplete.value = true
+  try {
+    const qTerm = (queryStr !== undefined && queryStr !== null ? queryStr : searchQuery.value || '').trim()
+    const setorLocal = setores.value.find(s => s.id === selecionouSetorId.value)
+    
+    const res = await api.get('/checklists/catalogo', {
+      params: {
+        setorId: selecionouSetorId.value || undefined,
+        setorTipoOpcaoId: setorLocal?.tipoOpcaoId || undefined,
+        q: qTerm
+      }
+    })
+    autocompleteResults.value = res.data || []
+  } catch (err: any) {
+    console.error('[BipagemView] Erro ao buscar catálogo de itens:', err?.response?.data || err?.message || err)
+    autocompleteResults.value = []
+  } finally {
+    loadingAutocomplete.value = false
+  }
+}
+
 async function carregarChecklist(lote: any, setorId: string) {
   loadingChecklist.value = true
   erroChecklist.value = ''
+  itensChecklist.value = []
+  searchQuery.value = ''
+
   try {
     const setorLocal = setores.value.find(s => s.id === setorId)
-    if (!setorLocal) throw new Error('Setor invalido')
+    if (!setorLocal) throw new Error('Setor inválido')
 
+    // 1. Busca templates de checklist
     const resTemplates = await api.get('/checklists/templates')
     const templatesList = resTemplates.data || []
     templateChecklist.value = templatesList.find(
       (t: any) => t.setorTipoOpcaoId === setorLocal.tipoOpcaoId
-    )
+    ) || { id: '00000000-0000-0000-0000-000000000000', nome: `Checklist — ${setorLocal.nome}`, itens: [] }
 
-    if (!templateChecklist.value) {
-      if (templatesList.length > 0) {
-        templateChecklist.value = { id: templatesList[0].id, nome: `Checklist — ${setorLocal.nome}`, itens: [] }
-      } else {
-        templateChecklist.value = { id: '00000000-0000-0000-0000-000000000000', nome: `Checklist — ${setorLocal.nome}`, itens: [] }
-      }
+    // 2. Busca catálogo de engenharia (catalogo_itens_checklist) filtrado pelo setor
+    const resCatalogo = await api.get('/checklists/catalogo', {
+      params: { setorId }
+    })
+    const catalogoItens = resCatalogo.data || []
+
+    if (catalogoItens.length > 0) {
+      itensChecklist.value = catalogoItens.map((cat: any) => ({
+        id: cat.id,
+        catalogItemId: cat.id,
+        numeroItem: cat.numeroItem,
+        descricao: cat.descricao,
+        quantidade: 1,
+        status: 'OK',
+        observacao: '',
+        isAvulso: false
+      }))
+    } else {
+      // Fallback: se não houver catálogo do setor no banco, carrega peças do modelo
+      const resPecas = await api.get(`/pecas/modelo/${lote.modeloId}`)
+      const pecasList = resPecas.data || []
+      itensChecklist.value = pecasList.map((peca: any, idx: number) => ({
+        id: peca.id,
+        catalogItemId: null,
+        numeroItem: idx + 1,
+        descricao: `Peça ${peca.nome} inspecionada`,
+        quantidade: 1,
+        status: 'OK',
+        observacao: '',
+        isAvulso: false
+      }))
     }
 
-    const resPecas = await api.get(`/pecas/modelo/${lote.modeloId}`)
-    const pecasList = resPecas.data || []
-
-    itensEstaticos.value = pecasList.map((peca: any) => {
-      let descricao = `Peca ${peca.nome} inspecionada?`
-      const sId = setorId.toLowerCase()
-      
-      if (sId === 'd40e4883-4f99-45cf-9c5c-c9da2ff53c26') { 
-        descricao = `Navalha da peca ${peca.nome} foi revisada e recebida?`
-      } else if (sId === 'ecb2d21d-51db-41a7-8261-17e8a5f03fed') { 
-        descricao = `Material da peca ${peca.nome} recebido completo?`
-      } else if (sId === '8686f071-1a7c-4df5-861b-e3316d4ec01c') { 
-        descricao = `Tela da peca ${peca.nome} recebida e revisada?`
-      }
-
-      return {
-        id: peca.id,
-        descricao,
-        conforme: true,
-        valorResposta: '',
-        observacao: ''
-      }
-    })
+    // Pré-carrega opções de autocomplete
+    await buscarItensCatalogo('')
 
   } catch (err: any) {
     console.error('[BipagemView] Erro ao carregar checklist:', err)
-    erroChecklist.value = 'Falha ao carregar configuracoes do checklist.'
+    erroChecklist.value = 'Falha ao carregar configurações do checklist.'
   } finally {
     loadingChecklist.value = false
   }
 }
 
+function adicionarItemDoCatalogo(itemCatalogo: any) {
+  const jaExiste = itensChecklist.value.some(it => it.catalogItemId === itemCatalogo.id)
+  if (jaExiste) {
+    triggerToast(`O item #${itemCatalogo.numeroItem} "${itemCatalogo.descricao}" já está na lista.`, 'error')
+    showAutocompleteDropdown.value = false
+    searchQuery.value = ''
+    return
+  }
+
+  itensChecklist.value.push({
+    id: itemCatalogo.id,
+    catalogItemId: itemCatalogo.id,
+    numeroItem: itemCatalogo.numeroItem,
+    descricao: itemCatalogo.descricao,
+    quantidade: 1,
+    status: 'OK',
+    observacao: '',
+    isAvulso: false
+  })
+
+  searchQuery.value = ''
+  showAutocompleteDropdown.value = false
+  triggerToast(`Item "${itemCatalogo.descricao}" adicionado à lista.`, 'success')
+}
+
 function adicionarItemAvulso() {
-  itensAvulsos.value.push({
+  itensChecklist.value.push({
+    id: 'avulso_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    catalogItemId: null,
+    descricao: '',
     descricaoAvulsa: '',
-    conforme: true,
-    valorResposta: '',
-    observacao: ''
+    quantidade: 1,
+    status: 'OK',
+    observacao: '',
+    isAvulso: true
   })
 }
 
-function removerItemAvulso(index: number) {
-  itensAvulsos.value.splice(index, 1)
+function removerItem(index: number) {
+  itensChecklist.value.splice(index, 1)
 }
 
-async function finalizarChecklistInline() {
+async function finalizarChecklistEBiparSaida() {
   erroChecklist.value = ''
 
-  for (const avulso of itensAvulsos.value) {
-    if (!avulso.descricaoAvulsa.trim()) {
-      triggerToast('Preencha a descricao de todos os itens avulsos.', 'error')
+  if (!ordemAtiva.value) {
+    triggerToast('Nenhuma Ordem de Teste selecionada.', 'error')
+    return
+  }
+
+  if (itensChecklist.value.length === 0) {
+    triggerToast('O checklist deve conter pelo menos um item.', 'error')
+    return
+  }
+
+  // Validação 1: Itens avulsos
+  for (let i = 0; i < itensChecklist.value.length; i++) {
+    const item = itensChecklist.value[i]
+    if (item.isAvulso && (!item.descricaoAvulsa || !item.descricaoAvulsa.trim())) {
+      triggerToast(`Preencha a descrição do Item Avulso #${i + 1}.`, 'error')
+      return
+    }
+
+    // Validação 2: Observação obrigatória se NAO_OK
+    if (item.status === 'NAO_OK' && (!item.observacao || !item.observacao.trim())) {
+      const labelItem = item.isAvulso ? item.descricaoAvulsa : item.descricao
+      triggerToast(`Observação é obrigatória para o item Não Conforme: "${labelItem}".`, 'error')
       return
     }
   }
 
+  const temNaoConformidade = itensChecklist.value.some(it => it.status === 'NAO_OK')
+
   salvandoChecklist.value = true
 
   try {
-    const respostasPayload = [
-      ...itensEstaticos.value.map(it => ({
-        templateItemId: null,
-        descricaoAvulsa: it.descricao,
-        conforme: it.conforme,
-        valorResposta: it.valorResposta || null,
-        observacao: it.observacao || null
-      })),
-      ...itensAvulsos.value.map(it => ({
-        templateItemId: null,
-        descricaoAvulsa: it.descricaoAvulsa,
-        conforme: it.conforme,
-        valorResposta: it.valorResposta || null,
-        observacao: it.observacao || null
-      }))
-    ]
+    const respostasPayload = itensChecklist.value.map(it => ({
+      templateItemId: it.catalogItemId || null,
+      itemId: it.catalogItemId || null,
+      descricaoAvulsa: it.isAvulso ? (it.descricaoAvulsa || '').trim() : (it.catalogItemId ? null : it.descricao),
+      valorResposta: `Qtd: ${it.quantidade || 1} | Status: ${it.status}`,
+      conforme: it.status === 'OK',
+      observacao: (it.observacao || '').trim() || null
+    }))
 
     const checklistRes = await api.post('/checklists/responder', {
-      ordemTesteId: ordemAtiva.value!.id,
-      templateId: templateChecklist.value.id,
+      ordemTesteId: ordemAtiva.value.id,
+      templateId: templateChecklist.value?.id || '00000000-0000-0000-0000-000000000000',
       setorId: selecionouSetorId.value,
       bloqueante: bloqueante.value,
-      observacoes: observacoesGerais.value || null,
+      observacoes: (observacoesGerais.value || '').trim() || null,
       respostas: respostasPayload
     })
 
-    if (checklistRes.status !== 201) throw new Error('Falha no checklist')
+    if (checklistRes.status !== 201 && checklistRes.status !== 200) {
+      throw new Error('Falha ao salvar respostas do checklist.')
+    }
 
-    // Ativa a trava: checklist concluído com sucesso
+    // Se houver pendência (NAO_OK) e bloqueante === true
+    if (bloqueante.value && temNaoConformidade) {
+      mensagemBloqueioHandoff.value = `O checklist foi registrado com pendência de qualidade crítica (Bloqueante ativado). A saída da Ordem ${ordemAtiva.value.codigoBarras} foi retida no sistema para este setor.`
+      modalBloqueioHandoff.value = true
+      checklistConcluidoComSucesso.value = false
+      triggerToast('Saída travada por pendência crítica de qualidade.', 'error')
+      return
+    }
+
+    // Liberado para saída (Concessão ou OK)
     checklistConcluidoComSucesso.value = true
 
     const bipagemRes = await api.post('/rastreamentos/bipar-saida', {
-      ordemTesteId: ordemAtiva.value!.id,
+      ordemTesteId: ordemAtiva.value.id,
       setorId: selecionouSetorId.value,
       tipoLote: tipoLote.value
     })
 
     if (bipagemRes.status === 200 || bipagemRes.status === 201) {
-      triggerToast('Checklist salvo e saida concluida com sucesso. O e-mail foi gerado automaticamente.', 'success')
+      triggerToast('Checklist registrado, e-mail enviado e Saída liberada com sucesso.', 'success')
       tocarSomSucesso()
       codigoLeitura.value = ''
       ordemAtiva.value = null
-      checklistConcluidoComSucesso.value = false // Reset para próxima bipagem
+      checklistConcluidoComSucesso.value = false
     }
+
   } catch (err: any) {
-    console.error(err)
-    const backendError = err.response?.data?.error || err.message || 'Erro de comunicacao com o servidor.'
+    console.error('[BipagemView] Erro ao responder checklist:', err)
+    const backendError = err.response?.data?.error || err.message || 'Erro de comunicação com o servidor.'
     triggerToast(`Falha operacional: ${backendError}`, 'error')
   } finally {
     salvandoChecklist.value = false
@@ -782,120 +899,37 @@ async function submeterOcorrencia() {
           </button>
         </div>
 
-        <!-- ── CHECKLIST DINÂMICO INLINE ── -->
-        <div v-if="ordemAtiva && isSetorFaseInicial" class="inline-checklist-container">
-          <div v-if="loadingChecklist" class="ck-loading-box">
-            <Loader2 class="ck-spinner" :size="28" />
-            <span>Carregando configurações do checklist do setor...</span>
-          </div>
-          
-          <div v-else-if="erroChecklist" class="ck-error-box">
-            <AlertTriangle :size="24" />
-            <span>{{ erroChecklist }}</span>
-          </div>
-          
-          <div v-else class="ck-card">
-            <div class="ck-card-header">
-              <h2 class="ck-card-title">{{ templateChecklist?.nome || 'Itens de Verificação' }}</h2>
-              <span class="ck-card-subtitle">Preencha o checklist obrigatório antes de registrar a saída (Handoff).</span>
+        <!-- ── BANNER CARD RESUMO DO CHECKLIST (Abre o Modal) ── -->
+        <div v-if="ordemAtiva && isSetorFaseInicial" class="mt-6 p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-200 flex-shrink-0">
+              <ClipboardList :size="20" />
             </div>
-
-            <div class="ck-items-list">
-              <!-- Itens Estáticos -->
-              <div v-for="(it, idx) in itensEstaticos" :key="it.id" class="ck-item-row">
-                <div class="ck-item-main">
-                  <span class="ck-item-num">{{ idx + 1 }}</span>
-                  <div class="ck-item-content">
-                    <span class="ck-item-desc">{{ it.descricao }}</span>
-                    <div class="ck-inputs-row">
-                      <div class="ck-input-group">
-                        <label class="ck-input-label">Valor/Medida</label>
-                        <input v-model="it.valorResposta" type="text" class="ck-field-input" placeholder="Ex: Conforme, 12mm..." />
-                      </div>
-                      <div class="ck-input-group">
-                        <label class="ck-input-label">Observação</label>
-                        <input v-model="it.observacao" type="text" class="ck-field-input" placeholder="Obs. se houver..." />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="ck-conformity-box">
-                  <button type="button" class="btn-conf" :class="{ 'btn-conf--on': it.conforme }" @click="it.conforme = true">
-                    <Check :size="16" /><span>OK</span>
-                  </button>
-                  <button type="button" class="btn-conf btn-conf--nok" :class="{ 'btn-conf--nok-on': !it.conforme }" @click="it.conforme = false">
-                    <X :size="16" /><span>N/OK</span>
-                  </button>
-                </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-bold text-slate-900">Gate de Qualidade — Checklist de Saída</h3>
+                <span
+                  class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border"
+                  :class="checklistConcluidoComSucesso ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'"
+                >
+                  {{ checklistConcluidoComSucesso ? 'Concluído' : 'Pendente' }}
+                </span>
               </div>
-
-              <!-- Itens Avulsos -->
-              <div v-for="(it, idx) in itensAvulsos" :key="idx" class="ck-item-row ck-item-row--avulso">
-                <div class="ck-item-main">
-                  <span class="ck-item-num ck-item-num--avulso">A</span>
-                  <div class="ck-item-content">
-                    <div class="ck-input-group">
-                      <label class="ck-input-label">Requisito Avulso *</label>
-                      <input v-model="it.descricaoAvulsa" type="text" class="ck-field-input font-bold" placeholder="Ex: Verificar espessura..." required />
-                    </div>
-                    <div class="ck-inputs-row">
-                      <div class="ck-input-group">
-                        <label class="ck-input-label">Valor/Medida</label>
-                        <input v-model="it.valorResposta" type="text" class="ck-field-input" />
-                      </div>
-                      <div class="ck-input-group">
-                        <label class="ck-input-label">Observação</label>
-                        <input v-model="it.observacao" type="text" class="ck-field-input" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="ck-avulso-actions">
-                  <div class="ck-conformity-box">
-                    <button type="button" class="btn-conf" :class="{ 'btn-conf--on': it.conforme }" @click="it.conforme = true">
-                      <Check :size="16" /><span>OK</span>
-                    </button>
-                    <button type="button" class="btn-conf btn-conf--nok" :class="{ 'btn-conf--nok-on': !it.conforme }" @click="it.conforme = false">
-                      <X :size="16" /><span>N/OK</span>
-                    </button>
-                  </div>
-                  <button type="button" class="btn-remove-avulso" @click="removerItemAvulso(idx)">
-                    Excluir
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Add Item Avulso -->
-            <div v-if="podeAdicionarItemAvulso" class="ck-avulso-footer">
-              <button type="button" class="btn-add-avulso" @click="adicionarItemAvulso">
-                <Plus :size="16" /><span>Adicionar Requisito Avulso</span>
-              </button>
+              <p class="text-xs text-slate-500 mt-0.5">
+                {{ checklistConcluidoComSucesso ? 'Checklist preenchido e verificado com sucesso. Saída liberada.' : 'Preencha o formulário em tela cheia para liberar o Handoff deste setor.' }}
+              </p>
             </div>
           </div>
 
-          <!-- Checklist Footer -->
-          <div v-if="!loadingChecklist && !erroChecklist" class="ck-footer-card">
-            <div class="ck-field-group">
-              <label for="obs-gerais" class="field-label-text">Observações Gerais da Fase</label>
-              <textarea id="obs-gerais" v-model="observacoesGerais" class="ck-textarea" placeholder="Detalhes adicionais sobre desvios..."></textarea>
-            </div>
-            <div class="ck-action-bar">
-              <div class="ck-lock-toggle">
-                <input id="toggle-bloqueante" v-model="bloqueante" type="checkbox" class="ck-checkbox" />
-                <label for="toggle-bloqueante" class="ck-checkbox-label">
-                  <strong>Marcar Pendência como Bloqueante</strong>
-                  <span class="ck-lock-hint">Bloqueia a entrada desta OP nos próximos setores</span>
-                </label>
-              </div>
-              <div class="ck-action-btns">
-                <button type="button" class="btn-submit-ck" :disabled="salvandoChecklist" @click="finalizarChecklistInline">
-                  <Loader2 v-if="salvandoChecklist" class="ck-spinner" :size="16" />
-                  <span>{{ salvandoChecklist ? 'Processando...' : 'Salvar Checklist e Registrar Saída' }}</span>
-                </button>
-              </div>
-            </div>
-          </div>
+          <button
+            type="button"
+            class="w-full sm:w-auto px-4 py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition shadow-sm whitespace-nowrap"
+            :class="checklistConcluidoComSucesso ? 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'"
+            @click="abrirModalChecklist"
+          >
+            <ClipboardList :size="16" />
+            <span>{{ checklistConcluidoComSucesso ? 'Revisar Checklist' : 'Abrir Modal de Checklist' }}</span>
+          </button>
         </div>
 
         <div class="ocorrencia-divider"></div>
@@ -1044,6 +1078,316 @@ async function submeterOcorrencia() {
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ══ MODAL DE CHECKLIST (Overhead Wide Dialog - Light ERP Theme) ═════════════════════ -->
+    <Transition name="fade">
+      <div
+        v-if="showChecklistModal && ordemAtiva && isSetorFaseInicial"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 sm:p-6"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="bg-white border border-slate-200 rounded-2xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-all">
+          
+          <!-- Modal Header -->
+          <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-200">
+                <ClipboardList :size="20" />
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h2 class="text-base font-bold text-slate-900">{{ templateChecklist?.nome || 'Checklist de Qualidade' }}</h2>
+                  <span class="text-xs font-bold px-2.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    OP: {{ ordemAtiva.codigoBarras }}
+                  </span>
+                </div>
+                <p class="text-xs text-slate-500">Preencha o formulário de verificação antes de liberar o Handoff de Saída.</p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              @click="fecharModalChecklist"
+              title="Fechar Modal"
+            >
+              <X :size="20" />
+            </button>
+          </div>
+
+          <!-- Modal Body (Scrollable Form) -->
+          <div class="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-white text-slate-900">
+            
+            <div v-if="loadingChecklist" class="py-12 flex flex-col items-center justify-center gap-3 text-slate-500">
+              <Loader2 class="animate-spin text-indigo-600" :size="32" />
+              <span class="text-sm font-medium">Carregando configurações do catálogo de qualidade...</span>
+            </div>
+
+            <div v-else-if="erroChecklist" class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center gap-3">
+              <AlertTriangle :size="24" class="text-rose-600" />
+              <span>{{ erroChecklist }}</span>
+            </div>
+
+            <template v-else>
+              <!-- Autocomplete Input (Catálogo de Engenharia - Zero Hardcode) -->
+              <div class="relative">
+                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Buscar item no Catálogo de Engenharia (Zero Hardcode)
+                </label>
+                <div class="relative">
+                  <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <Search :size="18" />
+                  </div>
+                  <input
+                    v-model="searchQuery"
+                    type="text"
+                    class="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition shadow-xs"
+                    placeholder="Digite para buscar item do catálogo ou número ordinal..."
+                    @focus="showAutocompleteDropdown = true; buscarItensCatalogo(searchQuery)"
+                    @input="showAutocompleteDropdown = true; buscarItensCatalogo(searchQuery)"
+                  />
+                </div>
+
+                <!-- Dropdown Autocomplete (Mousedown.prevent para evitar race condition de blur/click) -->
+                <div
+                  v-if="showAutocompleteDropdown && (loadingAutocomplete || autocompleteResults.length > 0)"
+                  class="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-56 overflow-y-auto custom-scrollbar"
+                >
+                  <div v-if="loadingAutocomplete" class="p-3 text-xs text-slate-500 flex items-center gap-2">
+                    <Loader2 class="animate-spin text-indigo-600" :size="14" />
+                    <span>Consultando catálogo de engenharia...</span>
+                  </div>
+                  <div v-else>
+                    <button
+                      v-for="catItem in autocompleteResults"
+                      :key="catItem.id"
+                      type="button"
+                      class="w-full text-left px-4 py-3 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-900 border-b border-slate-100 last:border-0 flex items-center justify-between transition cursor-pointer"
+                      @mousedown.prevent="adicionarItemDoCatalogo(catItem)"
+                    >
+                      <span class="font-semibold text-sm">#{{ catItem.numeroItem }} — {{ catItem.descricao }}</span>
+                      <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">Catálogo</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Items List Container -->
+              <div class="space-y-3">
+                <div
+                  v-for="(it, idx) in itensChecklist"
+                  :key="it.id"
+                  class="p-4 rounded-xl border transition-all duration-200 shadow-xs"
+                  :class="[
+                    it.status === 'NAO_OK'
+                      ? 'bg-rose-50/60 border-rose-200'
+                      : it.status === 'NA'
+                      ? 'bg-slate-100/50 border-slate-200'
+                      : 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
+                  ]"
+                >
+                  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                    <div class="flex items-start gap-3 flex-1">
+                      <span
+                        class="flex-shrink-0 w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center border shadow-xs"
+                        :class="it.isAvulso ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-indigo-50 border-indigo-200 text-indigo-800'"
+                      >
+                        {{ it.isAvulso ? 'A' : (it.numeroItem ? `#${it.numeroItem}` : (idx + 1)) }}
+                      </span>
+                      <div class="flex-1">
+                        <template v-if="it.isAvulso">
+                          <input
+                            v-model="it.descricaoAvulsa"
+                            type="text"
+                            class="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600"
+                            placeholder="Informe a descrição do requisito/ferramental avulso *"
+                            required
+                          />
+                        </template>
+                        <template v-else>
+                          <span class="text-sm font-semibold text-slate-900 leading-snug">{{ it.descricao }}</span>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- Status Selector (OK / NAO_OK / N/A) -->
+                    <div class="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition shadow-xs"
+                        :class="it.status === 'OK' ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'"
+                        @click="it.status = 'OK'"
+                      >
+                        <Check :size="14" />
+                        <span>OK</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition shadow-xs"
+                        :class="it.status === 'NAO_OK' ? 'bg-rose-600 text-white border-rose-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'"
+                        @click="it.status = 'NAO_OK'"
+                      >
+                        <X :size="14" />
+                        <span>NÃO OK</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition shadow-xs"
+                        :class="it.status === 'NA' ? 'bg-slate-700 text-white border-slate-700 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'"
+                        @click="it.status = 'NA'"
+                      >
+                        <AlertCircle :size="14" />
+                        <span>N/A</span>
+                      </button>
+
+                      <button
+                        v-if="it.isAvulso"
+                        type="button"
+                        class="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition ml-1"
+                        title="Remover item avulso"
+                        @click="removerItem(idx)"
+                      >
+                        <Trash2 :size="15" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Quantidade e Observação -->
+                  <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2.5 border-t border-slate-200/80 mt-2">
+                    <div>
+                      <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Quantidade
+                      </label>
+                      <input
+                        v-model.number="it.quantidade"
+                        type="number"
+                        min="1"
+                        class="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500/20 focus:border-indigo-600"
+                      />
+                    </div>
+                    <div class="sm:col-span-3">
+                      <label
+                        class="block text-[11px] font-bold uppercase tracking-wider mb-1"
+                        :class="it.status === 'NAO_OK' ? 'text-rose-600' : 'text-slate-500'"
+                      >
+                        Observação {{ it.status === 'NAO_OK' ? '* (Obrigatória se NÃO OK)' : '(Opcional)' }}
+                      </label>
+                      <input
+                        v-model="it.observacao"
+                        type="text"
+                        class="w-full bg-white border rounded-lg px-3 py-1.5 text-xs text-slate-900 font-medium placeholder-slate-400 focus:outline-none transition"
+                        :class="[
+                          it.status === 'NAO_OK' && !it.observacao
+                            ? 'border-rose-500 focus:ring-2 focus:ring-rose-500/20'
+                            : 'border-slate-300 focus:ring-1 focus:ring-indigo-500/20 focus:border-indigo-600'
+                        ]"
+                        :placeholder="it.status === 'NAO_OK' ? 'Descreva obrigatoriamente a causa da não-conformidade...' : 'Observações adicionais...'"
+                        :required="it.status === 'NAO_OK'"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Feature de Itens Avulsos -->
+              <div v-if="podeAdicionarItemAvulso" class="pt-2">
+                <button
+                  type="button"
+                  class="w-full py-3 border border-dashed border-slate-300 hover:border-indigo-500 hover:bg-indigo-50/50 rounded-xl text-xs font-bold text-slate-700 hover:text-indigo-700 flex items-center justify-center gap-2 transition bg-white"
+                  @click="adicionarItemAvulso"
+                >
+                  <Plus :size="16" />
+                  <span>Adicionar Item Avulso (Ferramental Não Catalogado)</span>
+                </button>
+              </div>
+
+              <!-- Observações Gerais -->
+              <div class="pt-2">
+                <label for="obs-gerais-modal" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Observações Gerais da Fase
+                </label>
+                <textarea
+                  id="obs-gerais-modal"
+                  v-model="observacoesGerais"
+                  rows="2"
+                  class="w-full bg-white border border-slate-300 rounded-xl p-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 resize-none"
+                  placeholder="Parecer geral da inspeção ou detalhes para o e-mail..."
+                ></textarea>
+              </div>
+            </template>
+          </div>
+
+          <!-- Modal Footer -->
+          <div v-if="!loadingChecklist && !erroChecklist" class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-center gap-2.5">
+              <input
+                id="toggle-bloqueante-modal"
+                v-model="bloqueante"
+                type="checkbox"
+                class="w-4 h-4 rounded border-slate-300 bg-white text-indigo-600 focus:ring-indigo-500/20 cursor-pointer"
+              />
+              <label for="toggle-bloqueante-modal" class="text-xs text-slate-700 cursor-pointer select-none">
+                <strong class="text-slate-900">Marcar Pendência como Bloqueante</strong>
+                <span class="block text-[11px] text-slate-500">Retém a saída desta OP no sistema em caso de desvio</span>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                class="px-4 py-2.5 rounded-lg text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 transition"
+                @click="fecharModalChecklist"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                class="px-5 py-2.5 rounded-lg font-bold text-xs text-white bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="salvandoChecklist"
+                @click="finalizarChecklistEBiparSaida"
+              >
+                <Loader2 v-if="salvandoChecklist" class="animate-spin" :size="16" />
+                <Mail v-else :size="16" />
+                <span>{{ salvandoChecklist ? 'Processando...' : 'Gerar E-mail e Liberar Saída' }}</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ── MODAL HANDOFF BLOQUEADO ── -->
+    <Transition name="fade">
+      <div v-if="modalBloqueioHandoff" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="bg-slate-900 border border-rose-800/80 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+          <div class="flex items-center gap-3 text-rose-400 border-b border-slate-800 pb-3">
+            <ShieldAlert :size="28" />
+            <div>
+              <h3 class="font-bold text-base text-slate-100">Handoff Bloqueado</h3>
+              <p class="text-xs text-rose-400/90 font-medium">Pendência Crítica de Qualidade</p>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-300 leading-relaxed">
+            {{ mensagemBloqueioHandoff }}
+          </p>
+
+          <div class="pt-2 flex justify-end">
+            <button
+              type="button"
+              class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition"
+              @click="modalBloqueioHandoff = false"
+            >
+              Entendido
+            </button>
+          </div>
         </div>
       </div>
     </Transition>
@@ -2076,5 +2420,22 @@ input:checked + .slider:before {
 }
 .action-grid.has-checklist > button {
   flex: 1;
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.8);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 85, 105, 1);
 }
 </style>
