@@ -11,7 +11,7 @@ import {
 import { ConfigOpcao } from './ConfigOpcao';
 import { uuidv7 } from 'uuidv7';
 
-@Entity({ name: 'catalogo_itens_checklist' })
+@Entity({ name: 'catalogo_itens_checklist', schema: 'erp_modelagem' })
 export class CatalogoItemChecklist {
   @PrimaryColumn('uuid')
   id: string;

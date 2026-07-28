@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 import { uuidv7 } from 'uuidv7';
 
-@Entity({ name: 'catalogo_pecas' })
+@Entity({ name: 'catalogo_pecas', schema: 'erp_modelagem' })
 export class CatalogoPeca {
   @PrimaryColumn('uuid')
   id: string;

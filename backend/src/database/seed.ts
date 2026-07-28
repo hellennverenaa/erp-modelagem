@@ -8,12 +8,16 @@ import { seedCatalogoPecas } from './seeds/seedCatalogoPecas';
 import { seedCatalogoChecklist } from './seeds/seedCatalogoChecklist';
 
 async function runSeed() {
-  console.log('Iniciando o Database Seeding...');
+  console.log('==================================================');
+  console.log('       INICIANDO DATABASE SEEDING GERAL           ');
+  console.log('==================================================');
+  
   await AppDataSource.initialize();
-  console.log('Conexão com o banco estabelecida.');
+  console.log('[OK] Conexão com o banco de dados estabelecida.\n');
 
   try {
     // 1. Inserir Planta Principal
+    console.log('--- [PASSO 1/6] Seeding Planta Principal ---');
     const plantaRepo = AppDataSource.getRepository(Planta);
     let plantaPrincipal = await plantaRepo.findOne({ where: { nome: 'Planta Principal' } });
     if (!plantaPrincipal) {
@@ -23,12 +27,13 @@ async function runSeed() {
         ativo: true
       });
       await plantaRepo.save(plantaPrincipal);
-      console.log('Planta Principal inserida.');
+      console.log('[OK] Planta Principal inserida.');
     } else {
-      console.log('Planta Principal já existe.');
+      console.log('[OK] Planta Principal já existe.');
     }
 
     // 2. Inserir Marcas
+    console.log('\n--- [PASSO 2/6] Seeding Marcas ---');
     const marcaRepo = AppDataSource.getRepository(Marca);
     const marcasNomes = ['Nike', 'Fila', 'Osklen'];
     const marcasCriadas: Record<string, Marca> = {};
@@ -37,14 +42,15 @@ async function runSeed() {
       if (!marca) {
         marca = marcaRepo.create({ nome, ativo: true });
         await marcaRepo.save(marca);
-        console.log(`Marca '${nome}' inserida.`);
+        console.log(`[OK] Marca '${nome}' inserida.`);
       } else {
-        console.log(`Marca '${nome}' já existe.`);
+        console.log(`[OK] Marca '${nome}' já existe.`);
       }
       marcasCriadas[nome] = marca;
     }
 
     // 3. Inserir ConfigCategoria e ConfigOpcoes
+    console.log('\n--- [PASSO 3/6] Seeding Categorias e Opções de Configuração ---');
     const categoriaRepo = AppDataSource.getRepository(ConfigCategoria);
     const opcaoRepo = AppDataSource.getRepository(ConfigOpcao);
 
@@ -73,9 +79,9 @@ async function runSeed() {
           ativo: true
         });
         await categoriaRepo.save(categoria);
-        console.log(`Categoria '${catData.slug}' inserida.`);
+        console.log(`[OK] Categoria '${catData.slug}' inserida.`);
       } else {
-        console.log(`Categoria '${catData.slug}' já existe.`);
+        console.log(`[OK] Categoria '${catData.slug}' já existe.`);
       }
 
       for (let i = 0; i < catData.opcoes.length; i++) {
@@ -90,14 +96,15 @@ async function runSeed() {
             ativo: true
           });
           await opcaoRepo.save(opcao);
-          console.log(`Opção '${valorOpcao}' inserida na categoria '${catData.slug}'.`);
+          console.log(`  └─ [OK] Opção '${valorOpcao}' inserida em '${catData.slug}'.`);
         } else {
-          console.log(`Opção '${valorOpcao}' já existe na categoria '${catData.slug}'.`);
+          console.log(`  └─ [OK] Opção '${valorOpcao}' já existe em '${catData.slug}'.`);
         }
       }
     }
 
     // 4. Inserir Modelos
+    console.log('\n--- [PASSO 4/6] Seeding Modelos Iniciais ---');
     const modeloRepo = AppDataSource.getRepository(Modelo);
     const modelosData = [
       { nome: 'Air Max 90', codigoProduto: 'NK-AM90', marcaNome: 'Nike' },
@@ -119,24 +126,34 @@ async function runSeed() {
           ativo: true
         });
         await modeloRepo.save(modelo);
-        console.log(`Modelo '${modData.nome}' inserido.`);
+        console.log(`[OK] Modelo '${modData.nome}' inserido.`);
       } else {
-        console.log(`Modelo '${modData.nome}' já existe.`);
+        console.log(`[OK] Modelo '${modData.nome}' já existe.`);
       }
     }
 
     // 5. Inserir Catálogo de Peças (Dados.csv)
-    await seedCatalogoPecas(AppDataSource);
+    console.log('\n==================================================');
+    console.log('--- [PASSO 5/6] EXECUTANDO SEEDER DE PEÇAS (Dados.csv) ---');
+    console.log('==================================================');
+    const totalPecas = await seedCatalogoPecas(AppDataSource);
+    console.log(`[SUCESSO] Passo 5 concluído: ${totalPecas} peças salvas.\n`);
 
-    // 6. Inserir Catálogo de Itens de Checklist (Checklist-Modelagem.xlsx-CópiadeTEMPLANTE.csv)
-    await seedCatalogoChecklist(AppDataSource);
+    // 6. Inserir Catálogo de Itens de Checklist (Checklist-Modelagem.csv)
+    console.log('==================================================');
+    console.log('--- [PASSO 6/6] EXECUTANDO SEEDER DE CHECKLIST ---');
+    console.log('==================================================');
+    const totalChecklist = await seedCatalogoChecklist(AppDataSource);
+    console.log(`[SUCESSO] Passo 6 concluído: ${totalChecklist} itens de checklist salvos.\n`);
 
-    console.log('Database Seeding concluído com sucesso!');
+    console.log('==================================================');
+    console.log('    DATABASE SEEDING CONCLUÍDO COM SUCESSO!       ');
+    console.log('==================================================');
   } catch (error) {
-    console.error('Erro durante o Seeding:', error);
+    console.error('ERRO CRÍTICO DURANTE O SEEDING:', error);
   } finally {
     await AppDataSource.destroy();
-    console.log('Conexão encerrada.');
+    console.log('[OK] Conexão com o banco encerrada.');
   }
 }
 

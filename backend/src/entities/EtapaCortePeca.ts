@@ -13,7 +13,7 @@ import type { EtapaCorte } from './EtapaCorte';
 import { Peca } from './Peca';
 import { uuidv7 } from 'uuidv7';
 
-@Entity({ name: 'etapa_corte_pecas' })
+@Entity({ name: 'etapa_corte_pecas', schema: 'erp_modelagem' })
 export class EtapaCortePeca {
   @PrimaryColumn('uuid')
   id: string;
