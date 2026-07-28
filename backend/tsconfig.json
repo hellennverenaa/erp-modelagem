@@ -23,6 +23,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*", "../frontend/src/components/ImpressaoEtiquetaButton.vue"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
