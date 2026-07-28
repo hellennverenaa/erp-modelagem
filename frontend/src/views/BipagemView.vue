@@ -25,7 +25,8 @@ import {
   Trash2,
   Mail,
   ShieldAlert,
-  AlertCircle
+  AlertCircle,
+  ListTodo
 } from '@lucide/vue'
 
 // ─── Interfaces ──────────────────────────────────────────────────────────
@@ -190,11 +191,11 @@ function tocarSomSucesso() {
 
 // ─── Toasts Feedback ─────────────────────────────────────────────────────
 const toastMsg = ref('')
-const toastType = ref<'success' | 'error'>('success')
+const toastType = ref<'success' | 'error' | 'info'>('success')
 const showToast = ref(false)
 let toastTimeout: any = null
 
-function triggerToast(msg: string, type: 'success' | 'error' = 'success') {
+function triggerToast(msg: string, type: 'success' | 'error' | 'info' = 'success') {
   if (toastTimeout) clearTimeout(toastTimeout)
   toastMsg.value = msg
   toastType.value = type
@@ -313,7 +314,7 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
 
   try {
     const resLotes = await api.get('/lotes')
-    const lotesList: OrdemTeste[] = resLotes.data
+    const lotesList: OrdemTeste[] = resLotes.data || []
     
     let ordemTesteId = ''
     const loteEncontrado = lotesList.find(
@@ -331,6 +332,15 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
       }
     }
 
+    const isUuidString = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val)
+    const setorIdValido = selecionouSetorId.value
+
+    if (!isUuidString(ordemTesteId) || !isUuidString(setorIdValido)) {
+      triggerToast('Identificador de Ordem de Teste ou Setor inválido (UUID ausente).', 'error')
+      loadingBip.value = false
+      return
+    }
+
     // Trava de Handoff: setores de fase inicial exigem checklist concluído antes da saída
     if (acao === 'saida' && isSetorFaseInicial.value && !checklistConcluidoComSucesso.value) {
       triggerToast('Preencha e salve o checklist obrigatorio antes de registrar a saida.', 'error')
@@ -339,29 +349,48 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
     }
 
     const endpoint = acao === 'entrada' ? '/rastreamentos/bipar-entrada' : '/rastreamentos/bipar-saida'
-    const payload = {
+    const operadorIdValido = user.value?.id && isUuidString(user.value.id) ? user.value.id : undefined
+
+    const payload: any = {
       ordemTesteId,
-      setorId: selecionouSetorId.value,
+      setorId: setorIdValido,
       tipoLote: tipoLote.value,
+      operadorId: operadorIdValido,
+      operadorEntradaId: acao === 'entrada' ? operadorIdValido : undefined,
+      operadorSaidaId: acao === 'saida' ? operadorIdValido : undefined
     }
 
-    await api.post(endpoint, payload)
+    const res = await api.post(endpoint, payload)
 
-    const msgSucesso = acao === 'entrada'
-      ? 'Entrada registrada com sucesso.'
-      : 'Saida registrada com sucesso. Handoff concluido.'
-    
-    triggerToast(`${msgSucesso} (Ordem: ${loteEncontrado?.codigoBarras || codigo})`, 'success')
+    if (acao === 'entrada') {
+      if (res.status === 201) {
+        triggerToast(`Entrada registrada com sucesso! (Ordem: ${loteEncontrado?.codigoBarras || codigo})`, 'success')
+      } else if (res.status === 200) {
+        triggerToast('Lote em Processamento: Esta ordem já teve sua entrada registrada e encontra-se ativa neste setor.', 'info')
+      } else {
+        triggerToast(`Entrada registrada com sucesso (Ordem: ${loteEncontrado?.codigoBarras || codigo})`, 'success')
+      }
+    } else {
+      triggerToast(`Saída registrada com sucesso. Handoff concluído. (Ordem: ${loteEncontrado?.codigoBarras || codigo})`, 'success')
+    }
+
     codigoLeitura.value = ''
   } catch (err: any) {
-    console.error('[BipagemView] Erro na bipagem:', err)
-    
+    console.error('Zod Error / Bipagem Error:', err?.response?.data || err?.message || err)
+    if (err?.response?.data?.details) {
+      console.error('Zod Error Details:', JSON.stringify(err.response.data.details, null, 2))
+    }
+
     const response = err.response
     const status = response?.status
     const errorData = response?.data
 
     if (err.message === 'LOTE_NOT_FOUND') {
       triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
+    } else if (status === 400) {
+      const detailsMsg = errorData?.details ? ` (${JSON.stringify(errorData.details)})` : ''
+      const descError = errorData?.error || 'Dados de bipagem inválidos.'
+      triggerToast(`Falha na Bipagem (400 Bad Request): ${descError}${detailsMsg}`, 'error')
     } else if (status === 403) {
       const descError = errorData?.error || 'Acesso ou liberacao negada pelo Gate de Qualidade.'
       triggerToast(`Handoff Negado: ${descError}`, 'error')
@@ -402,7 +431,7 @@ async function buscarItensCatalogo(queryStr: string = '') {
   }
 }
 
-async function carregarChecklist(lote: any, setorId: string) {
+async function carregarChecklist(_lote: any, setorId: string) {
   loadingChecklist.value = true
   erroChecklist.value = ''
   itensChecklist.value = []
@@ -419,40 +448,10 @@ async function carregarChecklist(lote: any, setorId: string) {
       (t: any) => t.setorTipoOpcaoId === setorLocal.tipoOpcaoId
     ) || { id: '00000000-0000-0000-0000-000000000000', nome: `Checklist — ${setorLocal.nome}`, itens: [] }
 
-    // 2. Busca catálogo de engenharia (catalogo_itens_checklist) filtrado pelo setor
-    const resCatalogo = await api.get('/checklists/catalogo', {
-      params: { setorId }
-    })
-    const catalogoItens = resCatalogo.data || []
+    // Diretriz UX: A lista de verificação inicia estritamente vazia (Zero pre-população)
+    itensChecklist.value = []
 
-    if (catalogoItens.length > 0) {
-      itensChecklist.value = catalogoItens.map((cat: any) => ({
-        id: cat.id,
-        catalogItemId: cat.id,
-        numeroItem: cat.numeroItem,
-        descricao: cat.descricao,
-        quantidade: 1,
-        status: 'OK',
-        observacao: '',
-        isAvulso: false
-      }))
-    } else {
-      // Fallback: se não houver catálogo do setor no banco, carrega peças do modelo
-      const resPecas = await api.get(`/pecas/modelo/${lote.modeloId}`)
-      const pecasList = resPecas.data || []
-      itensChecklist.value = pecasList.map((peca: any, idx: number) => ({
-        id: peca.id,
-        catalogItemId: null,
-        numeroItem: idx + 1,
-        descricao: `Peça ${peca.nome} inspecionada`,
-        quantidade: 1,
-        status: 'OK',
-        observacao: '',
-        isAvulso: false
-      }))
-    }
-
-    // Pré-carrega opções de autocomplete
+    // Pré-carrega opções no autocomplete
     await buscarItensCatalogo('')
 
   } catch (err: any) {
@@ -539,23 +538,51 @@ async function finalizarChecklistEBiparSaida() {
   salvandoChecklist.value = true
 
   try {
-    const respostasPayload = itensChecklist.value.map(it => ({
-      templateItemId: it.catalogItemId || null,
-      itemId: it.catalogItemId || null,
-      descricaoAvulsa: it.isAvulso ? (it.descricaoAvulsa || '').trim() : (it.catalogItemId ? null : it.descricao),
-      valorResposta: `Qtd: ${it.quantidade || 1} | Status: ${it.status}`,
-      conforme: it.status === 'OK',
-      observacao: (it.observacao || '').trim() || null
-    }))
+    const isUuidString = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val)
+    const UUID_NIL = '00000000-0000-0000-0000-000000000000'
 
-    const checklistRes = await api.post('/checklists/responder', {
-      ordemTesteId: ordemAtiva.value.id,
-      templateId: templateChecklist.value?.id || '00000000-0000-0000-0000-000000000000',
-      setorId: selecionouSetorId.value,
-      bloqueante: bloqueante.value,
+    const respostasPayload = itensChecklist.value.map(it => {
+      // templateItemId / itemId DEVEM ser um UUID válido ou null (nunca string genérica de ID avulso)
+      const validCatalogUuid = (!it.isAvulso && isUuidString(it.catalogItemId)) ? (it.catalogItemId as string) : null
+      
+      // Para itens avulsos ou itens sem UUID de catálogo, envia descricaoAvulsa
+      const descAvulsa = it.isAvulso
+        ? (it.descricaoAvulsa || '').trim()
+        : (!validCatalogUuid ? (it.descricao || '').trim() : null)
+
+      return {
+        templateItemId: validCatalogUuid,
+        itemId: validCatalogUuid,
+        descricaoAvulsa: descAvulsa ? descAvulsa.substring(0, 250) : null,
+        valorResposta: `Qtd: ${it.quantidade || 1} | Status: ${it.status}`,
+        conforme: it.status === 'OK',
+        observacao: (it.observacao || '').trim() || null
+      }
+    })
+
+    const templateId = isUuidString(templateChecklist.value?.id)
+      ? templateChecklist.value.id
+      : UUID_NIL
+
+    const ordemTesteId = isUuidString(ordemAtiva.value?.id) ? ordemAtiva.value.id : null
+    const setorId = isUuidString(selecionouSetorId.value) ? selecionouSetorId.value : null
+
+    if (!ordemTesteId || !setorId) {
+      triggerToast('Identificadores de Ordem ou Setor inválidos (UUID ausente).', 'error')
+      salvandoChecklist.value = false
+      return
+    }
+
+    const payload = {
+      ordemTesteId,
+      templateId,
+      setorId,
+      bloqueante: Boolean(bloqueante.value),
       observacoes: (observacoesGerais.value || '').trim() || null,
       respostas: respostasPayload
-    })
+    }
+
+    const checklistRes = await api.post('/checklists/responder', payload)
 
     if (checklistRes.status !== 201 && checklistRes.status !== 200) {
       throw new Error('Falha ao salvar respostas do checklist.')
@@ -566,17 +593,23 @@ async function finalizarChecklistEBiparSaida() {
       mensagemBloqueioHandoff.value = `O checklist foi registrado com pendência de qualidade crítica (Bloqueante ativado). A saída da Ordem ${ordemAtiva.value.codigoBarras} foi retida no sistema para este setor.`
       modalBloqueioHandoff.value = true
       checklistConcluidoComSucesso.value = false
+      showChecklistModal.value = false
       triggerToast('Saída travada por pendência crítica de qualidade.', 'error')
       return
     }
 
     // Liberado para saída (Concessão ou OK)
     checklistConcluidoComSucesso.value = true
+    showChecklistModal.value = false
+
+    const operadorIdValido = user.value?.id && isUuidString(user.value.id) ? user.value.id : undefined
 
     const bipagemRes = await api.post('/rastreamentos/bipar-saida', {
-      ordemTesteId: ordemAtiva.value.id,
-      setorId: selecionouSetorId.value,
-      tipoLote: tipoLote.value
+      ordemTesteId,
+      setorId,
+      tipoLote: tipoLote.value,
+      operadorId: operadorIdValido,
+      operadorSaidaId: operadorIdValido
     })
 
     if (bipagemRes.status === 200 || bipagemRes.status === 201) {
@@ -588,9 +621,13 @@ async function finalizarChecklistEBiparSaida() {
     }
 
   } catch (err: any) {
-    console.error('[BipagemView] Erro ao responder checklist:', err)
+    console.error('[BipagemView] Erro ao responder checklist:', err?.response?.data || err?.message || err)
+    if (err?.response?.data?.details) {
+      console.error('[BipagemView] Detalhes da validação Zod:', JSON.stringify(err.response.data.details, null, 2))
+    }
     const backendError = err.response?.data?.error || err.message || 'Erro de comunicação com o servidor.'
-    triggerToast(`Falha operacional: ${backendError}`, 'error')
+    const detailsMsg = err.response?.data?.details ? ` (${JSON.stringify(err.response.data.details)})` : ''
+    triggerToast(`Falha operacional: ${backendError}${detailsMsg}`, 'error')
   } finally {
     salvandoChecklist.value = false
     forcarFocoInput()
@@ -715,6 +752,7 @@ async function submeterOcorrencia() {
     <Transition name="toast-slide">
       <div v-if="showToast" class="bp-toast" :class="`bp-toast--${toastType}`" role="alert">
         <AlertTriangle v-if="toastType === 'error'" :size="20" class="toast-icon" aria-hidden="true" />
+        <AlertCircle v-else-if="toastType === 'info'" :size="20" class="toast-icon text-amber-600" aria-hidden="true" />
         <CheckCircle2 v-else :size="20" class="toast-icon" aria-hidden="true" />
         <span class="toast-text">{{ toastMsg }}</span>
       </div>
@@ -1176,8 +1214,22 @@ async function submeterOcorrencia() {
                 </div>
               </div>
 
+              <!-- Empty State Premium (UX quando a lista está vazia) -->
+              <div
+                v-if="itensChecklist.length === 0"
+                class="py-12 px-6 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center my-4 transition-all"
+              >
+                <div class="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mb-3.5 border border-indigo-100 shadow-xs">
+                  <ListTodo :size="28" />
+                </div>
+                <h3 class="text-sm font-bold text-slate-800 mb-1">Nenhum item no checklist</h3>
+                <p class="text-xs text-slate-500 max-w-md leading-relaxed">
+                  Nenhum item adicionado. Utilize a barra de pesquisa acima para adicionar os ferramentais do pacote.
+                </p>
+              </div>
+
               <!-- Items List Container -->
-              <div class="space-y-3">
+              <div v-else class="space-y-3">
                 <div
                   v-for="(it, idx) in itensChecklist"
                   :key="it.id"
@@ -1855,6 +1907,12 @@ async function submeterOcorrencia() {
   background: #fef2f2;
   border-color: #fecaca;
   color: #b91c1c;
+}
+
+.bp-toast--info {
+  background: #fffbe6;
+  border-color: #ffe58f;
+  color: #d46b08;
 }
 
 .toast-text {

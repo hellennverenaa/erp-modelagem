@@ -27,6 +27,8 @@ const biparEntradaSchema = z.object({
   ordemTesteId: z.string().uuid({ message: 'ordemTesteId deve ser um UUID válido.' }),
   setorId:      z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
   tipoLote:     z.nativeEnum(TipoLote),
+  operadorId:   z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
+  operadorEntradaId: z.string().uuid({ message: 'operadorEntradaId deve ser um UUID válido.' }).optional().nullable(),
   pecaId:       z.string().uuid().optional().nullable(),
   estacaoId:    z.string().uuid().optional().nullable(),
 });
@@ -35,6 +37,8 @@ const biparSaidaSchema = z.object({
   ordemTesteId:   z.string().uuid({ message: 'ordemTesteId deve ser um UUID válido.' }),
   setorId:        z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
   tipoLote:       z.nativeEnum(TipoLote).optional().default(TipoLote.LOTE_PRINCIPAL),
+  operadorId:     z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
+  operadorSaidaId: z.string().uuid({ message: 'operadorSaidaId deve ser um UUID válido.' }).optional().nullable(),
   pecaId:         z.string().uuid().optional().nullable(),
 });
 
@@ -141,7 +145,7 @@ export class RastreamentosController {
 
       const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
 
-      // 1.3. Trava de Duplicidade: Verifica se já existe um registro de processamento para essa ordem/peça/tipoLote neste setor
+      // 1.3. Trava de Duplicidade e Idempotência de Entrada
       const queryExistente = rastreamentoRepo.createQueryBuilder('r')
         .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
         .andWhere('r.setorId = :setorId', { setorId })
@@ -155,33 +159,25 @@ export class RastreamentosController {
 
       const registroExistente = await queryExistente.getOne();
       if (registroExistente) {
-        return res.status(400).json({
-          error: 'Bloqueio: Esta ordem já possui um registro de processamento neste setor.',
-          code: 'BIPAGEM_DUPLICADA_SETOR'
-        });
+        // Idempotência: Se o registro já existir com status EM_PROCESSO, retorne 200 OK assumindo sucesso
+        if (registroExistente.status === RastreamentoStatus.EM_PROCESSO) {
+          return res.status(200).json({
+            message: 'Bipagem de entrada já em processo neste setor (Idempotência).',
+            rastreamento: registroExistente,
+            idempotent: true
+          });
+        }
+
+        // Retorna erro de duplicidade APENAS se o lote/peça já tiver sido CONCLUIDO neste setor
+        if (registroExistente.status === RastreamentoStatus.CONCLUIDO) {
+          return res.status(400).json({
+            error: 'Bloqueio: Esta ordem já concluiu o processamento e a saída neste setor.',
+            code: 'BIPAGEM_DUPLICADA_SETOR'
+          });
+        }
       }
 
-      // 2. Verifica se já existe uma bipagem de entrada ativa (sem dataSaida) para essa
-      //    combinação ordemTeste + setor + tipoLote + peca (evita bips duplicados)
-      const bipagemAtiva = await rastreamentoRepo.findOne({
-        where: {
-          ordemTesteId,
-          setorId,
-          tipoLote,
-          ...(pecaId ? { pecaId } : {}),
-          status: RastreamentoStatus.EM_PROCESSO,
-        },
-      });
-
-      if (bipagemAtiva) {
-        return res.status(409).json({
-          error: 'Já existe uma bipagem de entrada ativa para este setor/lote/peça.',
-          code: 'BIPAGEM_DUPLICADA',
-          rastreamentoId: bipagemAtiva.id,
-        });
-      }
-
-      // 3. Cria o registro de entrada
+      // 2. Cria o registro de entrada
       const novoRastreamento = rastreamentoRepo.create({
         ordemTesteId,
         setorId,
@@ -228,8 +224,8 @@ export class RastreamentosController {
       });
     }
 
-    const { ordemTesteId, setorId, tipoLote, pecaId } = parseResult.data;
-    const operadorId = req.user?.userId;
+    const { ordemTesteId, setorId, tipoLote, pecaId, operadorId: bodyOperadorId, operadorSaidaId } = parseResult.data;
+    const operadorId = bodyOperadorId || operadorSaidaId || req.user?.userId;
 
     if (!operadorId) {
       return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHENTICATED' });
@@ -243,30 +239,7 @@ export class RastreamentosController {
       const configOpcaoRepo   = AppDataSource.getRepository(ConfigOpcao);
       const setorRepo         = AppDataSource.getRepository(Setor);
 
-      // 2. Busca o rastreamento ativo (EM_PROCESSO) para esse setor/lote/peca
-      const rastreamento = await rastreamentoRepo.findOne({
-        where: {
-          ordemTesteId,
-          setorId,
-          tipoLote,
-          ...(pecaId ? { pecaId } : {}),
-          status: RastreamentoStatus.EM_PROCESSO,
-        },
-      });
-
-      if (!rastreamento) {
-        return res.status(404).json({
-          error: 'Nenhuma bipagem de entrada ativa encontrada para este setor/lote.',
-          code: 'RASTREAMENTO_NAO_ENCONTRADO',
-          details: { ordemTesteId, setorId, tipoLote },
-        });
-      }
-
-      // ── GATE DE QUALIDADE SELETIVA ──────────────────────────────────────
-      // Identifica a categoria do setor via JOIN com config_opcoes
-      // Zero Hardcode: não compara strings fixas de nome de setor
-      let foundInspecaoId: string | null = null;
-
+      // 2. Busca o setor
       const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
       if (!setorInfo) {
         return res.status(404).json({ error: 'Setor não encontrado.', code: 'SETOR_NAO_ENCONTRADO' });
@@ -280,6 +253,36 @@ export class RastreamentosController {
       const isSetorHandoffAutomatico =
         tipoOpcao !== null &&
         SETORES_HANDOFF_AUTOMATICO_VALORES.includes(tipoOpcao.valor);
+
+      // 3. Busca o rastreamento ativo (EM_PROCESSO) para essa combinação de ordemTesteId, setorId, tipoLote e pecaId
+      let rastreamento = await rastreamentoRepo.findOne({
+        where: {
+          ordemTesteId,
+          setorId,
+          tipoLote,
+          ...(pecaId ? { pecaId } : {}),
+          status: RastreamentoStatus.EM_PROCESSO,
+        },
+      });
+
+      // Fallback Real: Se não houver bipagem de entrada ativa em aberto, cria o registro EM_PROCESSO silenciosamente com a data atual
+      if (!rastreamento) {
+        const novoRastreamento = rastreamentoRepo.create({
+          ordemTesteId,
+          setorId,
+          tipoLote,
+          pecaId: pecaId ?? null,
+          operadorEntradaId: operadorId,
+          dataEntrada: new Date(),
+          status: RastreamentoStatus.EM_PROCESSO,
+        });
+        rastreamento = await rastreamentoRepo.save(novoRastreamento);
+      }
+
+      // ── GATE DE QUALIDADE SELETIVA ──────────────────────────────────────
+      // Identifica a categoria do setor via JOIN com config_opcoes
+      // Zero Hardcode: não compara strings fixas de nome de setor
+      let foundInspecaoId: string | null = null;
 
       if (isSetorHandoffAutomatico) {
         // ── CATEGORIA A: Handoff Automático ─────────────────────────────

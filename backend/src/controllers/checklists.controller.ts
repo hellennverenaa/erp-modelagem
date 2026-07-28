@@ -5,6 +5,7 @@ import { Checklist, ChecklistStatus } from '../entities/Checklist';
 import { ChecklistItem } from '../entities/ChecklistItem';
 import { ChecklistTemplate } from '../entities/ChecklistTemplate';
 import { Setor } from '../entities/Setor';
+import { Marca } from '../entities/Marca';
 import { CatalogoItemChecklist } from '../entities/CatalogoItemChecklist';
 import { triggerChecklistEmail } from '../services/email.service';
 
@@ -77,6 +78,32 @@ export class ChecklistsController {
 
       // Executa toda a lógica em transação ACID do TypeORM
       const result = await AppDataSource.transaction(async (transactionalEntityManager) => {
+        // 1. Resolução segura de Foreign Key do ChecklistTemplate para evitar violação de FK no PostgreSQL
+        const templateRepo = transactionalEntityManager.getRepository(ChecklistTemplate);
+        let existingTemplate = await templateRepo.findOne({ where: { id: templateId } });
+
+        if (!existingTemplate) {
+          const setorRepo = transactionalEntityManager.getRepository(Setor);
+          const setor = await setorRepo.findOne({ where: { id: setorId } });
+          if (setor?.tipoOpcaoId) {
+            existingTemplate = await templateRepo.findOne({ where: { setorTipoOpcaoId: setor.tipoOpcaoId } });
+          }
+
+          if (!existingTemplate) {
+            const marcaRepo = transactionalEntityManager.getRepository(Marca);
+            const marca = await marcaRepo.findOne({ where: { ativo: true } });
+            const novoTemplate = templateRepo.create({
+              nome: setor ? `Checklist — ${setor.nome}` : 'Checklist Genérico',
+              setorTipoOpcaoId: setor?.tipoOpcaoId || undefined,
+              marcaId: marca?.id || undefined,
+              versao: 1,
+              ativo: true
+            });
+            existingTemplate = await templateRepo.save(novoTemplate);
+          }
+        }
+
+        const validTemplateId = existingTemplate.id;
         let hasPending = false;
         const itemsToSave: ChecklistItem[] = [];
 
@@ -111,7 +138,7 @@ export class ChecklistsController {
 
         const checklist = new Checklist();
         checklist.ordemTesteId = ordemTesteId;
-        checklist.templateId = templateId;
+        checklist.templateId = validTemplateId;
         checklist.setorId = setorId;
         checklist.preenchidoPorId = req.user!.userId;
         checklist.dataPreenchimento = new Date();
