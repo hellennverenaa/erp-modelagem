@@ -31,6 +31,11 @@ import api from '../api/axios'
 const props = defineProps<{
   modeloId?: string
   isWizardMode?: boolean
+  autoEnableMaquinas?: {
+    cn?: boolean
+    couro?: boolean
+    laser?: boolean
+  }
 }>()
 
 const emit = defineEmits<{
@@ -594,6 +599,14 @@ watch(() => props.modeloId, (newId) => {
     carregarRotaDoModelo(newId)
   }
 })
+
+watch(() => props.autoEnableMaquinas, (val) => {
+  if (val) {
+    if (val.cn !== undefined) toggleCorteCN.value = val.cn
+    if (val.couro !== undefined) toggleCorteCouro.value = val.couro
+    if (val.laser !== undefined) toggleCorteLaser.value = val.laser
+  }
+}, { immediate: true, deep: true })
 
 watch(selectedModeloId, (newId) => {
   if (newId) {

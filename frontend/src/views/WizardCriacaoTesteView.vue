@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Layers,
@@ -91,7 +91,31 @@ const catalogoPecas = ref<CatalogoItem[]>([])
 const maquinasCorte = ref<MaquinaOpcao[]>([])
 const searchPecaText = ref('')
 const showAutocomplete = ref(false)
+const autocompleteContainerRef = ref<HTMLElement | null>(null)
 const loadingStep2 = ref(false)
+
+// ─── Inteligência Reativa (Passo 2 -> Passo 3) ──────────────────────────────
+const autoMaquinas = computed(() => {
+  let cn = false
+  let couro = false
+  let laser = false
+
+  for (const peca of pecasSelecionadas.value) {
+    const opt = maquinasCorte.value.find(m => m.id === peca.setorCorteOpcaoId)
+    const label = (opt?.label || opt?.valor || '').toUpperCase()
+    if (label.includes('CN')) cn = true
+    if (label.includes('COURO')) couro = true
+    if (label.includes('LASER')) laser = true
+  }
+
+  return { cn, couro, laser }
+})
+
+function handleClickOutside(event: MouseEvent) {
+  if (autocompleteContainerRef.value && !autocompleteContainerRef.value.contains(event.target as Node)) {
+    showAutocomplete.value = false
+  }
+}
 
 // Passo 3: Rota
 const routeBuilderRef = ref<any>(null)
@@ -122,6 +146,7 @@ function addToast(type: 'success' | 'error', message: string) {
 
 // ─── Ciclo de Vida ──────────────────────────────────────────────────────────
 onMounted(async () => {
+  document.addEventListener('click', handleClickOutside)
   try {
     const [marcasRes, plantasRes] = await Promise.all([
       api.get<Marca[]>('/admin/marcas'),
@@ -138,6 +163,10 @@ onMounted(async () => {
   } finally {
     loadingInit.value = false
   }
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
 })
 
 // ─── Handlers do Stepper ─────────────────────────────────────────────────────
@@ -576,7 +605,7 @@ function resetWizard() {
 
         <div class="wiz-form">
           <!-- Autocomplete do Catálogo de Peças -->
-          <div class="pecas-autocomplete-container">
+          <div class="pecas-autocomplete-container" ref="autocompleteContainerRef">
             <label class="form-label">Adicionar Peça do Catálogo</label>
             <div class="autocomplete-wrap">
               <Search :size="16" class="ac-icon" />
@@ -689,6 +718,7 @@ function resetWizard() {
             ref="routeBuilderRef"
             :modeloId="createdModeloId"
             :isWizardMode="true"
+            :autoEnableMaquinas="autoMaquinas"
             @rota-salva="onRotaSalva"
           />
         </div>

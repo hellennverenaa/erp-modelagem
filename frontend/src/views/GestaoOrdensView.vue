@@ -243,12 +243,10 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
   try {
     await fetchCorteOpcoesMap()
 
-    // 1. Busca os detalhes completos da OrdemTeste (lote) com seus relacionamentos
     const { data: ordemCompleta } = await api.get(`/lotes/${ordem.id}`)
     
     let pecas: PecaInfo[] = ordemCompleta.modelo?.pecas || ordem.modelo?.pecas || []
     
-    // Se o modelo não tiver peças populadas no lote, busca via rota de peças do modelo
     if (pecas.length === 0 && (ordemCompleta.modeloId || ordem.modeloId)) {
       try {
         const targetModeloId = ordemCompleta.modeloId || ordem.modeloId
@@ -264,12 +262,12 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
       return
     }
 
-    // 2. Agrupa as peças por setorCorteOpcaoId (Máquina de Corte)
+    // 1. Agrupa peças por setorCorteOpcaoId (Máquina de Corte)
     const agrupamento: Record<string, { machineName: string; pecas: PecaInfo[] }> = {}
 
     for (const peca of pecas) {
       const machineId = peca.setorCorteOpcaoId || 'OUTROS'
-      let machineName = corteOpcoesMap.value[machineId] || 'Corte — Geral / Balancim'
+      let machineName = corteOpcoesMap.value[machineId] || 'Corte — Geral'
       
       if (machineName.toLowerCase().startsWith('corte ')) {
         machineName = machineName.replace(/^corte\s+/i, 'Corte — ')
@@ -283,92 +281,48 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
       agrupamento[machineId].pecas.push(peca)
     }
 
-    // 3. Monta o layout HTML monocromático dos Tickets para Impressão
     const modeloNome = ordemCompleta.modelo?.nome || getModeloNome(ordem.modeloId)
     const modeloRef = ordemCompleta.modelo?.codigoProduto || getModeloReferencia(ordem.modeloId)
-    const marcaNome = ordemCompleta.modelo?.marca?.nome || 'DASS'
+    const plantaNome = ordemCompleta.planta?.nome || 'Planta Padrão'
     const codigoBarrasOP = ordemCompleta.codigoBarras || ordem.codigoBarras
-    const dataEmissao = new Date().toLocaleString('pt-BR')
+    const dataHoje = new Date().toLocaleDateString('pt-BR')
 
-    const ticketPagesHtml = Object.values(agrupamento).map((grupo) => {
+    // 2. Monta cada Ticket Card com o Layout Físico Pixel-Perfect da folha destacável (docs/tickect_imprimir.png)
+    const ticketCardsHtml = Object.values(agrupamento).map((grupo) => {
       const barcodeSvg = generateCode128Svg(codigoBarrasOP)
-      
-      const rowsHtml = grupo.pecas.map((p, idx) => `
-        <tr>
-          <td style="text-align: center; font-weight: bold; width: 40px; border: 1px solid #000; padding: 6px;">${idx + 1}</td>
-          <td style="font-weight: bold; border: 1px solid #000; padding: 6px; text-transform: uppercase;">
-            ${p.nome}
-          </td>
-          <td style="font-family: monospace; font-size: 11px; border: 1px solid #000; padding: 6px; word-break: break-all;">
-            ${p.id}
-          </td>
-          <td style="text-align: center; border: 1px solid #000; padding: 6px; width: 60px;">
-            <div style="width: 16px; height: 16px; border: 1.5px solid #000; margin: 0 auto;"></div>
-          </td>
-        </tr>
-      `).join('')
+
+      const pecasListText = grupo.pecas.map(p => p.nome).join(' • ')
 
       return `
-        <div class="ticket-page">
-          <!-- CABEÇALHO DO TICKET -->
-          <div class="ticket-header">
-            <div>
-              <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; color: #333;">GRUPO DASS — PACOTE TÉCNICO DE CORTE</div>
-              <h1 style="margin: 4px 0 0 0; font-size: 20px; font-weight: 900; text-transform: uppercase;">${grupo.machineName}</h1>
-            </div>
-            <div style="text-align: right;">
-              <span style="font-size: 12px; font-weight: bold; border: 1.5px solid #000; padding: 4px 8px; display: inline-block;">TICKET DE BAIXA</span>
-            </div>
+        <div class="ticket-card">
+          <!-- LINHA DE CABEÇALHO DO CARD (NOME DO MODELO + BADGE DE MÁQUINA) -->
+          <div class="ticket-header-row">
+            <span class="model-title">${modeloNome}</span>
+            <span class="machine-badge">${grupo.machineName}</span>
           </div>
 
-          <!-- DADOS TÉCNICOS DA ORDEM DE TESTE -->
-          <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11px;">
-            <tr>
-              <td style="padding: 4px 0; font-weight: bold; width: 18%;">MODELO:</td>
-              <td style="padding: 4px 0; font-weight: bold; font-size: 13px;">${modeloNome}</td>
-              <td style="padding: 4px 0; font-weight: bold; width: 18%;">REF / PRODUTO:</td>
-              <td style="padding: 4px 0; font-weight: bold;">${modeloRef}</td>
-            </tr>
-            <tr>
-              <td style="padding: 4px 0; font-weight: bold;">MARCA:</td>
-              <td style="padding: 4px 0;">${marcaNome}</td>
-              <td style="padding: 4px 0; font-weight: bold;">EMISSÃO:</td>
-              <td style="padding: 4px 0;">${dataEmissao}</td>
-            </tr>
-          </table>
+          <!-- SUB-CABEÇALHO COM CAIXA DE BORDA -->
+          <div class="sub-header-box">
+            <span>TESTE DE PRODUÇÃO</span>
+          </div>
 
-          <!-- CÓDIGO DE BARRAS DA ORDEM DE TESTE (PARA BIPAGEM DE ENTRADA/SAÍDA) -->
-          <div style="text-align: center; margin: 12px 0; padding: 8px; border: 1px dashed #000; background: #fafafa;">
-            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 4px;">CÓDIGO DE BARRAS DA ORDEM (BAIXA POR MÁQUINA)</div>
+          <!-- CÓDIGO DE BARRAS CENTRALIZADO -->
+          <div class="barcode-container">
             ${barcodeSvg}
+            <div class="barcode-text">${codigoBarrasOP}</div>
           </div>
 
-          <!-- LISTA DAS PEÇAS PARA O OPERADOR DAR A BAIXA -->
-          <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; margin-top: 12px; margin-bottom: 4px;">
-            PEÇAS ATRIBUÍDAS À ESTA MÁQUINA (${grupo.pecas.length} PEÇA${grupo.pecas.length !== 1 ? 'S' : ''})
+          <!-- PEÇAS ATRIBUÍDAS EM LINHA COMPACTA -->
+          <div class="pieces-inline-section">
+            <span class="pieces-label">PEÇAS (${grupo.pecas.length}):</span>
+            <span class="pieces-list">${pecasListText}</span>
           </div>
-          <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
-            <thead>
-              <tr style="background: #eee; text-transform: uppercase;">
-                <th style="border: 1px solid #000; padding: 6px; text-align: center; width: 40px;">#</th>
-                <th style="border: 1px solid #000; padding: 6px; text-align: left;">NOME DA PEÇA TÉCNICA</th>
-                <th style="border: 1px solid #000; padding: 6px; text-align: left;">IDENTIFICADOR (PECA_ID)</th>
-                <th style="border: 1px solid #000; padding: 6px; text-align: center; width: 60px;">BAIXA</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
 
-          <!-- ASSINATURA DO OPERADOR E DATA DA BAIXA -->
-          <div style="margin-top: 24px; border-top: 1px solid #000; padding-top: 8px; display: flex; justify-content: space-between; font-size: 10px;">
-            <div>
-              <span>Assinatura Operador: ___________________________</span>
-            </div>
-            <div>
-              <span>Data/Hora Baixa: ____/____/________ __:__</span>
-            </div>
+          <!-- RODAPÉ COMPACTO EM 3 COLUNAS -->
+          <div class="ticket-footer-row">
+            <span class="footer-left">${plantaNome}</span>
+            <span class="footer-center">REF: ${modeloRef} ${modeloNome}</span>
+            <span class="footer-right">${dataHoje}</span>
           </div>
         </div>
       `
@@ -378,58 +332,177 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <title>TICKETS DE CORTE — ${codigoBarrasOP}</title>
+  <title>TICKETS CORTE — ${codigoBarrasOP}</title>
   <style>
     @page {
       size: A4 portrait;
-      margin: 12mm;
+      margin: 5mm 6mm;
     }
     * {
       box-sizing: border-box;
     }
     body {
-      font-family: Arial, Helvetica, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       color: #000000;
       background: #ffffff;
       margin: 0;
       padding: 0;
       -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
-    .ticket-page {
-      page-break-after: always;
-      break-after: page;
-      padding: 16px;
-      border: 2px solid #000000;
-      margin-bottom: 24px;
-      border-radius: 4px;
+    .tickets-grid {
+      display: grid;
+      grid-template-columns: 98mm 98mm;
+      grid-auto-rows: 53mm;
+      gap: 2mm 2mm;
+      width: 198mm;
+      margin: 0 auto;
+    }
+    .ticket-card {
+      width: 98mm;
+      max-width: 98mm;
+      height: 53mm;
+      max-height: 53mm;
+      box-sizing: border-box;
+      overflow: hidden;
+      border: 1px dashed #b0b0b0;
+      padding: 6px 10px;
       background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
-    .ticket-page:last-child {
-      page-break-after: avoid;
-      break-after: avoid;
-    }
-    .ticket-header {
-      border-bottom: 2px solid #000000;
-      padding-bottom: 10px;
-      margin-bottom: 12px;
+    .ticket-header-row {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
+      margin-bottom: 2px;
+      width: 100%;
+    }
+    .model-title {
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      color: #000000;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 60%;
+    }
+    .machine-badge {
+      background: #000000;
+      color: #ffffff;
+      font-size: 8.5px;
+      font-weight: 900;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+    .sub-header-box {
+      border: 1.5px solid #000000;
+      text-align: center;
+      padding: 1.5px 0;
+      margin-bottom: 3px;
+      width: 100%;
+    }
+    .sub-header-box span {
+      font-size: 9px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #000000;
+    }
+    .barcode-container {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      max-width: 100%;
+      overflow: hidden;
+      margin: 2px 0;
+    }
+    .barcode-container svg {
+      max-width: 95%;
+      max-height: 34px;
+      height: auto;
+    }
+    .barcode-text {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 9.5px;
+      font-weight: 900;
+      letter-spacing: 1.2px;
+      margin-top: 2px;
+      color: #000000;
+    }
+    .pieces-inline-section {
+      font-size: 8px;
+      color: #333333;
+      margin: 1px 0;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      width: 100%;
+    }
+    .pieces-label {
+      font-weight: 900;
+      color: #000000;
+      margin-right: 4px;
+    }
+    .pieces-list {
+      font-weight: 600;
+      color: #222222;
+      text-transform: uppercase;
+    }
+    .ticket-footer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 7.5px;
+      color: #666666;
+      border-top: 1px solid #f0f0f0;
+      padding-top: 2px;
+      width: 100%;
+    }
+    .footer-left {
+      color: #666666;
+      white-space: nowrap;
+    }
+    .footer-center {
+      font-weight: 700;
+      color: #222222;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 50%;
+    }
+    .footer-right {
+      color: #666666;
+      white-space: nowrap;
     }
     @media print {
       body {
         padding: 0;
         background: #ffffff;
       }
-      .ticket-page {
-        border: 2px solid #000000;
-        margin-bottom: 0;
+      .tickets-grid {
+        width: 198mm;
       }
     }
   </style>
 </head>
 <body>
-  ${ticketPagesHtml}
+  <div class="tickets-grid">
+    ${ticketCardsHtml}
+  </div>
 </body>
 </html>`
 
