@@ -50,7 +50,7 @@ export const AppDataSource = new DataSource({
   schema: process.env.DB_SCHEMA || 'public',
   // Sincronização automática em ambiente de desenvolvimento (útil para testes iniciais)
   synchronize: process.env.NODE_ENV === 'development',
-  logging: process.env.NODE_ENV === 'development',
+  logging: ["error"],
   entities: [
     Planta,
     Setor,

@@ -8,8 +8,36 @@ import { Planta } from '../entities/Planta';
 
 export class AuthController {
   /**
-   * Realiza a autenticação integrando com o dass_auth_service legado.
-   * Faz o upsert local do usuário mantendo o espelho de dados sincronizado.
+   * @swagger
+   * /api/auth/login:
+   *   post:
+   *     summary: Autentica o usuário com credenciais do ERP integrando ao SSO DASS Unix
+   *     description: Realiza a autenticação via serviço legado e efetua o Upsert local do usuário no banco PostgreSQL.
+   *     tags:
+   *       - auth
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - usuario
+   *               - senha
+   *             properties:
+   *               usuario:
+   *                 type: string
+   *                 example: "admin.erp"
+   *               senha:
+   *                 type: string
+   *                 example: "SenhaSegura123!"
+   *     responses:
+   *       200:
+   *         description: Login efetuado com sucesso
+   *       401:
+   *         description: Credenciais inválidas
+   *       502:
+   *         description: Erro de comunicação com o serviço legado
    */
   public async login(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
     try {
@@ -22,11 +50,11 @@ export class AuthController {
         });
       }
 
-      // Conexão de rede Docker via variável de ambiente (Zero Hardcode)
-      const authServiceUrl = process.env.AUTH_SERVICE_URL;
+      // Conexão de rede via variável de ambiente (Zero Hardcode)
+      const authServiceUrl = process.env.DASS_AUTH_URL || process.env.AUTH_SERVICE_URL;
       if (!authServiceUrl) {
         return res.status(500).json({
-          error: 'A variável de ambiente AUTH_SERVICE_URL não está configurada.',
+          error: 'A variável de ambiente DASS_AUTH_URL ou AUTH_SERVICE_URL não está configurada.',
           code: 'AUTH_SERVICE_URL_MISSING'
         });
       }
@@ -37,10 +65,10 @@ export class AuthController {
           { usuario, senha },
           { timeout: 5000 }
         );
-        console.log('=== PAYLOAD DO UNIX ===', JSON.stringify(response.data, null, 2));
+        console.log('[AuthController] Payload retornado pelo SSO Unix:', JSON.stringify(response.data, null, 2));
       } catch (axiosError: any) {
         const status = axiosError.response?.status;
-        const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout') || axiosError.message?.includes('timeout of');
+        const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout');
 
         if (status === 401 || isTimeout) {
           console.warn('[AuthController] Tentativa de login recusada pelo DASS: Credenciais inválidas ou tempo de resposta esgotado.');
@@ -58,7 +86,7 @@ export class AuthController {
         });
       }
 
-      // Extração dinâmica do token suportando aninhamento em response.data.data.token
+      // Extração dinâmica do token suportando aninhamento no payload do Unix
       const token = response.data?.data?.token || response.data?.token || response.data?.data?.accessToken || response.data?.accessToken;
       if (!token) {
         return res.status(401).json({
@@ -97,14 +125,13 @@ export class AuthController {
       });
 
       if (userLocal) {
-        // Se o usuário já existir, atualiza apenas dados cadastrais. Não altera perfilId nem plantaId.
+        // Se o usuário já existir, atualiza dados cadastrais. Não altera perfilId nem plantaId.
         userLocal.nomeCompleto = unixNome;
-        userLocal.email = unixEmail;
+        if (unixEmail) userLocal.email = unixEmail;
         userLocal.cargo = unixFuncao;
         userLocal.ultimoAcesso = new Date();
         userLocal = await usuarioRepository.save(userLocal);
         
-        // Recarrega relacionamento após salvar
         userLocal = await usuarioRepository.findOne({
           where: { id: userLocal.id },
           relations: { perfil: true }
@@ -138,7 +165,7 @@ export class AuthController {
           nomeCompleto: unixNome,
           email: unixEmail,
           cargo: unixFuncao,
-          senhaHash: 'EXTERNAL_AUTH_ONLY', // Senha gerenciada externamente no Unix
+          senhaHash: 'EXTERNAL_AUTH_ONLY', // Marcada como EXTERNAL_AUTH_ONLY para login gerenciado no Unix
           perfil,
           planta,
           ativo: true,
