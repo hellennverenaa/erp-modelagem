@@ -52,6 +52,11 @@ const router = createRouter({
           component: () => import('../views/GestaoModelosView.vue'),
         },
         {
+          path: 'catalogo-pecas',
+          name: 'catalogo-pecas',
+          component: () => import('../views/CatalogoPecasView.vue'),
+        },
+        {
           path: 'gerencial',
           name: 'gerencial',
           component: () => import('../views/DashboardGerencialView.vue'),

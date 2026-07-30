@@ -27,6 +27,27 @@ import api from '../api/axios'
 import { authStore } from '../api/auth.store'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
+interface PecaInfo {
+  id: string
+  nome: string
+  codigoBarras: string | null
+  descricao: string | null
+  setorCorteOpcaoId: string
+}
+
+interface MarcaInfo {
+  id: string
+  nome: string
+}
+
+interface Modelo {
+  id: string
+  nome: string
+  codigoProduto: string
+  pecas?: PecaInfo[]
+  marca?: MarcaInfo
+}
+
 interface OrdemTeste {
   id: string
   codigoBarras: string
@@ -39,12 +60,7 @@ interface OrdemTeste {
   observacoes: string | null
   createdAt: string
   updatedAt: string
-}
-
-interface Modelo {
-  id: string
-  nome: string
-  codigoProduto: string
+  modelo?: Modelo
 }
 
 interface Planta {
@@ -150,6 +166,290 @@ async function imprimirOrdem(ordem: OrdemTeste, tipoLote: 'CAIXA_TESTE' | 'LOTE_
     addToast('error', 'Erro ao gerar etiqueta em PDF.')
   } finally {
     loadingPdfId.value = null
+  }
+}
+
+// ─── Gerador de Código de Barras SVG Code 128 (Zero Dependências) ────────────
+function generateCode128Svg(text: string): string {
+  const code128patterns: string[] = [
+    '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
+    '221312', '231212', '112232', '122132', '122231', '113222', '123122', '123221', '223211', '221132',
+    '221231', '213212', '223112', '312131', '311222', '321122', '321221', '312212', '322112', '322211',
+    '212123', '212321', '232121', '111323', '131123', '131321', '112313', '132113', '132311', '211313',
+    '231113', '231311', '112133', '112331', '132131', '113123', '113321', '133121', '313121', '211331',
+    '231131', '213113', '213311', '213131', '311123', '311321', '331121', '312113', '312311', '332111',
+    '314111', '221411', '431111', '111224', '111422', '121124', '121421', '141122', '141221', '112214',
+    '112412', '122114', '122411', '142112', '142411', '241211', '221114', '413111', '241112', '134111',
+    '111242', '121142', '121241', '114212', '124112', '124211', '411212', '421112', '421211', '212141',
+    '214121', '412121', '111143', '111341', '131141', '114113', '114311', '411113', '411311', '113141',
+    '114131', '311141', '411131', '611111', '123311', '123131', '116111'
+  ]
+  
+  let checksum = 104
+  let patternStr = code128patterns[104]
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i) - 32
+    if (code >= 0 && code <= 95) {
+      checksum += code * (i + 1)
+      patternStr += code128patterns[code]
+    }
+  }
+  checksum %= 103
+  patternStr += code128patterns[checksum]
+  patternStr += code128patterns[106]
+  
+  let x = 10
+  let rects = ''
+  for (let i = 0; i < patternStr.length; i++) {
+    const width = parseInt(patternStr[i], 10) * 2
+    if (i % 2 === 0) {
+      rects += `<rect x="${x}" y="4" width="${width}" height="42" fill="#000000" />`
+    }
+    x += width
+  }
+  
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x + 10}" height="62" viewBox="0 0 ${x + 10} 62" style="display: block; margin: 0 auto;"><rect width="100%" height="100%" fill="#ffffff"/>${rects}<text x="${(x + 10) / 2}" y="57" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle" fill="#000000">${text}</text></svg>`
+}
+
+// ─── Lógica de Impressão de Tickets Físicos de Corte (Agrupados por Máquina) ──
+const loadingTicketsId = ref<string | null>(null)
+const corteOpcoesMap = ref<Record<string, string>>({})
+
+async function fetchCorteOpcoesMap() {
+  if (Object.keys(corteOpcoesMap.value).length > 0) return
+  try {
+    let opcoes = []
+    try {
+      const res = await api.get('/config/opcoes/subsetor_corte')
+      opcoes = res.data || []
+    } catch {
+      const resFallback = await api.get('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
+      opcoes = resFallback.data || []
+    }
+    const map: Record<string, string> = {}
+    for (const opt of opcoes) {
+      map[opt.id] = opt.label || opt.valor
+    }
+    corteOpcoesMap.value = map
+  } catch (err) {
+    console.warn('[GestaoOrdensView] Não foi possível carregar opções de subsetor_corte:', err)
+  }
+}
+
+async function imprimirTicketsCorte(ordem: OrdemTeste) {
+  if (loadingTicketsId.value) return
+  loadingTicketsId.value = ordem.id
+
+  try {
+    await fetchCorteOpcoesMap()
+
+    // 1. Busca os detalhes completos da OrdemTeste (lote) com seus relacionamentos
+    const { data: ordemCompleta } = await api.get(`/lotes/${ordem.id}`)
+    
+    let pecas: PecaInfo[] = ordemCompleta.modelo?.pecas || ordem.modelo?.pecas || []
+    
+    // Se o modelo não tiver peças populadas no lote, busca via rota de peças do modelo
+    if (pecas.length === 0 && (ordemCompleta.modeloId || ordem.modeloId)) {
+      try {
+        const targetModeloId = ordemCompleta.modeloId || ordem.modeloId
+        const { data: pecasRes } = await api.get(`/pecas/modelo/${targetModeloId}`)
+        pecas = pecasRes || []
+      } catch (errPecas) {
+        console.warn('[GestaoOrdensView] Falha ao carregar peças do modelo:', errPecas)
+      }
+    }
+
+    if (pecas.length === 0) {
+      addToast('error', 'Nenhuma peça cadastrada para este modelo.')
+      return
+    }
+
+    // 2. Agrupa as peças por setorCorteOpcaoId (Máquina de Corte)
+    const agrupamento: Record<string, { machineName: string; pecas: PecaInfo[] }> = {}
+
+    for (const peca of pecas) {
+      const machineId = peca.setorCorteOpcaoId || 'OUTROS'
+      let machineName = corteOpcoesMap.value[machineId] || 'Corte — Geral / Balancim'
+      
+      if (machineName.toLowerCase().startsWith('corte ')) {
+        machineName = machineName.replace(/^corte\s+/i, 'Corte — ')
+      } else if (!machineName.toLowerCase().includes('corte')) {
+        machineName = `Corte — ${machineName}`
+      }
+
+      if (!agrupamento[machineId]) {
+        agrupamento[machineId] = { machineName, pecas: [] }
+      }
+      agrupamento[machineId].pecas.push(peca)
+    }
+
+    // 3. Monta o layout HTML monocromático dos Tickets para Impressão
+    const modeloNome = ordemCompleta.modelo?.nome || getModeloNome(ordem.modeloId)
+    const modeloRef = ordemCompleta.modelo?.codigoProduto || getModeloReferencia(ordem.modeloId)
+    const marcaNome = ordemCompleta.modelo?.marca?.nome || 'DASS'
+    const codigoBarrasOP = ordemCompleta.codigoBarras || ordem.codigoBarras
+    const dataEmissao = new Date().toLocaleString('pt-BR')
+
+    const ticketPagesHtml = Object.values(agrupamento).map((grupo) => {
+      const barcodeSvg = generateCode128Svg(codigoBarrasOP)
+      
+      const rowsHtml = grupo.pecas.map((p, idx) => `
+        <tr>
+          <td style="text-align: center; font-weight: bold; width: 40px; border: 1px solid #000; padding: 6px;">${idx + 1}</td>
+          <td style="font-weight: bold; border: 1px solid #000; padding: 6px; text-transform: uppercase;">
+            ${p.nome}
+          </td>
+          <td style="font-family: monospace; font-size: 11px; border: 1px solid #000; padding: 6px; word-break: break-all;">
+            ${p.id}
+          </td>
+          <td style="text-align: center; border: 1px solid #000; padding: 6px; width: 60px;">
+            <div style="width: 16px; height: 16px; border: 1.5px solid #000; margin: 0 auto;"></div>
+          </td>
+        </tr>
+      `).join('')
+
+      return `
+        <div class="ticket-page">
+          <!-- CABEÇALHO DO TICKET -->
+          <div class="ticket-header">
+            <div>
+              <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; color: #333;">GRUPO DASS — PACOTE TÉCNICO DE CORTE</div>
+              <h1 style="margin: 4px 0 0 0; font-size: 20px; font-weight: 900; text-transform: uppercase;">${grupo.machineName}</h1>
+            </div>
+            <div style="text-align: right;">
+              <span style="font-size: 12px; font-weight: bold; border: 1.5px solid #000; padding: 4px 8px; display: inline-block;">TICKET DE BAIXA</span>
+            </div>
+          </div>
+
+          <!-- DADOS TÉCNICOS DA ORDEM DE TESTE -->
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11px;">
+            <tr>
+              <td style="padding: 4px 0; font-weight: bold; width: 18%;">MODELO:</td>
+              <td style="padding: 4px 0; font-weight: bold; font-size: 13px;">${modeloNome}</td>
+              <td style="padding: 4px 0; font-weight: bold; width: 18%;">REF / PRODUTO:</td>
+              <td style="padding: 4px 0; font-weight: bold;">${modeloRef}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 0; font-weight: bold;">MARCA:</td>
+              <td style="padding: 4px 0;">${marcaNome}</td>
+              <td style="padding: 4px 0; font-weight: bold;">EMISSÃO:</td>
+              <td style="padding: 4px 0;">${dataEmissao}</td>
+            </tr>
+          </table>
+
+          <!-- CÓDIGO DE BARRAS DA ORDEM DE TESTE (PARA BIPAGEM DE ENTRADA/SAÍDA) -->
+          <div style="text-align: center; margin: 12px 0; padding: 8px; border: 1px dashed #000; background: #fafafa;">
+            <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 4px;">CÓDIGO DE BARRAS DA ORDEM (BAIXA POR MÁQUINA)</div>
+            ${barcodeSvg}
+          </div>
+
+          <!-- LISTA DAS PEÇAS PARA O OPERADOR DAR A BAIXA -->
+          <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; margin-top: 12px; margin-bottom: 4px;">
+            PEÇAS ATRIBUÍDAS À ESTA MÁQUINA (${grupo.pecas.length} PEÇA${grupo.pecas.length !== 1 ? 'S' : ''})
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+            <thead>
+              <tr style="background: #eee; text-transform: uppercase;">
+                <th style="border: 1px solid #000; padding: 6px; text-align: center; width: 40px;">#</th>
+                <th style="border: 1px solid #000; padding: 6px; text-align: left;">NOME DA PEÇA TÉCNICA</th>
+                <th style="border: 1px solid #000; padding: 6px; text-align: left;">IDENTIFICADOR (PECA_ID)</th>
+                <th style="border: 1px solid #000; padding: 6px; text-align: center; width: 60px;">BAIXA</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <!-- ASSINATURA DO OPERADOR E DATA DA BAIXA -->
+          <div style="margin-top: 24px; border-top: 1px solid #000; padding-top: 8px; display: flex; justify-content: space-between; font-size: 10px;">
+            <div>
+              <span>Assinatura Operador: ___________________________</span>
+            </div>
+            <div>
+              <span>Data/Hora Baixa: ____/____/________ __:__</span>
+            </div>
+          </div>
+        </div>
+      `
+    }).join('')
+
+    const fullPrintHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>TICKETS DE CORTE — ${codigoBarrasOP}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 12mm;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      color: #000000;
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact;
+    }
+    .ticket-page {
+      page-break-after: always;
+      break-after: page;
+      padding: 16px;
+      border: 2px solid #000000;
+      margin-bottom: 24px;
+      border-radius: 4px;
+      background: #ffffff;
+    }
+    .ticket-page:last-child {
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    .ticket-header {
+      border-bottom: 2px solid #000000;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    @media print {
+      body {
+        padding: 0;
+        background: #ffffff;
+      }
+      .ticket-page {
+        border: 2px solid #000000;
+        margin-bottom: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  ${ticketPagesHtml}
+</body>
+</html>`
+
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.open()
+      printWindow.document.write(fullPrintHtml)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => {
+        printWindow.print()
+      }, 400)
+    } else {
+      addToast('error', 'Bloqueador de pop-ups impediu a janela de impressão.')
+    }
+  } catch (err) {
+    console.error('[imprimirTicketsCorte] Erro ao gerar tickets de corte:', err)
+    addToast('error', 'Falha ao gerar tickets de corte.')
+  } finally {
+    loadingTicketsId.value = null
   }
 }
 
@@ -565,6 +865,19 @@ onMounted(async () => {
                   >
                     <Activity :size="14" aria-hidden="true" />
                     <span>Rastrear Dual</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-action-print"
+                    style="background: #f8fafc; color: #0f172a; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
+                    @click="imprimirTicketsCorte(ordem)"
+                    :disabled="loadingTicketsId === ordem.id"
+                    :aria-label="`Imprimir tickets físicos de corte da ordem ${ordem.codigoBarras}`"
+                    title="Imprimir Tickets Físicos de Corte (Baixa por Máquina)"
+                  >
+                    <Loader2 v-if="loadingTicketsId === ordem.id" :size="14" class="spin-anim" aria-hidden="true" />
+                    <Printer v-else :size="14" aria-hidden="true" />
+                    <span>{{ loadingTicketsId === ordem.id ? 'Gerando...' : 'Tickets Corte' }}</span>
                   </button>
                   <template v-if="ordem.possuiCaixaTeste">
                     <button

@@ -31,10 +31,12 @@ router.use('/apoio', verificaToken, apoioRoutes);
 router.use('/ocorrencias', verificaToken, ocorrenciasRoutes);
 router.use('/dossies', verificaToken, dossieRoutes);
 router.use('/configuracoes', verificaToken, configuracoesRoutes);
+router.use('/config', verificaToken, configuracoesRoutes);
 router.use('/dashboard', verificaToken, dashboardRoutes);
 router.use('/admin', verificaToken, adminRoutes);
 router.use('/rotas', verificaToken, rotasRoutes);
 router.use('/pecas', verificaToken, pecasRoutes);
+router.use('/catalogo-pecas', verificaToken, pecasRoutes);
 router.use('/etiquetas', verificaToken, etiquetasRoutes);
 
 export default router;

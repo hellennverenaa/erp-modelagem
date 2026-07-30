@@ -11,7 +11,11 @@ import {
   CheckCircle,
   AlertCircle,
   Barcode,
-  Printer
+  Printer,
+  Plus,
+  Trash2,
+  Scissors,
+  Search
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -35,11 +39,33 @@ interface Toast {
   message: string
 }
 
+interface CatalogoItem {
+  id: string
+  numero: string
+  nome: string
+  codigoOriginal: string | null
+}
+
+interface MaquinaOpcao {
+  id: string
+  label: string
+  valor: string
+}
+
+interface PecaSelecionada {
+  id: string
+  numero: string
+  nome: string
+  codigoOriginal: string | null
+  setorCorteOpcaoId: string
+}
+
 // ─── Navegação e Roteamento ──────────────────────────────────────────────────
 const router = useRouter()
 
 // ─── Estado do Stepper ───────────────────────────────────────────────────────
-const currentStep = ref(1) // 1: Modelo, 2: Rota, 3: Ordem
+// 1: Modelo | 2: Peças | 3: Rota | 4: Ordem
+const currentStep = ref(1)
 
 // ─── Dados Compartilhados / Estado do Formulário ──────────────────────────────
 const marcas = ref<Marca[]>([])
@@ -59,11 +85,19 @@ const createdModeloCode = ref('')
 const loadingModelo = ref(false)
 const errorModelo = ref('')
 
-// Passo 2: Rota
+// Passo 2: Peças Técnicas
+const pecasSelecionadas = ref<PecaSelecionada[]>([])
+const catalogoPecas = ref<CatalogoItem[]>([])
+const maquinasCorte = ref<MaquinaOpcao[]>([])
+const searchPecaText = ref('')
+const showAutocomplete = ref(false)
+const loadingStep2 = ref(false)
+
+// Passo 3: Rota
 const routeBuilderRef = ref<any>(null)
 const loadingRota = ref(false)
 
-// Passo 3: Ordem
+// Passo 4: Ordem
 const formOrdem = ref({
   plantaId: '',
   prioridadePcp: 'MEDIA',
@@ -133,6 +167,7 @@ async function submitModelo() {
 
     addToast('success', 'Modelo cadastrado com sucesso!')
     currentStep.value = 2
+    await loadStep2Data()
   } catch (err: any) {
     console.error(err)
     if (err.response?.status === 409) {
@@ -145,7 +180,89 @@ async function submitModelo() {
   }
 }
 
-// Salvar Rota (Passo 2 -> 3)
+// Passo 2: Carregar Catálogo e Opções de Máquinas
+async function loadStep2Data() {
+  loadingStep2.value = true
+  try {
+    const [catRes, maqRes] = await Promise.all([
+      api.get<CatalogoItem[]>('/catalogo-pecas'),
+      api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
+        api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
+      )
+    ])
+    catalogoPecas.value = catRes.data || []
+    maquinasCorte.value = (maqRes.data || []).map((m: any) => ({
+      id: m.id,
+      label: m.label || m.valor,
+      valor: m.valor
+    }))
+  } catch (err) {
+    console.error('[loadStep2Data] Erro ao buscar catálogo/máquinas:', err)
+    addToast('error', 'Erro ao carregar catálogo de peças e máquinas.')
+  } finally {
+    loadingStep2.value = false
+  }
+}
+
+const filteredCatalogo = computed(() => {
+  const q = searchPecaText.value.trim().toLowerCase()
+  if (!q) return catalogoPecas.value.slice(0, 12)
+  return catalogoPecas.value.filter(item =>
+    item.numero.toLowerCase().includes(q) ||
+    item.nome.toLowerCase().includes(q) ||
+    (item.codigoOriginal && item.codigoOriginal.toLowerCase().includes(q))
+  ).slice(0, 15)
+})
+
+function addPecaFromCatalogo(item: CatalogoItem) {
+  const jaExiste = pecasSelecionadas.value.some(p => p.id === item.id)
+  if (jaExiste) {
+    addToast('error', `A peça ${item.numero} - ${item.nome} já foi adicionada.`)
+    return
+  }
+
+  const defaultMaquinaId = maquinasCorte.value[0]?.id || ''
+
+  pecasSelecionadas.value.push({
+    id: item.id,
+    numero: item.numero,
+    nome: item.nome,
+    codigoOriginal: item.codigoOriginal,
+    setorCorteOpcaoId: defaultMaquinaId
+  })
+
+  searchPecaText.value = ''
+  showAutocomplete.value = false
+}
+
+function removePeca(index: number) {
+  pecasSelecionadas.value.splice(index, 1)
+}
+
+async function submitPecasAndAdvance() {
+  if (pecasSelecionadas.value.length === 0) {
+    addToast('error', 'Adicione pelo menos uma peça ao modelo antes de avançar.')
+    return
+  }
+
+  loadingModelo.value = true
+  try {
+    if (createdModeloId.value) {
+      await api.post(`/pecas/modelo/${createdModeloId.value}`, {
+        pecas: pecasSelecionadas.value
+      })
+    }
+    addToast('success', `${pecasSelecionadas.value.length} peças vinculadas ao modelo.`)
+    currentStep.value = 3 // Avança para Construtor de Rota
+  } catch (err: any) {
+    console.error('[submitPecasAndAdvance] Erro:', err)
+    addToast('error', 'Erro ao salvar peças do modelo.')
+  } finally {
+    loadingModelo.value = false
+  }
+}
+
+// Salvar Rota (Passo 3 -> 4)
 function triggerSaveRota() {
   if (routeBuilderRef.value) {
     loadingRota.value = true
@@ -155,10 +272,10 @@ function triggerSaveRota() {
 
 function onRotaSalva() {
   loadingRota.value = false
-  currentStep.value = 3
+  currentStep.value = 4
 }
 
-// Salvar Ordem (Passo 3 -> Conclusão)
+// Salvar Ordem (Passo 4 -> Conclusão)
 async function submitOrdem() {
   if (!formOrdem.value.plantaId) {
     errorOrdem.value = 'Selecione uma planta de fabricação.'
@@ -174,7 +291,8 @@ async function submitOrdem() {
       plantaId: formOrdem.value.plantaId,
       prioridadePcp: formOrdem.value.prioridadePcp,
       possuiCaixaTeste: formOrdem.value.possuiCaixaTeste,
-      observacoes: formOrdem.value.observacoes.trim() || null
+      observacoes: formOrdem.value.observacoes.trim() || null,
+      pecas: pecasSelecionadas.value
     })
 
     createdOrdem.value = response.data.lote || response.data
@@ -182,6 +300,8 @@ async function submitOrdem() {
   } catch (err: any) {
     console.error(err)
     errorOrdem.value = err.response?.data?.error || 'Erro ao gerar ordem de teste.'
+  } finally {
+    loadingOrdem.value = false
   }
 }
 
@@ -223,6 +343,7 @@ function resetWizard() {
   createdModeloId.value = ''
   createdModeloName.value = ''
   createdModeloCode.value = ''
+  pecasSelecionadas.value = []
   createdOrdem.value = null
   formOrdem.value = { plantaId: plantas.value[0]?.id || '', prioridadePcp: 'MEDIA', possuiCaixaTeste: false, observacoes: '' }
   errorModelo.value = ''
@@ -241,8 +362,9 @@ function resetWizard() {
       </div>
     </div>
 
-    <!-- ── STEPPER VISUAL ── -->
+    <!-- ── STEPPER VISUAL (4 PASSOS) ── -->
     <div class="wiz-stepper-header" v-if="!createdOrdem">
+      <!-- Passo 1: Modelo -->
       <div class="wiz-step" :class="{ 'wiz-step--active': currentStep === 1, 'wiz-step--completed': currentStep > 1 }">
         <div class="wiz-step-bubble">
           <Layers v-if="currentStep <= 1" :size="16" aria-hidden="true" />
@@ -254,25 +376,40 @@ function resetWizard() {
         </div>
       </div>
       <div class="wiz-step-connector" :class="{ 'wiz-step-connector--active': currentStep > 1 }"></div>
-      
+
+      <!-- Passo 2: Peças -->
       <div class="wiz-step" :class="{ 'wiz-step--active': currentStep === 2, 'wiz-step--completed': currentStep > 2 }">
         <div class="wiz-step-bubble">
-          <ListOrdered v-if="currentStep <= 2" :size="16" aria-hidden="true" />
+          <Scissors v-if="currentStep <= 2" :size="16" aria-hidden="true" />
           <CheckCircle v-else :size="16" aria-hidden="true" />
         </div>
         <div class="wiz-step-info">
           <span class="wiz-step-number">Passo 2</span>
-          <span class="wiz-step-name">Rota</span>
+          <span class="wiz-step-name">Peças</span>
         </div>
       </div>
       <div class="wiz-step-connector" :class="{ 'wiz-step-connector--active': currentStep > 2 }"></div>
+      
+      <!-- Passo 3: Rota -->
+      <div class="wiz-step" :class="{ 'wiz-step--active': currentStep === 3, 'wiz-step--completed': currentStep > 3 }">
+        <div class="wiz-step-bubble">
+          <ListOrdered v-if="currentStep <= 3" :size="16" aria-hidden="true" />
+          <CheckCircle v-else :size="16" aria-hidden="true" />
+        </div>
+        <div class="wiz-step-info">
+          <span class="wiz-step-number">Passo 3</span>
+          <span class="wiz-step-name">Rota</span>
+        </div>
+      </div>
+      <div class="wiz-step-connector" :class="{ 'wiz-step-connector--active': currentStep > 3 }"></div>
 
-      <div class="wiz-step" :class="{ 'wiz-step--active': currentStep === 3 }">
+      <!-- Passo 4: Ordem -->
+      <div class="wiz-step" :class="{ 'wiz-step--active': currentStep === 4 }">
         <div class="wiz-step-bubble">
           <ClipboardCheck :size="16" aria-hidden="true" />
         </div>
         <div class="wiz-step-info">
-          <span class="wiz-step-number">Passo 3</span>
+          <span class="wiz-step-number">Passo 4</span>
           <span class="wiz-step-name">Ordem</span>
         </div>
       </div>
@@ -284,7 +421,7 @@ function resetWizard() {
       <span>Carregando dados necessários...</span>
     </div>
 
-    <!-- ── FLOW STEPS v-if CONTROL ── -->
+    <!-- ── FLOW STEPS CONTROL ── -->
     <div v-else class="wiz-card">
       
       <!-- CONCLUSÃO SUCESSO -->
@@ -420,19 +557,125 @@ function resetWizard() {
             </button>
             <button type="submit" class="btn-primary" :disabled="loadingModelo">
               <Loader2 v-if="loadingModelo" :size="16" class="wiz-spinner" aria-hidden="true" />
-              <span>Salvar e Avançar</span>
+              <span>Salvar e Avançar para Peças</span>
               <ArrowRight v-if="!loadingModelo" :size="16" aria-hidden="true" />
             </button>
           </div>
         </form>
       </div>
 
-      <!-- PASSO 2: ROTA -->
+      <!-- PASSO 2 [NOVO]: CONSTRUÇÃO DE PEÇAS -->
       <div v-else-if="currentStep === 2" class="wiz-step-panel">
+        <div class="wiz-panel-header">
+          <h2 class="wiz-panel-title">Passo 2: Construção de Peças do Modelo</h2>
+          <p class="wiz-panel-subtitle">
+            Modelo: <strong class="text-slate-900">{{ createdModeloName }}</strong> ({{ createdModeloCode }}).
+            Adicione as peças do catálogo e defina a máquina de corte de cada uma.
+          </p>
+        </div>
+
+        <div class="wiz-form">
+          <!-- Autocomplete do Catálogo de Peças -->
+          <div class="pecas-autocomplete-container">
+            <label class="form-label">Adicionar Peça do Catálogo</label>
+            <div class="autocomplete-wrap">
+              <Search :size="16" class="ac-icon" />
+              <input
+                type="text"
+                v-model="searchPecaText"
+                @focus="showAutocomplete = true"
+                placeholder="Buscar por número (ex: 026) ou nome (ex: GÁSPEA)..."
+                class="ac-input"
+              />
+            </div>
+
+            <!-- Dropdown de Peças -->
+            <div v-if="showAutocomplete && filteredCatalogo.length > 0" class="ac-dropdown">
+              <div
+                v-for="item in filteredCatalogo"
+                :key="item.id"
+                class="ac-item"
+                @mousedown.prevent="addPecaFromCatalogo(item)"
+              >
+                <span class="ac-badge">{{ item.numero }}</span>
+                <span class="ac-name">{{ item.nome }}</span>
+                <span v-if="item.codigoOriginal" class="ac-ref">Ref: {{ item.codigoOriginal }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tabela de Peças Selecionadas -->
+          <div class="pecas-selected-list">
+            <div class="pecas-list-header">
+              <span class="pecas-list-title">Peças Atribuídas ao Modelo ({{ pecasSelecionadas.length }})</span>
+            </div>
+
+            <div v-if="pecasSelecionadas.length === 0" class="pecas-empty">
+              <Scissors :size="32" class="text-slate-400" />
+              <p>Nenhuma peça adicionada ainda. Utilize a busca acima para adicionar peças ao modelo.</p>
+            </div>
+
+            <div v-else class="pecas-table-wrap">
+              <table class="pecas-table">
+                <thead>
+                  <tr>
+                    <th style="width: 80px; text-align: center;">Número</th>
+                    <th>Nome da Peça Técnica</th>
+                    <th>Máquina de Corte Destino</th>
+                    <th style="width: 60px; text-align: center;">Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(p, idx) in pecasSelecionadas" :key="p.id" class="peca-row">
+                    <td style="text-align: center;">
+                      <span class="peca-num-badge">{{ p.numero }}</span>
+                    </td>
+                    <td>
+                      <strong class="text-slate-900">{{ p.nome }}</strong>
+                    </td>
+                    <td>
+                      <select v-model="p.setorCorteOpcaoId" class="maquina-select">
+                        <option v-for="m in maquinasCorte" :key="m.id" :value="m.id">
+                          {{ m.label }}
+                        </option>
+                      </select>
+                    </td>
+                    <td style="text-align: center;">
+                      <button
+                        type="button"
+                        class="btn-remove-peca"
+                        @click="removePeca(idx)"
+                        title="Remover peça"
+                      >
+                        <Trash2 :size="14" />
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="wiz-footer-actions wiz-footer-actions--border" style="margin-top: 1.5rem;">
+            <button type="button" class="btn-secondary" @click="currentStep = 1">
+              <ArrowLeft :size="16" aria-hidden="true" />
+              <span>Voltar ao Modelo</span>
+            </button>
+            <button type="button" class="btn-primary" @click="submitPecasAndAdvance" :disabled="loadingModelo">
+              <Loader2 v-if="loadingModelo" :size="16" class="wiz-spinner" aria-hidden="true" />
+              <span>Salvar Peças e Avançar para Rota</span>
+              <ArrowRight v-if="!loadingModelo" :size="16" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- PASSO 3: ROTA DE PRODUÇÃO (antigo Passo 2) -->
+      <div v-else-if="currentStep === 3" class="wiz-step-panel">
         <div class="wiz-panel-header">
           <div class="flex justify-between items-center">
             <div>
-              <h2 class="wiz-panel-title">Passo 2: Construtor de Rota de Produção</h2>
+              <h2 class="wiz-panel-title">Passo 3: Construtor de Rota de Produção</h2>
               <p class="wiz-panel-subtitle">
                 Modelo: <strong class="text-slate-900">{{ createdModeloName }}</strong> ({{ createdModeloCode }}).
                 Arraste os blocos flutuantes para desenhar o fluxo de fábrica.
@@ -441,7 +684,6 @@ function resetWizard() {
           </div>
         </div>
 
-        <!-- Renderiza o componente RouteBuilder no modo Wizard -->
         <div class="wiz-route-builder-container">
           <RouteBuilder
             ref="routeBuilderRef"
@@ -452,9 +694,9 @@ function resetWizard() {
         </div>
 
         <div class="wiz-footer-actions wiz-footer-actions--border">
-          <button type="button" class="btn-secondary" @click="currentStep = 1" :disabled="loadingRota">
+          <button type="button" class="btn-secondary" @click="currentStep = 2" :disabled="loadingRota">
             <ArrowLeft :size="16" aria-hidden="true" />
-            <span>Voltar ao Modelo</span>
+            <span>Voltar às Peças</span>
           </button>
           <button type="button" class="btn-primary" @click="triggerSaveRota" :disabled="loadingRota">
             <Loader2 v-if="loadingRota" :size="16" class="wiz-spinner" aria-hidden="true" />
@@ -464,10 +706,10 @@ function resetWizard() {
         </div>
       </div>
 
-      <!-- PASSO 3: ORDEM -->
-      <div v-else-if="currentStep === 3" class="wiz-step-panel">
+      <!-- PASSO 4: GERAÇÃO DA ORDEM PCP (antigo Passo 3) -->
+      <div v-else-if="currentStep === 4" class="wiz-step-panel">
         <div class="wiz-panel-header">
-          <h2 class="wiz-panel-title">Passo 3: Geração da Ordem de Teste</h2>
+          <h2 class="wiz-panel-title">Passo 4: Geração da Ordem de Teste</h2>
           <p class="wiz-panel-subtitle">Configure as opções PCP da fábrica para persistir o teste do modelo.</p>
         </div>
 
@@ -476,7 +718,7 @@ function resetWizard() {
           <span class="wiz-error-text">{{ errorOrdem }}</span>
         </div>
 
-        <!-- Resumo do Modelo & Rota Mapeada -->
+        <!-- Resumo do Teste -->
         <div class="wiz-summary-section">
           <h3 class="wiz-summary-title">Resumo do Teste</h3>
           <div class="wiz-summary-grid">
@@ -488,7 +730,11 @@ function resetWizard() {
               <span class="wiz-sum-label">Código:</span>
               <strong class="wiz-sum-val">{{ createdModeloCode }}</strong>
             </div>
-            <div class="wiz-sum-item col-span-2">
+            <div class="wiz-sum-item">
+              <span class="wiz-sum-label">Peças Cadastradas:</span>
+              <strong class="wiz-sum-val">{{ pecasSelecionadas.length }} Peças</strong>
+            </div>
+            <div class="wiz-sum-item">
               <span class="wiz-sum-label">Status da Rota:</span>
               <strong class="wiz-sum-val text-green-700">Mapeada no Banco Local</strong>
             </div>
@@ -536,7 +782,7 @@ function resetWizard() {
           </div>
 
           <div class="wiz-footer-actions">
-            <button type="button" class="btn-secondary" @click="currentStep = 2" :disabled="loadingOrdem">
+            <button type="button" class="btn-secondary" @click="currentStep = 3" :disabled="loadingOrdem">
               <ArrowLeft :size="16" aria-hidden="true" />
               <span>Voltar à Rota</span>
             </button>
@@ -546,11 +792,9 @@ function resetWizard() {
               <CheckCircle v-if="!loadingOrdem" :size="16" aria-hidden="true" />
             </button>
           </div>
-      </form>
+        </form>
+      </div>
     </div>
-  </div>
-
-  <!-- Bloco de impressão exclusivo (visível apenas ao imprimir) -->
   </div>
 </template>
 
@@ -563,7 +807,7 @@ function resetWizard() {
   margin: 0 auto;
 }
 
-/* Stepper Visual */
+/* Stepper Header */
 .wiz-stepper-header {
   display: flex;
   align-items: center;
@@ -585,7 +829,7 @@ function resetWizard() {
 }
 .wiz-step--completed {
   opacity: 0.9;
-  color: #1e3a8a;
+  color: #0f172a;
 }
 .wiz-step-bubble {
   width: 2.25rem;
@@ -601,14 +845,14 @@ function resetWizard() {
   transition: all 0.25s;
 }
 .wiz-step--active .wiz-step-bubble {
-  background: #eff6ff;
-  border-color: #3b82f6;
-  color: #1d4ed8;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+  box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.12);
 }
 .wiz-step--completed .wiz-step-bubble {
-  background: #1e3a8a;
-  border-color: #1e3a8a;
+  background: #0f172a;
+  border-color: #0f172a;
   color: #ffffff;
 }
 .wiz-step-info {
@@ -623,7 +867,7 @@ function resetWizard() {
   color: #94a3b8;
 }
 .wiz-step--active .wiz-step-number {
-  color: #3b82f6;
+  color: #0f172a;
 }
 .wiz-step-name {
   font-size: 0.875rem;
@@ -634,11 +878,11 @@ function resetWizard() {
   flex: 1;
   height: 2px;
   background: #e2e8f0;
-  margin: 0 1.5rem;
+  margin: 0 1rem;
   transition: background 0.3s;
 }
 .wiz-step-connector--active {
-  background: #1e3a8a;
+  background: #0f172a;
 }
 
 /* Card */
@@ -714,7 +958,8 @@ function resetWizard() {
   color: #475569;
 }
 .required {
-  color: #dc2626;
+  color: #0f172a;
+  font-weight: 900;
 }
 
 .form-input, .form-select, .wiz-select, .form-textarea {
@@ -724,14 +969,14 @@ function resetWizard() {
   font-family: inherit;
   color: #0f172a;
   background: #ffffff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #cbd5e1;
   border-radius: 0.5rem;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .form-input:focus, .form-select:focus, .wiz-select:focus, .form-textarea:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  border-color: #0f172a;
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.12);
 }
 
 .wiz-checkbox-container {
@@ -751,6 +996,161 @@ function resetWizard() {
   border-radius: 0.25rem;
   border: 1px solid #cbd5e1;
   cursor: pointer;
+}
+
+/* Step 2 Autocomplete & List */
+.pecas-autocomplete-container {
+  position: relative;
+  margin-bottom: 1.5rem;
+}
+.autocomplete-wrap {
+  position: relative;
+}
+.ac-icon {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #64748b;
+}
+.ac-input {
+  width: 100%;
+  padding: 0.625rem 0.875rem 0.625rem 2.25rem;
+  font-size: 0.875rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  outline: none;
+}
+.ac-input:focus {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.1);
+}
+.ac-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  max-height: 16rem;
+  overflow-y: auto;
+  z-index: 30;
+  margin-top: 0.25rem;
+}
+.ac-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.875rem;
+}
+.ac-item:hover {
+  background: #f8fafc;
+}
+.ac-badge {
+  padding: 0.2rem 0.5rem;
+  background: #0f172a;
+  color: #ffffff;
+  font-weight: 800;
+  font-family: monospace;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+}
+.ac-name {
+  font-weight: 700;
+  color: #0f172a;
+}
+.ac-ref {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #64748b;
+  font-family: monospace;
+}
+
+.pecas-selected-list {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+.pecas-list-header {
+  margin-bottom: 0.75rem;
+}
+.pecas-list-title {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #475569;
+}
+.pecas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: #64748b;
+  font-size: 0.875rem;
+  text-align: center;
+}
+.pecas-table-wrap {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  overflow: hidden;
+}
+.pecas-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.pecas-table th {
+  background: #f1f5f9;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+.peca-row td {
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.peca-num-badge {
+  padding: 0.2rem 0.5rem;
+  background: #0f172a;
+  color: #ffffff;
+  font-weight: 800;
+  font-family: monospace;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+}
+.maquina-select {
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.8125rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  outline: none;
+  background: #ffffff;
+  color: #0f172a;
+}
+.btn-remove-peca {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+}
+.btn-remove-peca:hover {
+  color: #0f172a;
+  background: #e2e8f0;
 }
 
 /* Summary */
@@ -800,202 +1200,141 @@ function resetWizard() {
   background: #f8fafc;
 }
 
-.btn-primary, .btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
+/* Buttons */
+.btn-primary {
+  background: #0f172a;
+  color: #ffffff;
+  border: none;
   padding: 0.625rem 1.25rem;
   font-size: 0.875rem;
   font-weight: 700;
   border-radius: 0.5rem;
   cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
-.btn-primary {
-  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
-  color: #ffffff;
-  border: none;
-  box-shadow: 0 4px 12px rgba(29, 78, 216, 0.15);
+.btn-primary:hover {
+  background: #1e293b;
 }
-.btn-primary:hover:not(:disabled) {
-  opacity: 0.95;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(29, 78, 216, 0.25);
-}
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .btn-secondary {
   background: #ffffff;
-  color: #475569;
-  border: 1px solid #e2e8f0;
-}
-.btn-secondary:hover:not(:disabled) {
-  background: #f8fafc;
   color: #0f172a;
-}
-
-/* Error Banner */
-.wiz-error-banner {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  margin: 1.5rem 1.5rem 0 1.5rem;
-  padding: 0.75rem 1rem;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  border: 1px solid #cbd5e1;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
   border-radius: 0.5rem;
-  color: #b91c1c;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
-.wiz-error-icon { flex-shrink: 0; }
-.wiz-error-text { font-size: 0.8125rem; font-weight: 600; }
-
-/* Route builder container alignment */
-.wiz-route-builder-container {
-  padding: 0;
-  background: #f8fafc;
+.btn-print-barcode {
+  background: #0f172a;
+  color: #ffffff;
+  border: none;
+  padding: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
 }
 
-/* Conclusão */
+/* Done block */
 .wiz-done-block {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 4rem 2rem;
-  max-width: 32rem;
-  margin: 0 auto;
+  padding: 3rem 2rem;
 }
 .wiz-done-icon-wrap {
   width: 4rem;
   height: 4rem;
+  background: #0f172a;
+  color: #ffffff;
   border-radius: 50%;
-  background: #dcfce7;
-  color: #15803d;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 .wiz-done-title {
   font-size: 1.5rem;
   font-weight: 800;
   color: #0f172a;
-  margin: 0 0 0.5rem 0;
+  margin: 0;
 }
 .wiz-done-desc {
   font-size: 0.875rem;
   color: #64748b;
-  line-height: 1.6;
-  margin-bottom: 2rem;
+  max-width: 28rem;
+  margin: 0.5rem 0 1.5rem;
 }
-
 .wiz-barcode-card {
-  width: 100%;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
   padding: 1.5rem;
-  margin-bottom: 2.5rem;
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 0.75rem;
+  max-width: 24rem;
+  width: 100%;
+  margin-bottom: 1.5rem;
 }
 .wiz-barcode-label {
   font-size: 0.6875rem;
   font-weight: 800;
-  color: #94a3b8;
-  letter-spacing: 0.05em;
-  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  color: #64748b;
 }
 .wiz-barcode-val-wrap {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #1e3a8a;
-  background: #ffffff;
-  border: 1.5px solid #bfdbfe;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0.5rem;
-  box-shadow: 0 2px 8px rgba(30, 58, 138, 0.05);
 }
 .wiz-barcode-val {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: monospace;
   font-size: 1.25rem;
   font-weight: 800;
+  color: #0f172a;
 }
 .wiz-barcode-hint {
   font-size: 0.75rem;
   color: #94a3b8;
-  margin-top: 0.75rem;
-  margin-bottom: 0;
+  margin: 0;
 }
-
 .wiz-done-actions {
   display: flex;
-  gap: 1rem;
-  width: 100%;
-}
-.wiz-done-actions button {
-  flex: 1;
+  gap: 0.75rem;
 }
 
-/* Toasts */
+/* Toast */
 .wiz-toasts {
   position: fixed;
-  top: 1.5rem;
+  bottom: 1.5rem;
   right: 1.5rem;
+  z-index: 100;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  z-index: 9999;
 }
 .wiz-toast {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
-  border-radius: 0.375rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  font-size: 0.8125rem;
-  font-weight: 700;
+  border-radius: 0.5rem;
+  background: #0f172a;
   color: #ffffff;
-  animation: slideIn 0.2s cubic-bezier(0.32, 0.72, 0, 1);
-}
-.wiz-toast--success {
-  background: #15803d;
-}
-.wiz-toast--error {
-  background: #b91c1c;
-}
-@keyframes slideIn {
-  from { transform: translateX(100%); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
-}
-
-/* Print Specific Button */
-.btn-print-barcode {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  padding: 0.5rem 1rem;
   font-size: 0.8125rem;
-  font-weight: 700;
-  color: #1e3a8a;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-.btn-print-barcode:hover {
-  background: #dbeafe;
-  color: #1d4ed8;
+  font-weight: 600;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 </style>
