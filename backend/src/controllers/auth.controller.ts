@@ -102,6 +102,43 @@ export class AuthController {
       const unixUsuario = decoded?.usuario || response.data?.data?.usuario || usuario;
       const unixFuncao = decoded?.funcao || 'Operador';
 
+      // Extração agnóstica das chaves duplas de crachá (RFID e Código de Barras) vindo da matriz DASS_AUTH_SERVICE
+      const rawRfid =
+        decoded?.rfid ||
+        decoded?.chip_rfid ||
+        decoded?.rfid_chip ||
+        response.data?.data?.rfid ||
+        response.data?.rfid ||
+        null;
+
+      const rawBarcode =
+        decoded?.codbarras ||
+        decoded?.codigo_barras ||
+        decoded?.codigoBarrasCracha ||
+        decoded?.codigo_barras_cracha ||
+        decoded?.codigoCracha ||
+        decoded?.codigoCrachao ||
+        decoded?.cracha ||
+        decoded?.codigo_cracha ||
+        decoded?.codigo_crachao ||
+        response.data?.data?.codbarras ||
+        response.data?.data?.codigo_barras ||
+        response.data?.data?.codigoBarrasCracha ||
+        response.data?.data?.codigo_barras_cracha ||
+        response.data?.data?.codigoCracha ||
+        response.data?.data?.codigoCrachao ||
+        response.data?.data?.cracha ||
+        response.data?.codbarras ||
+        response.data?.codigo_barras ||
+        response.data?.codigoBarrasCracha ||
+        response.data?.codigoCracha ||
+        response.data?.codigoCrachao ||
+        response.data?.cracha ||
+        null;
+
+      const unixRfid    = rawRfid ? Usuario.normalizarCodigoCrachao(String(rawRfid)) || null : null;
+      const unixBarcode = rawBarcode ? Usuario.normalizarCodigoCrachao(String(rawBarcode)) || null : null;
+
       let unixEmail = null;
       if (decoded?.matricula) {
         try {
@@ -125,10 +162,16 @@ export class AuthController {
       });
 
       if (userLocal) {
-        // Se o usuário já existir, atualiza dados cadastrais. Não altera perfilId nem plantaId.
+        // Se o usuário já existir, atualiza dados cadastrais e as chaves de crachá espelhadas
         userLocal.nomeCompleto = unixNome;
         if (unixEmail) userLocal.email = unixEmail;
         userLocal.cargo = unixFuncao;
+        if (unixRfid) userLocal.rfid = unixRfid;
+        if (unixBarcode) {
+          userLocal.codigoBarrasCracha = unixBarcode;
+          userLocal.codigoCrachao      = unixBarcode;
+          userLocal.codigoCracha       = unixBarcode;
+        }
         userLocal.ultimoAcesso = new Date();
         userLocal = await usuarioRepository.save(userLocal);
         
@@ -165,6 +208,10 @@ export class AuthController {
           nomeCompleto: unixNome,
           email: unixEmail,
           cargo: unixFuncao,
+          rfid: unixRfid,
+          codigoBarrasCracha: unixBarcode,
+          codigoCrachao: unixBarcode || unixRfid,
+          codigoCracha: unixBarcode || unixRfid,
           senhaHash: 'EXTERNAL_AUTH_ONLY', // Marcada como EXTERNAL_AUTH_ONLY para login gerenciado no Unix
           perfil,
           planta,
@@ -184,6 +231,10 @@ export class AuthController {
           usuario: userLocal.usuario,
           cargo: userLocal.cargo,
           email: userLocal.email,
+          rfid: userLocal.rfid,
+          codigoBarrasCracha: userLocal.codigoBarrasCracha,
+          codigoCrachao: userLocal.codigoCrachao,
+          codigoCracha: userLocal.codigoCracha,
           ativo: userLocal.ativo,
           perfilId: userLocal.perfilId,
           perfilNome: userLocal.perfil?.nome || null,
@@ -216,6 +267,84 @@ export class AuthController {
       return res.json({ message: 'Logout efetuado com sucesso' });
     } catch (error) {
       return res.status(500).json({ error: 'Erro no logout' });
+    }
+  }
+
+  /**
+   * Valida credenciais de crachá/RFID de forma agnóstica a hardware (Chaves Duplas RFID e Barcode).
+   * POST /api/auth/validar-cracha
+   */
+  public async validarCracha(req: Request, res: Response): Promise<Response> {
+    try {
+      const { codigoCredencial } = req.body;
+
+      if (!codigoCredencial || typeof codigoCredencial !== 'string') {
+        return res.status(400).json({
+          error: 'O campo codigoCredencial é obrigatório.',
+          code: 'CREDENTIAL_REQUIRED'
+        });
+      }
+
+      const codigoLimpo = Usuario.normalizarCodigoCrachao(codigoCredencial);
+      if (!codigoLimpo) {
+        return res.status(400).json({
+          error: 'Código de credencial inválido ou vazio.',
+          code: 'INVALID_CREDENTIAL_FORMAT'
+        });
+      }
+
+      // Validação de tipo de dado para evitar Erro 42883 (UUID vs Varchar) no PostgreSQL
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(codigoLimpo);
+      const usuarioRepo = AppDataSource.getRepository(Usuario);
+
+      const query = usuarioRepo
+        .createQueryBuilder('u')
+        .leftJoinAndSelect('u.perfil', 'perfil')
+        .leftJoinAndSelect('u.setor', 'setor')
+        .where('u.ativo = true');
+
+      if (isUuid) {
+        query.andWhere('u.id = :uuid', { uuid: codigoLimpo });
+      } else {
+        query.andWhere(
+          '(UPPER(u.rfid) = :code OR UPPER(u.codigo_barras_cracha) = :code OR UPPER(u.codigo_crachao) = :code OR UPPER(u.codigo_cracha) = :code OR UPPER(u.usuario) = :code OR UPPER(u.email) = :code)',
+          { code: codigoLimpo }
+        );
+      }
+
+      const user = await query.getOne();
+
+      if (!user) {
+        return res.status(404).json({
+          error: 'Credencial de gestor/coordenador inválida ou crachá não cadastrado.',
+          code: 'CREDENCIAL_INVALIDA'
+        });
+      }
+
+      if (!user.ativo) {
+        return res.status(403).json({
+          error: 'Usuário associado a este crachá está inativo.',
+          code: 'USUARIO_INATIVO'
+        });
+      }
+
+      return res.json({
+        message: 'Credencial de gestor/coordenador validada com sucesso.',
+        usuario: {
+          id: user.id,
+          nomeCompleto: user.nomeCompleto,
+          cargo: user.cargo,
+          perfilId: user.perfilId,
+          perfilNome: user.perfil?.nome || null,
+          setorId: user.setorId
+        }
+      });
+    } catch (error: any) {
+      console.error('[AuthController.validarCracha] Erro no banco de dados:', error);
+      return res.status(500).json({
+        error: error.message || 'Erro interno de banco de dados ao validar crachá.',
+        code: 'INTERNAL_SERVER_ERROR'
+      });
     }
   }
 }

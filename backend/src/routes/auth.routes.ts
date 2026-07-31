@@ -104,4 +104,32 @@ router.post('/refresh', authController.refresh);
  */
 router.post('/logout', authController.logout);
 
+/**
+ * @swagger
+ * /api/auth/validar-cracha:
+ *   post:
+ *     summary: Valida crachá ou tag RFID para liberação em Modo Quiosque
+ *     description: Validação agnóstica de hardware (RFID ou código de barras) de credenciais de gestor.
+ *     tags:
+ *       - auth
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - codigoCredencial
+ *             properties:
+ *               codigoCredencial:
+ *                 type: string
+ *                 example: "RF-884920"
+ *     responses:
+ *       200:
+ *         description: Credencial validada com sucesso
+ *       404:
+ *         description: Credencial não encontrada ou crachá inválido
+ */
+router.post('/validar-cracha', authController.validarCracha);
+
 export default router;

@@ -66,6 +66,17 @@ export class Usuario {
   @Column({ name: 'codigo_crachao', type: 'varchar', length: 50, unique: true, nullable: true })
   codigoCrachao: string | null;
 
+  @Column({ name: 'codigo_cracha', type: 'varchar', length: 50, unique: true, nullable: true })
+  codigoCracha: string | null;
+
+  // Chip RFID de aproximação (ex: 2629318421)
+  @Column({ name: 'rfid', type: 'varchar', length: 50, unique: true, nullable: true })
+  rfid: string | null;
+
+  // Código de barras impresso no crachá (ex: 48192892882045)
+  @Column({ name: 'codigo_barras_cracha', type: 'varchar', length: 50, unique: true, nullable: true })
+  codigoBarrasCracha: string | null;
+
   @Column({ type: 'varchar', length: 200, nullable: true })
   email: string | null;
 

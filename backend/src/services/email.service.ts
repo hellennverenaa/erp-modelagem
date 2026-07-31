@@ -285,7 +285,7 @@ export async function dispararEmailChecklist(
     // 10. Envia o e-mail via SMTP
     try {
       await transporter.sendMail({
-        from: '"ERP Chao de Fabrica" <noreply@dass.com.br>',
+        from: '"ERP Chao de Fabrica" <noreply@grupodass.com.br>',
         to: uniqueEmails.join(','),
         subject: assunto,
         html: corpoHtml,

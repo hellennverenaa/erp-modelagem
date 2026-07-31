@@ -3,6 +3,7 @@ import { ref, computed, onMounted, nextTick, watch, reactive } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
+import ModalAuthQuiosque from '../components/ModalAuthQuiosque.vue'
 import {
   Barcode,
   ArrowRight,
@@ -35,7 +36,7 @@ interface Setor {
   nome: string
   codigo: string
   tipoOpcaoId: string
-  tipoOpcaoValor: string | null  // Incluído pelo backend: 'ALMOXARIFADO', 'NAVALHA', 'TELAS', etc.
+  tipoOpcaoValor: string | null
   tipoOpcaoLabel: string | null
 }
 
@@ -46,40 +47,6 @@ interface OrdemTeste {
   possuiCaixaTeste: boolean
 }
 
-// Zero Hardcode: setores de fase inicial identificados pelo `valor` em config_opcoes
-// Espelha exatamente SETORES_HANDOFF_AUTOMATICO_VALORES do backend (rastreamentos.controller.ts)
-const VALORES_SETOR_FASE_INICIAL = ['ALMOXARIFADO', 'NAVALHA', 'TELAS'] as const
-
-// Computed DINÂMICO: verifica se o setor selecionado é da fase inicial
-// usa tipoOpcaoValor já retornado pelo endpoint /admin/setores — ZERO HARDCODE de UUID.
-const isSetorFaseInicial = computed<boolean>(() => {
-  if (!selecionouSetorId.value) return false
-  const setor = setores.value.find(s => s.id === selecionouSetorId.value)
-  if (!setor?.tipoOpcaoValor) return false
-  return (VALORES_SETOR_FASE_INICIAL as readonly string[]).includes(setor.tipoOpcaoValor)
-})
-
-// ─── State ───────────────────────────────────────────────────────────────
-const setores = ref<Setor[]>([])
-const selecionouSetorId = ref('')
-const tipoLote = ref<'LOTE_PRINCIPAL' | 'CAIXA_TESTE'>('LOTE_PRINCIPAL')
-const codigoLeitura = ref('')
-const lotesDisponiveis = ref<OrdemTeste[]>([])
-const ordemAtiva = ref<OrdemTeste | null>(null)
-
-watch(codigoLeitura, (novoCodigo) => {
-  const codigo = novoCodigo.trim().toUpperCase()
-  if (!codigo) {
-    ordemAtiva.value = null
-    return
-  }
-  const loteEncontrado = lotesDisponiveis.value.find(
-    l => l.codigoBarras.toUpperCase() === codigo || l.id === codigo
-  )
-  ordemAtiva.value = loteEncontrado ?? null
-})
-
-// ─── Checklist State & Interfaces ─────────────────────────────────────────
 interface ItemChecklistUI {
   id: string
   catalogItemId: string | null
@@ -92,6 +59,16 @@ interface ItemChecklistUI {
   isAvulso: boolean
 }
 
+const VALORES_SETOR_FASE_INICIAL = ['ALMOXARIFADO', 'NAVALHA', 'TELAS'] as const
+
+// ─── 1. Declaração do Estado Reativo (Refs e Reactives - APENAS NO TOPO) ──
+const setores = ref<Setor[]>([])
+const selecionouSetorId = ref('')
+const tipoLote = ref<'LOTE_PRINCIPAL' | 'CAIXA_TESTE'>('LOTE_PRINCIPAL')
+const codigoLeitura = ref('')
+const lotesDisponiveis = ref<OrdemTeste[]>([])
+const ordemAtiva = ref<OrdemTeste | null>(null)
+
 const loadingChecklist = ref(false)
 const salvandoChecklist = ref(false)
 const erroChecklist = ref('')
@@ -99,60 +76,51 @@ const templateChecklist = ref<any>(null)
 const itensChecklist = ref<ItemChecklistUI[]>([])
 const bloqueante = ref(false)
 const observacoesGerais = ref('')
-// Trava de Handoff: só true após POST /checklists/responder retornar 201
 const checklistConcluidoComSucesso = ref(false)
 
-// Autocomplete State (Catálogo de Engenharia - Zero Hardcode)
 const searchQuery = ref('')
 const autocompleteResults = ref<any[]>([])
 const loadingAutocomplete = ref(false)
 const showAutocompleteDropdown = ref(false)
 
-// Modal Handoff Bloqueado
 const modalBloqueioHandoff = ref(false)
 const mensagemBloqueioHandoff = ref('')
 
-const podeAdicionarItemAvulso = computed(() => {
-  if (!user.value) return false
-  const perfil = user.value.perfilNome?.toUpperCase() || ''
-  return ['ADMIN', 'MODELISTA', 'GERENTE_MODELAGEM', 'ASSISTENTE_MODELAGEM', 'GERENTE'].includes(perfil)
-})
-
-// Modal de Checklist (Overlay Wide Dialog)
 const showChecklistModal = ref(false)
-
-function abrirModalChecklist() {
-  if (ordemAtiva.value && isSetorFaseInicial.value) {
-    showChecklistModal.value = true
-  }
-}
-
-function fecharModalChecklist() {
-  showChecklistModal.value = false
-}
-
-// Reseta o estado do checklist ao mudar de ordem ou setor
-watch([ordemAtiva, selecionouSetorId], async ([novoLote, novoSetor]) => {
-  checklistConcluidoComSucesso.value = false
-  itensChecklist.value = []
-  templateChecklist.value = null
-  erroChecklist.value = ''
-  observacoesGerais.value = ''
-  bloqueante.value = false
-  searchQuery.value = ''
-  showAutocompleteDropdown.value = false
-  modalBloqueioHandoff.value = false
-  showChecklistModal.value = false
-
-  if (novoLote && isSetorFaseInicial.value) {
-    await carregarChecklist(novoLote, novoSetor as string)
-  }
-})
+const showModalQuiosque   = ref(false)
+const gestorAutenticado  = ref<any>(null)
 
 const loadingSetores = ref(false)
 const loadingBip = ref(false)
 const inputFocusRef = ref<HTMLInputElement | null>(null)
 
+const showCameraModal = ref(false)
+const cameraError = ref('')
+const isCameraActive = ref(false)
+let html5QrcodeScanner: Html5Qrcode | null = null
+
+const toastMsg = ref('')
+const toastType = ref<'success' | 'error' | 'info'>('success')
+const showToast = ref(false)
+let toastTimeout: any = null
+
+const showOcorrenciaModal = ref(false)
+const loadingOcorrencia = ref(false)
+
+const ocorrenciaForm = reactive({
+  ordemTesteId: '',
+  titulo: '',
+  descricao: '',
+  tipoOcorrencia: 'GARGALO_MAQUINA',
+  gravidade: 'MEDIA',
+  interrompeSla: false
+})
+
+const fotoInputRef = ref<HTMLInputElement | null>(null)
+const fotoFile = ref<File | null>(null)
+const fotoPreview = ref<string | null>(null)
+
+// ─── 2. Computeds ──────────────────────────────────────────────────────────
 const user = computed(() => authStore.user.value)
 
 const podeEditarSetor = computed(() => {
@@ -162,39 +130,20 @@ const podeEditarSetor = computed(() => {
 
 const isAdmin = computed(() => authStore.isAdmin.value)
 
-// ─── Scanner de Câmera ───────────────────────────────────────────────────
-const showCameraModal = ref(false)
-const cameraError = ref('')
-const isCameraActive = ref(false)
-let html5QrcodeScanner: Html5Qrcode | null = null
+const isSetorFaseInicial = computed<boolean>(() => {
+  if (!selecionouSetorId.value) return false
+  const setor = setores.value.find(s => s.id === selecionouSetorId.value)
+  if (!setor?.tipoOpcaoValor) return false
+  return (VALORES_SETOR_FASE_INICIAL as readonly string[]).includes(setor.tipoOpcaoValor)
+})
 
-// ─── Web Audio API (Som de bipe nativo industrial) ───────────────────────
-function tocarSomSucesso() {
-  try {
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
-    const oscillator = audioCtx.createOscillator()
-    const gainNode = audioCtx.createGain()
-    
-    oscillator.connect(gainNode)
-    gainNode.connect(audioCtx.destination)
-    
-    oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime)
-    gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime)
-    
-    oscillator.type = 'sine'
-    oscillator.start()
-    oscillator.stop(audioCtx.currentTime + 0.12)
-  } catch (err) {
-    console.warn('Erro ao reproduzir audio nativo:', err)
-  }
-}
+const podeAdicionarItemAvulso = computed(() => {
+  if (!user.value) return false
+  const perfil = user.value.perfilNome?.toUpperCase() || ''
+  return ['ADMIN', 'MODELISTA', 'GERENTE_MODELAGEM', 'ASSISTENTE_MODELAGEM', 'GERENTE'].includes(perfil)
+})
 
-// ─── Toasts Feedback ─────────────────────────────────────────────────────
-const toastMsg = ref('')
-const toastType = ref<'success' | 'error' | 'info'>('success')
-const showToast = ref(false)
-let toastTimeout: any = null
-
+// ─── 3. Funções e Métodos Auxiliares ───────────────────────────────────────
 function triggerToast(msg: string, type: 'success' | 'error' | 'info' = 'success') {
   if (toastTimeout) clearTimeout(toastTimeout)
   toastMsg.value = msg
@@ -205,7 +154,6 @@ function triggerToast(msg: string, type: 'success' | 'error' | 'info' = 'success
   }, 6000)
 }
 
-// ─── Focus management ────────────────────────────────────────────────────
 function forcarFocoInput() {
   nextTick(() => {
     if (inputFocusRef.value) {
@@ -214,214 +162,94 @@ function forcarFocoInput() {
   })
 }
 
-// ─── Camera activation ───────────────────────────────────────────────────
+function tocarSomSucesso() {
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const oscillator = audioCtx.createOscillator()
+    const gainNode = audioCtx.createGain()
+    oscillator.connect(gainNode)
+    gainNode.connect(audioCtx.destination)
+    oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime)
+    gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime)
+    oscillator.type = 'sine'
+    oscillator.start()
+    oscillator.stop(audioCtx.currentTime + 0.12)
+  } catch (err) {
+    console.warn('Erro ao reproduzir audio nativo:', err)
+  }
+}
+
 async function iniciarCamera() {
   showCameraModal.value = true
   cameraError.value = ''
-  isCameraActive.value = true
-  
-  nextTick(async () => {
-    try {
-      html5QrcodeScanner = new Html5Qrcode('camera-reader')
-      const config = {
-        fps: 10,
-        qrbox: { width: 260, height: 260 },
-        aspectRatio: 1.0
-      }
-      
-      await html5QrcodeScanner.start(
-        { facingMode: 'environment' },
-        config,
-        (decodedText) => {
-          codigoLeitura.value = decodedText
-          tocarSomSucesso()
-          pararCamera()
-          triggerToast(`Codigo escaneado com sucesso: ${decodedText}`, 'success')
-        },
-        () => {
-          // Varredura sem sucesso silenciosa
-        }
-      )
-    } catch (err: any) {
-      console.error('[BipagemView] Erro ao iniciar câmera:', err)
-      cameraError.value = 'Nao foi possivel acessar a camera do tablet. Verifique as permissoes.'
-      isCameraActive.value = false
-    }
-  })
+  await nextTick()
+
+  try {
+    html5QrcodeScanner = new Html5Qrcode('camera-reader')
+    await html5QrcodeScanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      (decodedText) => {
+        codigoLeitura.value = decodedText
+        pararCamera()
+      },
+      () => {}
+    )
+    isCameraActive.value = true
+  } catch (err: any) {
+    console.error('Erro ao acessar camera:', err)
+    cameraError.value = 'Nao foi possivel acessar a camera do dispositivo. Verifique as permissoes.'
+  }
 }
 
 async function pararCamera() {
-  showCameraModal.value = false
-  isCameraActive.value = false
-  if (html5QrcodeScanner) {
+  if (html5QrcodeScanner && isCameraActive.value) {
     try {
-      if (html5QrcodeScanner.isScanning) {
-        await html5QrcodeScanner.stop()
-      }
+      await html5QrcodeScanner.stop()
+      html5QrcodeScanner.clear()
     } catch (err) {
-      console.error('[BipagemView] Erro ao parar câmera:', err)
-    } finally {
-      html5QrcodeScanner = null
+      console.warn('Erro ao parar camera:', err)
     }
   }
+  isCameraActive.value = false
+  showCameraModal.value = false
   forcarFocoInput()
 }
 
-// ─── Lifecycle — Load initial data ───────────────────────────────────────
-onMounted(async () => {
-  loadingSetores.value = true
-  try {
-    // Carrega setores (já inclui tipoOpcaoValor) e lotes em paralelo
-    const [resSetores, resLotes] = await Promise.all([
-      api.get('/admin/setores'),
-      api.get('/lotes'),
-    ])
-
-    setores.value = resSetores.data
-    lotesDisponiveis.value = resLotes.data
-
-    if (user.value && user.value.setorId && setores.value.some(s => s.id === user.value?.setorId)) {
-      selecionouSetorId.value = user.value.setorId
-    } else if (setores.value.length > 0) {
-      selecionouSetorId.value = setores.value[0].id
-    }
-
-  } catch (err: any) {
-    console.error('[BipagemView] Erro ao carregar dados iniciais:', err)
-    triggerToast('Nao foi possivel carregar os dados iniciais.', 'error')
-  } finally {
-    loadingSetores.value = false
-    forcarFocoInput()
-  }
-})
-
-// ─── Business Logic: Bipagem ─────────────────────────────────────────────
-async function processarBipagem(acao: 'entrada' | 'saida') {
-  const codigo = codigoLeitura.value.trim()
-  if (!codigo) {
-    triggerToast('Insira ou bipa um codigo de barras valido para prosseguir.', 'error')
-    forcarFocoInput()
-    return
-  }
-
-  if (!selecionouSetorId.value) {
-    triggerToast('Por favor, selecione o seu Setor operacional atual.', 'error')
-    return
-  }
-
-  loadingBip.value = true
-  showToast.value = false
-
-  try {
-    const resLotes = await api.get('/lotes')
-    const lotesList: OrdemTeste[] = resLotes.data || []
-    
-    let ordemTesteId = ''
-    const loteEncontrado = lotesList.find(
-      l => l.codigoBarras.toUpperCase() === codigo.toUpperCase() || l.id === codigo
-    )
-
-    if (loteEncontrado) {
-      ordemTesteId = loteEncontrado.id
-    } else {
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(codigo)
-      if (isUUID) {
-        ordemTesteId = codigo
-      } else {
-        throw new Error('LOTE_NOT_FOUND')
-      }
-    }
-
-    const isUuidString = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val)
-    const setorIdValido = selecionouSetorId.value
-
-    if (!isUuidString(ordemTesteId) || !isUuidString(setorIdValido)) {
-      triggerToast('Identificador de Ordem de Teste ou Setor inválido (UUID ausente).', 'error')
-      loadingBip.value = false
-      return
-    }
-
-    // Trava de Handoff: setores de fase inicial exigem checklist concluído antes da saída
-    if (acao === 'saida' && isSetorFaseInicial.value && !checklistConcluidoComSucesso.value) {
-      triggerToast('Preencha e salve o checklist obrigatorio antes de registrar a saida.', 'error')
-      forcarFocoInput()
-      return
-    }
-
-    const endpoint = acao === 'entrada' ? '/rastreamentos/bipar-entrada' : '/rastreamentos/bipar-saida'
-    const operadorIdValido = user.value?.id && isUuidString(user.value.id) ? user.value.id : undefined
-
-    const payload: any = {
-      ordemTesteId,
-      setorId: setorIdValido,
-      tipoLote: tipoLote.value,
-      operadorId: operadorIdValido,
-      operadorEntradaId: acao === 'entrada' ? operadorIdValido : undefined,
-      operadorSaidaId: acao === 'saida' ? operadorIdValido : undefined
-    }
-
-    const res = await api.post(endpoint, payload)
-
-    if (acao === 'entrada') {
-      if (res.status === 201) {
-        triggerToast(`Entrada registrada com sucesso! (Ordem: ${loteEncontrado?.codigoBarras || codigo})`, 'success')
-      } else if (res.status === 200) {
-        triggerToast('Lote em Processamento: Esta ordem já teve sua entrada registrada e encontra-se ativa neste setor.', 'info')
-      } else {
-        triggerToast(`Entrada registrada com sucesso (Ordem: ${loteEncontrado?.codigoBarras || codigo})`, 'success')
-      }
-    } else {
-      triggerToast(`Saída registrada com sucesso. Handoff concluído. (Ordem: ${loteEncontrado?.codigoBarras || codigo})`, 'success')
-    }
-
-    codigoLeitura.value = ''
-  } catch (err: any) {
-    console.error('Zod Error / Bipagem Error:', err?.response?.data || err?.message || err)
-    if (err?.response?.data?.details) {
-      console.error('Zod Error Details:', JSON.stringify(err.response.data.details, null, 2))
-    }
-
-    const response = err.response
-    const status = response?.status
-    const errorData = response?.data
-
-    if (err.message === 'LOTE_NOT_FOUND') {
-      triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
-    } else if (status === 400) {
-      const detailsMsg = errorData?.details ? ` (${JSON.stringify(errorData.details)})` : ''
-      const descError = errorData?.error || 'Dados de bipagem inválidos.'
-      triggerToast(`Falha na Bipagem (400 Bad Request): ${descError}${detailsMsg}`, 'error')
-    } else if (status === 403) {
-      const descError = errorData?.error || 'Acesso ou liberacao negada pelo Gate de Qualidade.'
-      triggerToast(`Handoff Negado: ${descError}`, 'error')
-    } else if (status === 409) {
-      triggerToast('Bipagem duplicada: Este lote ja esta em processo neste setor.', 'error')
-    } else if (status === 404) {
-      triggerToast('Nenhuma bipagem de entrada ativa localizada para efetuar a saida deste lote.', 'error')
-    } else {
-      const descError = errorData?.error || 'Erro de rede ou comunicacao com o servidor.'
-      triggerToast(`Falha operacional: ${descError}`, 'error')
-    }
-  } finally {
-    loadingBip.value = false
-    forcarFocoInput()
+function abrirModalChecklist() {
+  if (ordemAtiva.value && isSetorFaseInicial.value && !checklistConcluidoComSucesso.value) {
+    showChecklistModal.value = true
   }
 }
 
-// ─── Checklist Logic ─────────────────────────────────────────────────────
+function fecharModalChecklist() {
+  showChecklistModal.value = false
+}
+
+async function verificarStatusConclusaoLote(loteId: string, setorId: string) {
+  if (!loteId || !setorId) {
+    checklistConcluidoComSucesso.value = false
+    return
+  }
+
+  try {
+    const resHistorico = await api.get(`/rastreamentos/historico/${loteId}`)
+    const historico = resHistorico.data || []
+    const jaConcluido = historico.some(
+      (h: any) => h.setorId === setorId && h.status === 'CONCLUIDO'
+    )
+    if (jaConcluido) {
+      checklistConcluidoComSucesso.value = true
+    }
+  } catch (err) {
+    console.warn('[BipagemView] Aviso ao verificar status em tempo real:', err)
+  }
+}
+
 async function buscarItensCatalogo(queryStr: string = '') {
   loadingAutocomplete.value = true
   try {
-    const qTerm = (queryStr !== undefined && queryStr !== null ? queryStr : searchQuery.value || '').trim()
-    const setorLocal = setores.value.find(s => s.id === selecionouSetorId.value)
-    
-    const res = await api.get('/checklists/catalogo', {
-      params: {
-        setorId: selecionouSetorId.value || undefined,
-        setorTipoOpcaoId: setorLocal?.tipoOpcaoId || undefined,
-        q: qTerm
-      }
-    })
+    const res = await api.get(`/checklists/catalogo?query=${encodeURIComponent(queryStr)}`)
     autocompleteResults.value = res.data || []
   } catch (err: any) {
     console.error('[BipagemView] Erro ao buscar catálogo de itens:', err?.response?.data || err?.message || err)
@@ -431,7 +259,7 @@ async function buscarItensCatalogo(queryStr: string = '') {
   }
 }
 
-async function carregarChecklist(_lote: any, setorId: string) {
+async function carregarChecklist(lote: any, setorId: string) {
   loadingChecklist.value = true
   erroChecklist.value = ''
   itensChecklist.value = []
@@ -441,17 +269,26 @@ async function carregarChecklist(_lote: any, setorId: string) {
     const setorLocal = setores.value.find(s => s.id === setorId)
     if (!setorLocal) throw new Error('Setor inválido')
 
-    // 1. Busca templates de checklist
+    if (lote?.id) {
+      try {
+        const resHistorico = await api.get(`/rastreamentos/historico/${lote.id}`)
+        const historico = resHistorico.data || []
+        const jaConcluido = historico.some((h: any) => h.setorId === setorId && h.status === 'CONCLUIDO')
+        if (jaConcluido) {
+          checklistConcluidoComSucesso.value = true
+        }
+      } catch (hErr) {
+        console.warn('[BipagemView] Aviso ao verificar histórico do lote:', hErr)
+      }
+    }
+
     const resTemplates = await api.get('/checklists/templates')
     const templatesList = resTemplates.data || []
     templateChecklist.value = templatesList.find(
       (t: any) => t.setorTipoOpcaoId === setorLocal.tipoOpcaoId
     ) || { id: '00000000-0000-0000-0000-000000000000', nome: `Checklist — ${setorLocal.nome}`, itens: [] }
 
-    // Diretriz UX: A lista de verificação inicia estritamente vazia (Zero pre-população)
     itensChecklist.value = []
-
-    // Pré-carrega opções no autocomplete
     await buscarItensCatalogo('')
 
   } catch (err: any) {
@@ -504,105 +341,58 @@ function removerItem(index: number) {
   itensChecklist.value.splice(index, 1)
 }
 
-async function finalizarChecklistEBiparSaida() {
-  erroChecklist.value = ''
-
-  if (!ordemAtiva.value) {
-    triggerToast('Nenhuma Ordem de Teste selecionada.', 'error')
+function solicitarAutenticacaoGestorEFinalizar() {
+  if (!ordemAtiva.value || !selecionouSetorId.value) {
+    triggerToast('Ordem ou Setor não selecionados.', 'error')
     return
   }
+  showModalQuiosque.value = true
+}
 
-  if (itensChecklist.value.length === 0) {
-    triggerToast('O checklist deve conter pelo menos um item.', 'error')
-    return
-  }
+async function onGestorAutenticadoSucesso(gestor: any) {
+  showModalQuiosque.value = false
+  gestorAutenticado.value = gestor
+  await executarFechamentoDefinitivoLote(gestor)
+}
 
-  // Validação 1: Itens avulsos
-  for (let i = 0; i < itensChecklist.value.length; i++) {
-    const item = itensChecklist.value[i]
-    if (item.isAvulso && (!item.descricaoAvulsa || !item.descricaoAvulsa.trim())) {
-      triggerToast(`Preencha a descrição do Item Avulso #${i + 1}.`, 'error')
-      return
-    }
-
-    // Validação 2: Observação obrigatória se NAO_OK
-    if (item.status === 'NAO_OK' && (!item.observacao || !item.observacao.trim())) {
-      const labelItem = item.isAvulso ? item.descricaoAvulsa : item.descricao
-      triggerToast(`Observação é obrigatória para o item Não Conforme: "${labelItem}".`, 'error')
-      return
-    }
-  }
-
-  const temNaoConformidade = itensChecklist.value.some(it => it.status === 'NAO_OK')
+async function executarFechamentoDefinitivoLote(gestor: any) {
+  if (!ordemAtiva.value || !selecionouSetorId.value) return
 
   salvandoChecklist.value = true
-
   try {
-    const isUuidString = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val)
-    const UUID_NIL = '00000000-0000-0000-0000-000000000000'
+    const ordemTesteId = ordemAtiva.value.id
+    const setorId = selecionouSetorId.value
+    const templateId = templateChecklist.value?.id || '00000000-0000-0000-0000-000000000000'
 
-    const respostasPayload = itensChecklist.value.map(it => {
-      // templateItemId / itemId DEVEM ser um UUID válido ou null (nunca string genérica de ID avulso)
-      const validCatalogUuid = (!it.isAvulso && isUuidString(it.catalogItemId)) ? (it.catalogItemId as string) : null
-      
-      // Para itens avulsos ou itens sem UUID de catálogo, envia descricaoAvulsa
-      const descAvulsa = it.isAvulso
-        ? (it.descricaoAvulsa || '').trim()
-        : (!validCatalogUuid ? (it.descricao || '').trim() : null)
+    const respostasPayload = itensChecklist.value.map(item => ({
+      itemTemplateId: item.isAvulso ? undefined : item.id,
+      catalogItemId: item.catalogItemId || undefined,
+      descricaoAvulsa: item.isAvulso ? item.descricaoAvulsa : undefined,
+      quantidade: item.quantidade,
+      status: item.status,
+      observacao: item.observacao || undefined
+    }))
 
-      return {
-        templateItemId: validCatalogUuid,
-        itemId: validCatalogUuid,
-        descricaoAvulsa: descAvulsa ? descAvulsa.substring(0, 250) : null,
-        valorResposta: `Qtd: ${it.quantidade || 1} | Status: ${it.status}`,
-        conforme: it.status === 'OK',
-        observacao: (it.observacao || '').trim() || null
-      }
-    })
-
-    const templateId = isUuidString(templateChecklist.value?.id)
-      ? templateChecklist.value.id
-      : UUID_NIL
-
-    const ordemTesteId = isUuidString(ordemAtiva.value?.id) ? ordemAtiva.value.id : null
-    const setorId = isUuidString(selecionouSetorId.value) ? selecionouSetorId.value : null
-
-    if (!ordemTesteId || !setorId) {
-      triggerToast('Identificadores de Ordem ou Setor inválidos (UUID ausente).', 'error')
-      salvandoChecklist.value = false
-      return
-    }
-
-    const payload = {
+    await api.post('/checklists/responder', {
       ordemTesteId,
       templateId,
       setorId,
-      bloqueante: Boolean(bloqueante.value),
-      observacoes: (observacoesGerais.value || '').trim() || null,
+      bloqueante: bloqueante.value,
+      observacoes: observacoesGerais.value || undefined,
       respostas: respostasPayload
-    }
+    })
 
-    const checklistRes = await api.post('/checklists/responder', payload)
-
-    if (checklistRes.status !== 201 && checklistRes.status !== 200) {
-      throw new Error('Falha ao salvar respostas do checklist.')
-    }
-
-    // Se houver pendência (NAO_OK) e bloqueante === true
-    if (bloqueante.value && temNaoConformidade) {
-      mensagemBloqueioHandoff.value = `O checklist foi registrado com pendência de qualidade crítica (Bloqueante ativado). A saída da Ordem ${ordemAtiva.value.codigoBarras} foi retida no sistema para este setor.`
-      modalBloqueioHandoff.value = true
+    if (bloqueante.value) {
       checklistConcluidoComSucesso.value = false
       showChecklistModal.value = false
       triggerToast('Saída travada por pendência crítica de qualidade.', 'error')
       return
     }
 
-    // Liberado para saída (Concessão ou OK)
     checklistConcluidoComSucesso.value = true
     showChecklistModal.value = false
 
-    const operadorIdValido = user.value?.id && isUuidString(user.value.id) ? user.value.id : undefined
+    const operadorIdValido = gestor.id
 
     const bipagemRes = await api.post('/rastreamentos/bipar-saida', {
       ordemTesteId,
@@ -613,7 +403,7 @@ async function finalizarChecklistEBiparSaida() {
     })
 
     if (bipagemRes.status === 200 || bipagemRes.status === 201) {
-      triggerToast('Checklist registrado, e-mail enviado e Saída liberada com sucesso.', 'success')
+      triggerToast(`Lote fechado por ${gestor.nomeCompleto}`, 'success')
       tocarSomSucesso()
       codigoLeitura.value = ''
       ordemAtiva.value = null
@@ -622,40 +412,30 @@ async function finalizarChecklistEBiparSaida() {
 
   } catch (err: any) {
     console.error('[BipagemView] Erro ao responder checklist:', err?.response?.data || err?.message || err)
-    if (err?.response?.data?.details) {
-      console.error('[BipagemView] Detalhes da validação Zod:', JSON.stringify(err.response.data.details, null, 2))
+    const status = err?.response?.status
+    const serverMsg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Falha operacional ao registrar fechamento do lote.'
+
+    if (status === 409) {
+      checklistConcluidoComSucesso.value = true
+      showChecklistModal.value = false
     }
-    const backendError = err.response?.data?.error || err.message || 'Erro de comunicação com o servidor.'
-    const detailsMsg = err.response?.data?.details ? ` (${JSON.stringify(err.response.data.details)})` : ''
-    triggerToast(`Falha operacional: ${backendError}${detailsMsg}`, 'error')
+
+    triggerToast(serverMsg, 'error')
   } finally {
     salvandoChecklist.value = false
-    forcarFocoInput()
+    gestorAutenticado.value = null
   }
 }
 
-// ─── Modal de Ocorrencia ───────────────────────────────────────────────────
-const showOcorrenciaModal = ref(false)
-const loadingOcorrencia = ref(false)
-
-const ocorrenciaForm = reactive({
-  ordemTesteId: '',
-  titulo: '',
-  descricao: '',
-  tipoOcorrencia: 'GARGALO_MAQUINA',
-  gravidade: 'MEDIA',
-  interrompeSla: false
-})
-
-const fotoInputRef = ref<HTMLInputElement | null>(null)
-const fotoFile = ref<File | null>(null)
-const fotoPreview = ref<string | null>(null)
+async function finalizarChecklistEBiparSaida() {
+  solicitarAutenticacaoGestorEFinalizar()
+}
 
 function abrirModalOcorrencia() {
   if (ordemAtiva.value) {
     ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
   }
-  
+
   ocorrenciaForm.titulo = ''
   ocorrenciaForm.descricao = ''
   ocorrenciaForm.tipoOcorrencia = 'GARGALO_MAQUINA'
@@ -692,9 +472,9 @@ async function submeterOcorrencia() {
     triggerToast('Nenhum lote ativo selecionado.', 'error')
     return
   }
-  
+
   ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
-  
+
   if (!ocorrenciaForm.titulo.trim()) {
     triggerToast('Informe o titulo da ocorrencia.', 'error')
     return
@@ -731,8 +511,7 @@ async function submeterOcorrencia() {
 
     triggerToast('Ocorrencia registrada com sucesso.', 'success')
     fecharModalOcorrencia()
-    
-    // Atualiza a lista de lotes disponiveis
+
     const resLotes = await api.get('/lotes')
     lotesDisponiveis.value = resLotes.data
   } catch (err: any) {
@@ -744,6 +523,166 @@ async function submeterOcorrencia() {
     loadingOcorrencia.value = false
   }
 }
+
+async function processarBipagem(acao: 'entrada' | 'saida') {
+  const codigo = codigoLeitura.value.trim().toUpperCase()
+
+  if (!selecionouSetorId.value) {
+    triggerToast('Selecione o setor operacional antes de bipar.', 'error')
+    forcarFocoInput()
+    return
+  }
+
+  if (!codigo) {
+    triggerToast('Insira ou bipe o codigo da ordem de teste.', 'error')
+    forcarFocoInput()
+    return
+  }
+
+  const loteEncontrado = lotesDisponiveis.value.find(
+    l => l.codigoBarras.toUpperCase() === codigo || l.id.toUpperCase() === codigo
+  )
+
+  if (!loteEncontrado) {
+    triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
+    forcarFocoInput()
+    return
+  }
+
+  ordemAtiva.value = loteEncontrado
+  const ordemTesteId = loteEncontrado.id
+  const setorId = selecionouSetorId.value
+
+  if (acao === 'saida' && isSetorFaseInicial.value && !checklistConcluidoComSucesso.value) {
+    triggerToast('Preencha o Checklist de Saída antes de registrar a saída deste setor.', 'error')
+    abrirModalChecklist()
+    return
+  }
+
+  loadingBip.value = true
+
+  try {
+    const endpoint = acao === 'entrada'
+      ? '/rastreamentos/bipar-entrada'
+      : '/rastreamentos/bipar-saida'
+
+    const payload: any = {
+      ordemTesteId,
+      setorId,
+      tipoLote: tipoLote.value,
+    }
+
+    const res = await api.post(endpoint, payload)
+
+    const acaoTexto = acao === 'entrada' ? 'Entrada' : 'Saída'
+    const opNome = loteEncontrado.codigoBarras || 'OP'
+    triggerToast(`Bipagem de ${acaoTexto} registrada com sucesso para ${opNome}.`, 'success')
+    tocarSomSucesso()
+
+    const resLotes = await api.get('/lotes')
+    lotesDisponiveis.value = resLotes.data
+
+    codigoLeitura.value = ''
+    ordemAtiva.value = null
+    checklistConcluidoComSucesso.value = false
+  } catch (err: any) {
+    console.error('Zod Error / Bipagem Error:', err?.response?.data || err?.message || err)
+    if (err?.response?.data?.details) {
+      console.error('Zod Error Details:', JSON.stringify(err.response.data.details, null, 2))
+    }
+
+    const response = err.response
+    const status = response?.status
+    const errorData = response?.data
+
+    if (err.message === 'LOTE_NOT_FOUND') {
+      triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
+    } else if (status === 400) {
+      const detailsMsg = errorData?.details ? ` (${JSON.stringify(errorData.details)})` : ''
+      const descError = errorData?.error || 'Dados de bipagem inválidos.'
+      triggerToast(`Falha na Bipagem (400 Bad Request): ${descError}${detailsMsg}`, 'error')
+    } else if (status === 403) {
+      const descError = errorData?.error || 'Acesso ou liberacao negada pelo Gate de Qualidade.'
+      triggerToast(`Handoff Negado: ${descError}`, 'error')
+    } else if (status === 409) {
+      checklistConcluidoComSucesso.value = true
+      const descError = errorData?.error || 'A saída desta OP já foi registrada neste setor.'
+      triggerToast(descError, 'error')
+    } else if (status === 404) {
+      triggerToast('Nenhuma bipagem de entrada ativa localizada para efetuar a saida deste lote.', 'error')
+    } else {
+      const descError = errorData?.error || 'Erro de rede ou comunicacao com o servidor.'
+      triggerToast(`Falha operacional: ${descError}`, 'error')
+    }
+  } finally {
+    loadingBip.value = false
+    forcarFocoInput()
+  }
+}
+
+// ─── 4. Watchers & Lifecycle Hooks (DECLARADOS POR ÚLTIMO) ─────────────────
+watch(codigoLeitura, async (novoCodigo) => {
+  const codigo = novoCodigo.trim().toUpperCase()
+  if (!codigo) {
+    ordemAtiva.value = null
+    checklistConcluidoComSucesso.value = false
+    return
+  }
+  const loteEncontrado = lotesDisponiveis.value.find(
+    l => l.codigoBarras.toUpperCase() === codigo || l.id.toUpperCase() === codigo
+  )
+  ordemAtiva.value = loteEncontrado ?? null
+
+  if (loteEncontrado && selecionouSetorId.value) {
+    await verificarStatusConclusaoLote(loteEncontrado.id, selecionouSetorId.value)
+  }
+}, { immediate: true })
+
+watch([ordemAtiva, selecionouSetorId], async ([novoLote, novoSetor]) => {
+  checklistConcluidoComSucesso.value = false
+  itensChecklist.value = []
+  templateChecklist.value = null
+  erroChecklist.value = ''
+  observacoesGerais.value = ''
+  bloqueante.value = false
+  searchQuery.value = ''
+  showAutocompleteDropdown.value = false
+  modalBloqueioHandoff.value = false
+  showChecklistModal.value = false
+
+  if (novoLote && novoSetor) {
+    await verificarStatusConclusaoLote(novoLote.id, novoSetor as string)
+    if (isSetorFaseInicial.value) {
+      await carregarChecklist(novoLote, novoSetor as string)
+    }
+  }
+}, { immediate: true })
+
+onMounted(async () => {
+  loadingSetores.value = true
+  try {
+    const [resSetores, resLotes] = await Promise.all([
+      api.get('/admin/setores'),
+      api.get('/lotes'),
+    ])
+
+    setores.value = resSetores.data
+    lotesDisponiveis.value = resLotes.data
+
+    if (user.value && user.value.setorId && setores.value.some(s => s.id === user.value?.setorId)) {
+      selecionouSetorId.value = user.value.setorId
+    } else if (setores.value.length > 0) {
+      selecionouSetorId.value = setores.value[0].id
+    }
+  } catch (err: any) {
+    console.error('[BipagemView] Erro ao carregar dados iniciais:', err)
+    triggerToast('Nao foi possivel carregar os dados iniciais.', 'error')
+  } finally {
+    loadingSetores.value = false
+    forcarFocoInput()
+  }
+})
+
 </script>
 
 <template>
@@ -962,11 +901,13 @@ async function submeterOcorrencia() {
           <button
             type="button"
             class="w-full sm:w-auto px-4 py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition shadow-sm whitespace-nowrap"
-            :class="checklistConcluidoComSucesso ? 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'"
+            :class="checklistConcluidoComSucesso ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60' : 'bg-slate-900 hover:bg-slate-800 text-white shadow-slate-900/10'"
+            :disabled="checklistConcluidoComSucesso"
             @click="abrirModalChecklist"
           >
-            <ClipboardList :size="16" />
-            <span>{{ checklistConcluidoComSucesso ? 'Revisar Checklist' : 'Abrir Modal de Checklist' }}</span>
+            <CheckCircle2 v-if="checklistConcluidoComSucesso" :size="16" />
+            <ClipboardList v-else :size="16" />
+            <span>{{ checklistConcluidoComSucesso ? 'Checklist Já Concluído' : 'Abrir Modal de Checklist' }}</span>
           </button>
         </div>
 
@@ -1400,13 +1341,14 @@ async function submeterOcorrencia() {
               </button>
               <button
                 type="button"
-                class="px-5 py-2.5 rounded-lg font-bold text-xs text-white bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="salvandoChecklist"
+                class="px-5 py-2.5 rounded-lg font-bold text-xs text-white bg-slate-900 hover:bg-slate-800 shadow-md shadow-slate-900/10 flex items-center justify-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="salvandoChecklist || checklistConcluidoComSucesso"
                 @click="finalizarChecklistEBiparSaida"
               >
                 <Loader2 v-if="salvandoChecklist" class="animate-spin" :size="16" />
+                <CheckCircle2 v-else-if="checklistConcluidoComSucesso" :size="16" />
                 <Mail v-else :size="16" />
-                <span>{{ salvandoChecklist ? 'Processando...' : 'Gerar E-mail e Liberar Saída' }}</span>
+                <span>{{ checklistConcluidoComSucesso ? 'Checklist Já Preenchido' : (salvandoChecklist ? 'Processando...' : 'Aprovar Lote e Liberar Saída') }}</span>
               </button>
             </div>
           </div>
@@ -1443,6 +1385,15 @@ async function submeterOcorrencia() {
         </div>
       </div>
     </Transition>
+
+    <!-- ── MODAL QUIOSQUE (VALIDAÇÃO RFID / BARCODE DO GESTOR) ── -->
+    <ModalAuthQuiosque
+      :show="showModalQuiosque"
+      titulo="Ação Restrita"
+      subtitulo="Bipe o Crachá ou RFID do Gestor"
+      @fechar="showModalQuiosque = false"
+      @sucesso="onGestorAutenticadoSucesso"
+    />
   </div>
 </template>
 

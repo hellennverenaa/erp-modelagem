@@ -76,6 +76,22 @@ export class ChecklistsController {
 
       const { ordemTesteId, templateId, setorId, bloqueante, observacoes, respostas } = parseResult.data;
 
+      // Trava de Idempotência: Se o checklist para esta OP e Setor já existir/estiver preenchido, bloqueia 409 Conflict
+      const checklistRepo = AppDataSource.getRepository(Checklist);
+      const checklistExistente = await checklistRepo.findOne({
+        where: {
+          ordemTesteId,
+          setorId
+        }
+      });
+
+      if (checklistExistente) {
+        return res.status(409).json({
+          error: 'Este checklist já foi preenchido e bloqueado para esta OP.',
+          code: 'CHECKLIST_ALREADY_SUBMITTED'
+        });
+      }
+
       // Executa toda a lógica em transação ACID do TypeORM
       const result = await AppDataSource.transaction(async (transactionalEntityManager) => {
         // 1. Resolução segura de Foreign Key do ChecklistTemplate para evitar violação de FK no PostgreSQL

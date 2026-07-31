@@ -254,6 +254,24 @@ export class RastreamentosController {
         tipoOpcao !== null &&
         SETORES_HANDOFF_AUTOMATICO_VALORES.includes(tipoOpcao.valor);
 
+      // Trava de Idempotência de Saída: Verifica se a saída já foi concluída para esta OP e Setor
+      const rastreamentoConcluido = await rastreamentoRepo.findOne({
+        where: {
+          ordemTesteId,
+          setorId,
+          tipoLote,
+          ...(pecaId ? { pecaId } : {}),
+          status: RastreamentoStatus.CONCLUIDO,
+        },
+      });
+
+      if (rastreamentoConcluido) {
+        return res.status(409).json({
+          error: 'A saída desta OP já foi registrada neste setor. Ação duplicada negada.',
+          code: 'SAIDA_JA_REGISTRADA',
+        });
+      }
+
       // 3. Busca o rastreamento ativo (EM_PROCESSO) para essa combinação de ordemTesteId, setorId, tipoLote e pecaId
       let rastreamento = await rastreamentoRepo.findOne({
         where: {
