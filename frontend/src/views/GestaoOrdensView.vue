@@ -287,18 +287,50 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
     const codigoBarrasOP = ordemCompleta.codigoBarras || ordem.codigoBarras
     const dataHoje = new Date().toLocaleDateString('pt-BR')
 
-    // 2. Monta cada Ticket Card com o Layout Físico Pixel-Perfect da folha destacável (docs/tickect_imprimir.png)
-    const ticketCardsHtml = Object.values(agrupamento).map((grupo) => {
-      const barcodeSvg = generateCode128Svg(codigoBarrasOP)
+    // 2. Fatiamento (Chunking) das peças por máquina para paginação física de etiquetas
+    const MAX_PECAS_POR_TICKET = 6
 
-      const pecasListText = grupo.pecas.map(p => p.nome).join(' • ')
+    interface TicketCardData {
+      machineBadgeText: string
+      pecasChunk: PecaInfo[]
+    }
+
+    const ticketCardsData: TicketCardData[] = []
+
+    for (const grupo of Object.values(agrupamento)) {
+      const totalPecas = grupo.pecas.length
+      
+      if (totalPecas <= MAX_PECAS_POR_TICKET) {
+        ticketCardsData.push({
+          machineBadgeText: grupo.machineName,
+          pecasChunk: grupo.pecas
+        })
+      } else {
+        const totalPaginas = Math.ceil(totalPecas / MAX_PECAS_POR_TICKET)
+        for (let page = 0; page < totalPaginas; page++) {
+          const start = page * MAX_PECAS_POR_TICKET
+          const end = start + MAX_PECAS_POR_TICKET
+          const chunk = grupo.pecas.slice(start, end)
+
+          ticketCardsData.push({
+            machineBadgeText: `${grupo.machineName} (${page + 1}/${totalPaginas})`,
+            pecasChunk: chunk
+          })
+        }
+      }
+    }
+
+    // 3. Monta o HTML de cada Ticket Card a partir das etiquetas fatiadas
+    const ticketCardsHtml = ticketCardsData.map((card) => {
+      const barcodeSvg = generateCode128Svg(codigoBarrasOP)
+      const pecasListText = card.pecasChunk.map(p => p.nome).join(' • ')
 
       return `
         <div class="ticket-card">
           <!-- LINHA DE CABEÇALHO DO CARD (NOME DO MODELO + BADGE DE MÁQUINA) -->
           <div class="ticket-header-row">
             <span class="model-title">${modeloNome}</span>
-            <span class="machine-badge">${grupo.machineName}</span>
+            <span class="machine-badge">${card.machineBadgeText}</span>
           </div>
 
           <!-- SUB-CABEÇALHO COM CAIXA DE BORDA -->
@@ -314,7 +346,7 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
 
           <!-- PEÇAS ATRIBUÍDAS EM LINHA COMPACTA -->
           <div class="pieces-inline-section">
-            <span class="pieces-label">PEÇAS (${grupo.pecas.length}):</span>
+            <span class="pieces-label">PEÇAS (${card.pecasChunk.length}):</span>
             <span class="pieces-list">${pecasListText}</span>
           </div>
 

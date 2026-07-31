@@ -10,6 +10,7 @@ import { Planta } from '../entities/Planta';
 import { Marca } from '../entities/Marca';
 import { IsNull } from 'typeorm';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
+import { Peca } from '../entities/Peca';
 
 // ─── Schema de validação para criação de Modelo ─────────────────────────────
 const createModeloSchema = z.object({
@@ -17,8 +18,19 @@ const createModeloSchema = z.object({
   codigoProduto: z.string().min(1).max(50),
   nome:          z.string().min(1).max(150),
   temporada:     z.string().max(50).optional().nullable(),
+  dataCorte:     z.string().optional().nullable(),
   mfmReferenciaUrl: z.string().url().optional().nullable(),
   fichaTecnicaUrl:  z.string().url().optional().nullable(),
+  pecas: z.array(
+    z.object({
+      id: z.string().optional(),
+      numero: z.string().optional(),
+      nome: z.string(),
+      codigoOriginal: z.string().optional().nullable(),
+      setorCorteOpcaoId: z.string().optional().nullable(),
+      descricao: z.string().optional().nullable(),
+    })
+  ).optional(),
 });
 
 export class AdminController {
@@ -138,6 +150,7 @@ export class AdminController {
       const modelos = await modeloRepo
         .createQueryBuilder('m')
         .leftJoinAndSelect('m.marca', 'marca')
+        .leftJoinAndSelect('m.pecas', 'pecas')
         .orderBy('m.nome', 'ASC')
         .getMany();
       return res.json(modelos);
@@ -162,7 +175,7 @@ export class AdminController {
         });
       }
 
-      const { marcaId, codigoProduto, nome, temporada, mfmReferenciaUrl, fichaTecnicaUrl } = parse.data;
+      const { marcaId, codigoProduto, nome, temporada, dataCorte, mfmReferenciaUrl, fichaTecnicaUrl, pecas } = parse.data;
 
       const modeloRepo = AppDataSource.getRepository(Modelo);
       const marcaRepo  = AppDataSource.getRepository(Marca);
@@ -187,12 +200,25 @@ export class AdminController {
         codigoProduto,
         nome,
         temporada:        temporada        || null,
+        dataCorte:        dataCorte        ? new Date(dataCorte) : null,
         mfmReferenciaUrl: mfmReferenciaUrl || null,
         fichaTecnicaUrl:  fichaTecnicaUrl  || null,
         ativo: true,
       });
 
       const saved = await modeloRepo.save(modelo);
+
+      // Se houver lista de peças enviadas no payload unificado, salva na tabela `pecas`
+      if (pecas && Array.isArray(pecas) && pecas.length > 0) {
+        const pecaRepo = AppDataSource.getRepository(Peca);
+        const novasPecas = pecas.map((p: any) => pecaRepo.create({
+          modeloId: saved.id,
+          nome: p.nome || `${p.numero} - ${p.nome}`,
+          setorCorteOpcaoId: p.setorCorteOpcaoId || null,
+          descricao: p.descricao || p.codigoOriginal || null
+        }));
+        await pecaRepo.save(novasPecas);
+      }
 
       return res.status(201).json({
         message: 'Modelo criado com sucesso.',
