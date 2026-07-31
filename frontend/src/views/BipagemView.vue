@@ -234,9 +234,14 @@ async function verificarStatusConclusaoLote(loteId: string, setorId: string) {
 
   try {
     const resHistorico = await api.get(`/rastreamentos/historico/${loteId}`)
-    const historico = resHistorico.data || []
-    const jaConcluido = historico.some(
-      (h: any) => h.setorId === setorId && h.status === 'CONCLUIDO'
+    const rawData = resHistorico.data
+    const listaHistorico: any[] = Array.isArray(rawData)
+      ? rawData
+      : Array.isArray(rawData?.historico)
+        ? rawData.historico
+        : []
+    const jaConcluido = listaHistorico.some(
+      (h: any) => h.setorId === setorId && (h.status === 'CONCLUIDO' || h.status === 'PREENCHIDO')
     )
     if (jaConcluido) {
       checklistConcluidoComSucesso.value = true
@@ -272,8 +277,15 @@ async function carregarChecklist(lote: any, setorId: string) {
     if (lote?.id) {
       try {
         const resHistorico = await api.get(`/rastreamentos/historico/${lote.id}`)
-        const historico = resHistorico.data || []
-        const jaConcluido = historico.some((h: any) => h.setorId === setorId && h.status === 'CONCLUIDO')
+        const rawData = resHistorico.data
+        const listaHistorico: any[] = Array.isArray(rawData)
+          ? rawData
+          : Array.isArray(rawData?.historico)
+            ? rawData.historico
+            : []
+        const jaConcluido = listaHistorico.some(
+          (h: any) => h.setorId === setorId && (h.status === 'CONCLUIDO' || h.status === 'PREENCHIDO')
+        )
         if (jaConcluido) {
           checklistConcluidoComSucesso.value = true
         }
