@@ -88,6 +88,12 @@ interface OperadorInfo {
   usuario: string
 }
 
+interface EstacaoInfo {
+  id?: string
+  nome?: string
+  codigo?: string
+}
+
 interface RastreamentoHistorico {
   id: string
   ordemTesteId: string
@@ -100,6 +106,7 @@ interface RastreamentoHistorico {
   setor: SetorInfo | null
   operadorEntrada: OperadorInfo | null
   operadorSaida: OperadorInfo | null
+  estacao?: EstacaoInfo | null
 }
 
 interface HistoricoResponse {
@@ -1315,6 +1322,13 @@ onMounted(async () => {
                       {{ item.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste' : 'Lote Principal' }}
                     </div>
 
+                    <!-- Máquina / Estação Utilizada -->
+                    <div v-if="item.estacao" class="tl-maquina-tag">
+                      <Cpu :size="12" class="tl-maquina-icon" aria-hidden="true" />
+                      <span class="tl-maquina-label">Máquina:</span>
+                      <span class="tl-maquina-val font-semibold">{{ item.estacao.codigo || item.estacao.nome }}</span>
+                    </div>
+
                     <!-- Datas -->
                     <div class="tl-dates">
                       <div class="tl-date-row">
@@ -1329,22 +1343,27 @@ onMounted(async () => {
                       </div>
                     </div>
 
-                    <!-- Tempo de permanência -->
+                    <!-- Tempo de permanência em Tempo Real -->
                     <div v-if="formatPermanencia(item.tempoPermanenciaMin)" class="tl-permanencia">
                       <Timer :size="12" class="tl-perm-icon" aria-hidden="true" />
-                      <span class="tl-perm-label">Permanência:</span>
-                      <span class="tl-perm-val">{{ formatPermanencia(item.tempoPermanenciaMin) }}</span>
+                      <span class="tl-perm-label">Permanência Real:</span>
+                      <span class="tl-perm-val font-bold text-indigo-700">{{ formatPermanencia(item.tempoPermanenciaMin) }}</span>
                     </div>
 
-                    <!-- Operadores -->
+                    <!-- Operadores (Modo Quiosque / Crachá) -->
                     <div v-if="item.operadorEntrada || item.operadorSaida" class="tl-operadores">
-                      <div v-if="item.operadorEntrada" class="tl-op">
-                        <span class="tl-op-tag">Entrada</span>
-                        <span class="tl-op-nome">{{ item.operadorEntrada.nomeCompleto }}</span>
+                      <div class="tl-op-header">
+                        <User :size="12" class="tl-op-icon" aria-hidden="true" />
+                        <span class="tl-op-title font-semibold">Operadores (Crachá):</span>
                       </div>
-                      <div v-if="item.operadorSaida" class="tl-op">
-                        <span class="tl-op-tag">Saída</span>
-                        <span class="tl-op-nome">{{ item.operadorSaida.nomeCompleto }}</span>
+                      <div class="tl-op-list">
+                        <span v-if="item.operadorEntrada">
+                          <span class="tl-op-tag">Entrada:</span> {{ item.operadorEntrada.nomeCompleto }}
+                        </span>
+                        <span v-if="item.operadorEntrada && item.operadorSaida" class="tl-op-sep">|</span>
+                        <span v-if="item.operadorSaida">
+                          <span class="tl-op-tag">Saída:</span> {{ item.operadorSaida.nomeCompleto }}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -2231,19 +2250,29 @@ onMounted(async () => {
 .tl-perm-label { font-weight: 600; color: #64748b; }
 .tl-perm-val   { font-weight: 800; color: #1d4ed8; }
 
-.tl-operadores { display: flex; flex-direction: column; gap: 0.25rem; border-top: 1px solid #f1f5f9; padding-top: 0.5rem; }
-.tl-op { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; }
-.tl-op-tag {
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: #64748b;
-  background: #f1f5f9;
-  padding: 0.05rem 0.35rem;
-  border-radius: 0.2rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
+.tl-maquina-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: #4338ca;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
 }
+.tl-maquina-icon { color: #6366f1; flex-shrink: 0; }
+.tl-maquina-label { font-weight: 600; color: #3730a3; }
+.tl-maquina-val { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: #312e81; }
+
+.tl-operadores { display: flex; flex-direction: column; gap: 0.375rem; border-top: 1px solid #f1f5f9; padding-top: 0.5rem; background: #f8fafc; border-radius: 0.375rem; padding: 0.5rem 0.625rem; }
+.tl-op-header { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; color: #334155; }
+.tl-op-icon { color: #64748b; flex-shrink: 0; }
+.tl-op-title { font-weight: 700; color: #1e293b; }
+.tl-op-list { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: #475569; flex-wrap: wrap; }
+.tl-op-tag { font-weight: 700; color: #334155; }
+.tl-op-sep { color: #cbd5e1; }
+.tl-op { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; }
 .tl-op-nome { color: #334155; font-weight: 500; }
 
 .tl-footer {

@@ -566,31 +566,7 @@ onMounted(() => {
             >
               <X :size="16" />
             </button>
-          </div>
-
-          <!-- BOTÃO LEITOR CÂMERA (TABLET / MOBILE) -->
-          <button
-            type="button"
-            class="h-12 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 active:bg-slate-950 text-white font-semibold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-xs border border-slate-700"
-            title="Usar Câmera do Tablet/Dispositivo"
-            @click="iniciarCamera"
-          >
-            <Camera :size="18" class="text-indigo-400" />
-            <span class="hidden sm:inline">Câmera</span>
-          </button>
-
-          <!-- BOTÃO BUSCAR -->
-          <button
-            type="button"
-            class="h-12 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
-            @click="buscarEAtivarLote"
-          >
-            <Search :size="16" />
-            <span>Buscar OP</span>
-          </button>
-        </div>
-
-        <!-- FILA DE LOTES PENDENTES AGRUPADOS POR OP (AGRUPAMENTO VISUAL DE MÁQUINAS) -->
+               <!-- FILA DE LOTES PENDENTES AGRUPADOS POR OP (AGRUPAMENTO VISUAL DE MÁQUINAS) -->
         <div v-if="!opAgrupadaAtiva && opsPendentesAgrupadas.length > 0" class="pt-2">
           <div class="flex items-center justify-between mb-2.5">
             <p class="text-[11px] font-semibold text-slate-500">
@@ -616,8 +592,9 @@ onMounted(() => {
                 <span class="text-[11px] text-slate-500 font-medium block">
                   {{ grupo.modeloNome }}
                 </span>
-                <span class="text-[10px] text-indigo-600 font-semibold block mt-1">
-                  📍 {{ grupo.maquinasSetoresNomes.join(', ') }}
+                <span class="text-[10px] text-indigo-600 font-semibold flex items-center gap-1 mt-1">
+                  <MapPin :size="11" class="text-indigo-500 flex-shrink-0" />
+                  <span>{{ grupo.maquinasSetoresNomes.join(', ') }}</span>
                 </span>
               </div>
               <div class="text-right">
@@ -637,7 +614,7 @@ onMounted(() => {
         </div>
       </section>
 
-      <!-- ══ DETALHES DA OP SELECIONADA & CONTEXTO DE MAQUINAS AGRUPADAS ═════ -->
+      <!-- ══ DETALHES DA OP SELECIONADA & CONTEXTO DE MÁQUINAS AGRUPADAS ═════ -->
       <section v-if="opAgrupadaAtiva" class="p-6 rounded-2xl bg-white border border-indigo-100 shadow-sm relative overflow-hidden space-y-6">
         <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-800"></div>
 
@@ -678,8 +655,9 @@ onMounted(() => {
             </div>
             <div>
               <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Etapa(s) em Avaliação de Qualidade</span>
-              <span class="text-sm font-bold text-white tracking-wide block">
-                📍 Avaliando: <span class="text-indigo-400 uppercase font-extrabold">{{ opAgrupadaAtiva.maquinasSetoresNomes.join(', ') }}</span>
+              <span class="text-sm font-bold text-white tracking-wide flex items-center gap-1.5">
+                <span>Avaliando:</span>
+                <span class="text-indigo-400 uppercase font-extrabold">{{ opAgrupadaAtiva.maquinasSetoresNomes.join(', ') }}</span>
               </span>
             </div>
           </div>
