@@ -23,6 +23,7 @@ router.use('/auth', authRoutes);
 
 // Rotas protegidas por JWT
 router.use('/lotes', verificaToken, lotesRoutes);
+router.use('/ordens-teste', verificaToken, lotesRoutes);
 router.use('/rastreamentos', verificaToken, rastreamentosRoutes);
 router.use('/checklists', verificaToken, checklistsRoutes);
 router.use('/inspecoes', verificaToken, inspecoesRoutes);

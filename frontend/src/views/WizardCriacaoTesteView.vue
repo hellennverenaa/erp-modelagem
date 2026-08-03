@@ -15,7 +15,9 @@ import {
   Plus,
   Trash2,
   Scissors,
-  Search
+  Search,
+  Calendar,
+  Clock
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -126,7 +128,9 @@ const formOrdem = ref({
   plantaId: '',
   prioridadePcp: 'MEDIA',
   possuiCaixaTeste: false,
-  observacoes: ''
+  observacoes: '',
+  dataPrevistaProducao: '',
+  slaDefaultMinutos: 120
 })
 const loadingOrdem = ref(false)
 const errorOrdem = ref('')
@@ -299,8 +303,13 @@ function triggerSaveRota() {
   }
 }
 
-function onRotaSalva() {
+const slasPorSetorCapturados = ref<Record<string, number>>({})
+
+function onRotaSalva(slas?: Record<string, number>) {
   loadingRota.value = false
+  if (slas) {
+    slasPorSetorCapturados.value = slas
+  }
   currentStep.value = 4
 }
 
@@ -315,12 +324,14 @@ async function submitOrdem() {
   errorOrdem.value = ''
 
   try {
-    const response = await api.post('/lotes', {
+    const response = await api.post('/ordens-teste', {
       modeloId: createdModeloId.value,
       plantaId: formOrdem.value.plantaId,
       prioridadePcp: formOrdem.value.prioridadePcp,
       possuiCaixaTeste: formOrdem.value.possuiCaixaTeste,
       observacoes: formOrdem.value.observacoes.trim() || null,
+      dataPrevistaProducao: formOrdem.value.dataPrevistaProducao || null,
+      slasPorSetor: Object.keys(slasPorSetorCapturados.value).length > 0 ? slasPorSetorCapturados.value : null,
       pecas: pecasSelecionadas.value
     })
 
@@ -374,7 +385,14 @@ function resetWizard() {
   createdModeloCode.value = ''
   pecasSelecionadas.value = []
   createdOrdem.value = null
-  formOrdem.value = { plantaId: plantas.value[0]?.id || '', prioridadePcp: 'MEDIA', possuiCaixaTeste: false, observacoes: '' }
+  formOrdem.value = { 
+    plantaId: plantas.value[0]?.id || '', 
+    prioridadePcp: 'MEDIA', 
+    possuiCaixaTeste: false, 
+    observacoes: '',
+    dataPrevistaProducao: '',
+    slaDefaultMinutos: 120
+  }
   errorModelo.value = ''
   errorOrdem.value = ''
 }
@@ -797,6 +815,19 @@ function resetWizard() {
                 <input type="checkbox" v-model="formOrdem.possuiCaixaTeste" class="wiz-checkbox-input" />
                 <span class="wiz-checkbox-label">Possui Caixa Teste (Amostra Qualidade)</span>
               </label>
+            </div>
+
+            <div class="form-group">
+              <label for="dataPrevistaProducao" class="form-label flex items-center gap-1">
+                <Calendar :size="12" class="text-slate-500" />
+                <span>Data Prevista de Início na Produção</span>
+              </label>
+              <input
+                id="dataPrevistaProducao"
+                type="datetime-local"
+                v-model="formOrdem.dataPrevistaProducao"
+                class="form-input"
+              />
             </div>
 
             <div class="form-group col-span-2">

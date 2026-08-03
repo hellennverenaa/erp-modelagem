@@ -24,7 +24,8 @@ import {
   Trash2,
   AlertTriangle,
   RotateCcw,
-  Loader2
+  Loader2,
+  Clock
 } from '@lucide/vue'
 import api from '../api/axios'
 
@@ -39,7 +40,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'rota-salva'): void
+  (e: 'rota-salva', slasPorSetor?: Record<string, number>): void
 }>()
 
 const MAP_BLOCK_TO_NOME: Record<string, string> = {
@@ -72,6 +73,30 @@ function getId(nome: string): string {
   const s = setoresData.value.find(s => s.nome.trim().toLowerCase() === nome.trim().toLowerCase())
   if (!s) console.warn(`[RouteBuilder] Setor '${nome}' não encontrado no BD.`)
   return s ? s.id : ''
+}
+
+// ─── SLA por Setor ────────────────────────────────────────────────────────
+const sectorSlaMap = ref<Record<string, number>>({})
+
+function getSetorIdForBlock(block: any): string {
+  if (!block) return ''
+  if (typeof block === 'string') return getId(block)
+  if (block.id && MAP_BLOCK_TO_NOME[block.id]) {
+    return getId(MAP_BLOCK_TO_NOME[block.id])
+  }
+  return getId(block.label || block.id)
+}
+
+function getSlaForBlock(block: any): number {
+  const sId = getSetorIdForBlock(block)
+  return sectorSlaMap.value[sId] ?? 120
+}
+
+function setSlaForBlock(block: any, value: number) {
+  const sId = getSetorIdForBlock(block)
+  if (sId) {
+    sectorSlaMap.value[sId] = Number(value) || 120
+  }
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -451,14 +476,22 @@ async function salvarRota() {
 
   const rotaFiltrada = rotaSalvar.filter(r => r.setorId !== '')
 
+  const slasPorSetor: Record<string, number> = {}
+  for (const r of rotaFiltrada) {
+    if (r.setorId) {
+      slasPorSetor[r.setorId] = sectorSlaMap.value[r.setorId] ?? 120
+    }
+  }
+
   try {
     const response = await api.put(`/rotas/${modelId}`, {
-      rota: rotaFiltrada
+      rota: rotaFiltrada,
+      slasPorSetor
     })
     if (response.status === 200) {
       showToast('Rota de produção salva com sucesso.', 'success')
       saveSuccess.value = true
-      emit('rota-salva')
+      emit('rota-salva', slasPorSetor)
       setTimeout(() => { saveSuccess.value = false }, 3000)
     } else {
       showToast('Falha ao salvar a rota de produção.', 'error')
@@ -933,7 +966,19 @@ defineExpose({
                   <span class="tl-block-sub">{{ fixedStart.description }}</span>
                 </div>
               </div>
-              <div class="tl-block-right">
+              <div class="tl-block-right flex-row-layout">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <Clock :size="11" class="text-slate-500 shrink-0" />
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    :value="getSlaForBlock(fixedStart)"
+                    @input="setSlaForBlock(fixedStart, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                  />
+                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                </div>
                 <span class="badge badge--fixo">
                   <Lock :size="10" aria-hidden="true" />
                   Fixo
@@ -963,7 +1008,19 @@ defineExpose({
                   </div>
                 </div>
               </div>
-              <div class="tl-block-right">
+              <div class="tl-block-right flex-row-layout">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <Clock :size="11" class="text-slate-500 shrink-0" />
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    :value="getSlaForBlock('Corte Recebimento')"
+                    @input="setSlaForBlock('Corte Recebimento', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                  />
+                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                </div>
                 <span class="badge badge--fixo">
                   <Lock :size="10" aria-hidden="true" />
                   Fixo
@@ -986,7 +1043,19 @@ defineExpose({
                     <span class="tl-block-sub">Após Corte Automático</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Serigrafia')"
+                      @input="setSlaForBlock('Serigrafia', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--condicional">Condicional</span>
                 </div>
               </div>
@@ -1028,6 +1097,18 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="5"
+                          step="5"
+                          :value="getSlaForBlock(element)"
+                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                      </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1058,7 +1139,19 @@ defineExpose({
                     <span class="tl-block-sub">Etapas de suporte ao corte</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Apoio')"
+                      @input="setSlaForBlock('Apoio', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
                     Fixo
@@ -1174,7 +1267,19 @@ defineExpose({
                     <span class="tl-block-sub">Costura Principal</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Costura')"
+                      @input="setSlaForBlock('Costura', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
                     Fixo
@@ -1290,7 +1395,19 @@ defineExpose({
                     <span class="tl-block-sub">Montagem Final do Produto</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Montagem')"
+                      @input="setSlaForBlock('Montagem', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
                     Fixo
@@ -1330,6 +1447,18 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="5"
+                          step="5"
+                          :value="getSlaForBlock(element)"
+                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                      </div>
                       <span class="badge badge--parallel">Paralelo</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1351,7 +1480,19 @@ defineExpose({
                       <span class="tl-block-sub">Paralelo com Montagem</span>
                     </div>
                   </div>
-                  <div class="tl-block-right">
+                  <div class="tl-block-right flex-row-layout">
+                    <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                      <Clock :size="11" class="text-slate-500 shrink-0" />
+                      <input
+                        type="number"
+                        min="5"
+                        step="5"
+                        :value="getSlaForBlock('Vulcanizado')"
+                        @input="setSlaForBlock('Vulcanizado', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                        class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                      />
+                      <span class="text-[10px] font-semibold text-slate-500">min</span>
+                    </div>
                     <span class="badge badge--parallel">Paralelo</span>
                   </div>
                 </div>
@@ -1394,6 +1535,18 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="5"
+                          step="5"
+                          :value="getSlaForBlock(element)"
+                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                      </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1423,7 +1576,19 @@ defineExpose({
                   <span class="tl-block-sub">{{ fixedEnd.description }}</span>
                 </div>
               </div>
-              <div class="tl-block-right">
+              <div class="tl-block-right flex-row-layout">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <Clock :size="11" class="text-slate-500 shrink-0" />
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    :value="getSlaForBlock(fixedEnd)"
+                    @input="setSlaForBlock(fixedEnd, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                  />
+                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                </div>
                 <span class="badge badge--fixo badge--end">
                   <Lock :size="10" aria-hidden="true" />
                   Fixo · Final

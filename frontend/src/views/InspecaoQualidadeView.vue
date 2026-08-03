@@ -566,6 +566,26 @@ onMounted(() => {
             >
               <X :size="16" />
             </button>
+          </div>
+
+          <button
+            type="button"
+            class="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 font-semibold text-white text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            @click="buscarEAtivarLote"
+          >
+            <Search :size="16" />
+            <span>Buscar OP</span>
+          </button>
+
+          <button
+            type="button"
+            class="px-4 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-slate-200"
+            @click="iniciarCamera"
+          >
+            <Camera :size="16" class="text-indigo-600" />
+            <span>Câmera</span>
+          </button>
+        </div>
                <!-- FILA DE LOTES PENDENTES AGRUPADOS POR OP (AGRUPAMENTO VISUAL DE MÁQUINAS) -->
         <div v-if="!opAgrupadaAtiva && opsPendentesAgrupadas.length > 0" class="pt-2">
           <div class="flex items-center justify-between mb-2.5">

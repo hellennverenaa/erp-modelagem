@@ -21,7 +21,12 @@ import {
   Timer,
   ChevronRight,
   Info,
-  Printer
+  Printer,
+  Settings,
+  Calendar,
+  Clock,
+  Sliders,
+  Scissors
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -58,6 +63,8 @@ interface OrdemTeste {
   liberadoProducao: boolean
   possuiCaixaTeste: boolean
   observacoes: string | null
+  dataPrevistaProducao?: string | null
+  slasPorSetor?: Record<string, number> | null
   createdAt: string
   updatedAt: string
   modelo?: Modelo
@@ -615,6 +622,98 @@ function formatPermanencia(min: number | null) {
   return m > 0 ? `${h}h ${m}min` : `${h}h`
 }
 
+// ─── Modal de Manutenção e Remanejamento ─────────────────────────────────────
+const showManutencaoModal = ref(false)
+const manutencaoOrdem = ref<OrdemTeste | null>(null)
+const activeTabManutencao = ref<'geral' | 'pecas'>('geral')
+const loadingManutencao = ref(false)
+const formManutencao = ref({
+  dataPrevistaProducao: '',
+  slaDefaultMinutos: 120,
+  pecas: [] as Array<{ id: string; nome: string; setorCorteOpcaoId: string }>
+})
+const maquinasCorteManutencao = ref<Array<{ id: string; label: string; valor: string }>>([])
+
+async function abrirManutencao(ordem: OrdemTeste) {
+  manutencaoOrdem.value = ordem
+  activeTabManutencao.value = 'geral'
+
+  let dtStr = ''
+  if (ordem.dataPrevistaProducao) {
+    const d = new Date(ordem.dataPrevistaProducao)
+    dtStr = d.toISOString().slice(0, 16)
+  }
+
+  const defaultSla = ordem.slasPorSetor?.default || 120
+
+  let pecasList = ordem.modelo?.pecas || []
+  if (pecasList.length === 0 && ordem.modeloId) {
+    try {
+      const resMod = await api.get(`/admin/modelos/${ordem.modeloId}`)
+      const m = resMod.data.modelo || resMod.data
+      if (m && Array.isArray(m.pecas)) {
+        pecasList = m.pecas
+      }
+    } catch (err) {
+      console.warn('[abrirManutencao] Erro ao buscar peças dinâmicas:', err)
+    }
+  }
+
+  formManutencao.value = {
+    dataPrevistaProducao: dtStr,
+    slaDefaultMinutos: defaultSla,
+    pecas: pecasList.map(p => ({
+      id: p.id,
+      nome: p.nome,
+      setorCorteOpcaoId: (p as any).setorCorteOpcaoId || (p as any).setorCorteOpcao?.id || ''
+    }))
+  }
+
+  try {
+    const res = await api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
+      api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
+    )
+    maquinasCorteManutencao.value = (res.data || []).map((m: any) => ({
+      id: m.id,
+      label: m.label || m.valor,
+      valor: m.valor
+    }))
+  } catch (err) {
+    console.error('[abrirManutencao] Erro ao buscar máquinas de corte:', err)
+  }
+
+  showManutencaoModal.value = true
+}
+
+async function salvarManutencao() {
+  if (!manutencaoOrdem.value) return
+  loadingManutencao.value = true
+  try {
+    const response = await api.put(`/ordens-teste/${manutencaoOrdem.value.id}/manutencao`, {
+      dataPrevistaProducao: formManutencao.value.dataPrevistaProducao || null,
+      slasPorSetor: { default: Number(formManutencao.value.slaDefaultMinutos) },
+      pecas: formManutencao.value.pecas.map(p => ({
+        id: p.id,
+        setorCorteOpcaoId: p.setorCorteOpcaoId
+      }))
+    })
+
+    const loteAtualizado = response.data.lote || response.data
+    const idx = ordens.value.findIndex(o => o.id === loteAtualizado.id)
+    if (idx !== -1) {
+      ordens.value[idx] = { ...ordens.value[idx], ...loteAtualizado }
+    }
+
+    addToast('success', 'Manutenção da Ordem salva com sucesso!')
+    showManutencaoModal.value = false
+  } catch (err: any) {
+    console.error('[salvarManutencao] Erro:', err)
+    addToast('error', err.response?.data?.error || 'Erro ao salvar manutenção.')
+  } finally {
+    loadingManutencao.value = false
+  }
+}
+
 // ─── Formulário ──────────────────────────────────────────────────────────────
 const form = ref({
   modeloId: '',
@@ -977,6 +1076,16 @@ onMounted(async () => {
                   >
                     <Activity :size="14" aria-hidden="true" />
                     <span>Rastrear Dual</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-action-timeline"
+                    style="background: #f1f5f9; color: #334155; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
+                    @click="abrirManutencao(ordem)"
+                    title="Manutenção da Ordem (SLAs e Remanejamento)"
+                  >
+                    <Settings :size="14" aria-hidden="true" />
+                    <span>Manutenção</span>
                   </button>
                   <button
                     type="button"
@@ -1389,6 +1498,162 @@ onMounted(async () => {
             </div>
 
           </aside>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL — MANUTENÇÃO DA ORDEM & REMANEJAMENTO DE PEÇAS
+    ══════════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="showManutencaoModal"
+          class="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title-manutencao"
+          @click.self="showManutencaoModal = false"
+        >
+          <div class="modal-panel max-w-xl">
+            <div class="modal-header">
+              <div class="modal-header-left">
+                <div class="modal-icon-wrap" aria-hidden="true">
+                  <Settings :size="20" class="text-indigo-600" />
+                </div>
+                <div>
+                  <h2 id="modal-title-manutencao" class="modal-title">Manutenção da Ordem {{ manutencaoOrdem?.codigoBarras }}</h2>
+                  <p class="modal-description">Edite prazos, metas de tempo (SLA) ou altere a máquina de peças técnicas.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="modal-close"
+                aria-label="Fechar modal"
+                @click="showManutencaoModal = false"
+              >
+                <X :size="18" aria-hidden="true" />
+              </button>
+            </div>
+
+            <!-- Abas do Modal -->
+            <div class="flex items-center gap-2 px-6 pt-3 border-b border-slate-200 bg-slate-50">
+              <button
+                type="button"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
+                :class="activeTabManutencao === 'geral' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                @click="activeTabManutencao = 'geral'"
+              >
+                <div class="flex items-center gap-1.5">
+                  <Sliders :size="14" />
+                  <span>1. Prazos e SLAs</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
+                :class="activeTabManutencao === 'pecas' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                @click="activeTabManutencao = 'pecas'"
+              >
+                <div class="flex items-center gap-1.5">
+                  <Scissors :size="14" />
+                  <span>2. Remanejamento de Peças ({{ formManutencao.pecas.length }})</span>
+                </div>
+              </button>
+            </div>
+
+            <div class="modal-body p-6 space-y-4">
+              <!-- ABA 1: Prazos e SLAs -->
+              <div v-if="activeTabManutencao === 'geral'" class="space-y-4">
+                <div class="form-group">
+                  <label for="manut-data-prevista" class="form-label flex items-center gap-1">
+                    <Calendar :size="13" class="text-slate-500" />
+                    <span>Data Prevista de Início na Produção</span>
+                  </label>
+                  <input
+                    id="manut-data-prevista"
+                    type="datetime-local"
+                    v-model="formManutencao.dataPrevistaProducao"
+                    class="form-input"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="manut-sla-minutos" class="form-label flex items-center gap-1">
+                    <Clock :size="13" class="text-slate-500" />
+                    <span>SLA Padrão por Setor (Minutos)</span>
+                  </label>
+                  <input
+                    id="manut-sla-minutos"
+                    type="number"
+                    min="5"
+                    step="5"
+                    v-model.number="formManutencao.slaDefaultMinutos"
+                    placeholder="Ex: 120"
+                    class="form-input"
+                  />
+                </div>
+              </div>
+
+              <!-- ABA 2: Remanejamento de Peças -->
+              <div v-else-if="activeTabManutencao === 'pecas'" class="space-y-3">
+                <p class="text-xs text-slate-500">
+                  Altere a máquina de destino de cada peça técnica do corte automático:
+                </p>
+
+                <div v-if="formManutencao.pecas.length === 0" class="p-4 text-center bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-xs">
+                  Este modelo não possui peças cadastradas para remanejamento.
+                </div>
+
+                <div v-else class="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                  <div
+                    v-for="p in formManutencao.pecas"
+                    :key="p.id"
+                    class="p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div class="text-xs font-bold text-slate-800">
+                      {{ p.nome }}
+                    </div>
+                    <div class="sm:w-64">
+                      <select
+                        v-model="p.setorCorteOpcaoId"
+                        class="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md font-medium text-slate-800"
+                      >
+                        <option value="">Selecione a máquina...</option>
+                        <option
+                          v-for="m in maquinasCorteManutencao"
+                          :key="m.id"
+                          :value="m.id"
+                        >
+                          {{ m.label }}
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-footer">
+              <button
+                type="button"
+                class="btn-outline"
+                @click="showManutencaoModal = false"
+                :disabled="loadingManutencao"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                class="btn-primary"
+                @click="salvarManutencao"
+                :disabled="loadingManutencao"
+              >
+                <Loader2 v-if="loadingManutencao" :size="14" class="animate-spin" />
+                <span>{{ loadingManutencao ? 'Salvando...' : 'Salvar Manutenção' }}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </Transition>
     </Teleport>
