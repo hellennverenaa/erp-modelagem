@@ -88,6 +88,9 @@ const mensagemBloqueioHandoff = ref('')
 
 const showChecklistModal = ref(false)
 const showModalQuiosque   = ref(false)
+const modalQuiosqueTitulo = ref('Ação Restrita')
+const modalQuiosqueSubtitulo = ref('Aproxime o Crachá ou RFID do Gestor')
+const acaoPendente = ref<'entrada' | 'saida' | 'fechamento_checklist' | null>(null)
 const gestorAutenticado  = ref<any>(null)
 
 const loadingSetores = ref(false)
@@ -358,13 +361,22 @@ function solicitarAutenticacaoGestorEFinalizar() {
     triggerToast('Ordem ou Setor não selecionados.', 'error')
     return
   }
+  acaoPendente.value = 'fechamento_checklist'
+  modalQuiosqueTitulo.value = 'Autenticação do Gestor'
+  modalQuiosqueSubtitulo.value = 'Aproxime o crachá para finalizar o Checklist e Bipar Saída'
   showModalQuiosque.value = true
 }
 
 async function onGestorAutenticadoSucesso(gestor: any) {
   showModalQuiosque.value = false
   gestorAutenticado.value = gestor
-  await executarFechamentoDefinitivoLote(gestor)
+
+  if (acaoPendente.value === 'fechamento_checklist') {
+    await executarFechamentoDefinitivoLote(gestor)
+  } else if (acaoPendente.value === 'entrada' || acaoPendente.value === 'saida') {
+    await executarBipagemComOperador(acaoPendente.value, gestor)
+  }
+  acaoPendente.value = null
 }
 
 async function executarFechamentoDefinitivoLote(gestor: any) {
@@ -559,6 +571,80 @@ async function submeterOcorrencia() {
   }
 }
 
+async function executarBipagemComOperador(acao: 'entrada' | 'saida', gestor: any) {
+  if (!ordemAtiva.value || !selecionouSetorId.value) return
+
+  loadingBip.value = true
+  showToast.value = false
+
+  try {
+    const ordemTesteId = ordemAtiva.value.id
+    const setorId = selecionouSetorId.value
+    const endpoint = acao === 'entrada'
+      ? '/rastreamentos/bipar-entrada'
+      : '/rastreamentos/bipar-saida'
+
+    const operadorIdValido = gestor?.id
+
+    const payload: any = {
+      ordemTesteId,
+      setorId,
+      tipoLote: tipoLote.value,
+      operadorId: operadorIdValido,
+      operadorEntradaId: acao === 'entrada' ? operadorIdValido : undefined,
+      operadorSaidaId: acao === 'saida' ? operadorIdValido : undefined,
+    }
+
+    const res = await api.post(endpoint, payload)
+
+    const acaoTexto = acao === 'entrada' ? 'Entrada' : 'Saída'
+    const opNome = ordemAtiva.value.codigoBarras || 'OP'
+    const operadorNome = gestor?.nomeCompleto ? ` por ${gestor.nomeCompleto}` : ''
+    triggerToast(`Bipagem de ${acaoTexto} registrada com sucesso${operadorNome} para ${opNome}.`, 'success')
+    tocarSomSucesso()
+
+    const resLotes = await api.get('/lotes')
+    lotesDisponiveis.value = resLotes.data
+
+    codigoLeitura.value = ''
+    ordemAtiva.value = null
+    checklistConcluidoComSucesso.value = false
+  } catch (err: any) {
+    console.error('Zod Error / Bipagem Error:', err?.response?.data || err?.message || err)
+    if (err?.response?.data?.details) {
+      console.error('Zod Error Details:', JSON.stringify(err.response.data.details, null, 2))
+    }
+
+    const response = err.response
+    const status = response?.status
+    const errorData = response?.data
+
+    if (err.message === 'LOTE_NOT_FOUND') {
+      triggerToast('Ordem de teste não foi localizada no sistema.', 'error')
+    } else if (status === 400) {
+      const detailsMsg = errorData?.details ? ` (${JSON.stringify(errorData.details)})` : ''
+      const descError = errorData?.error || 'Dados de bipagem inválidos.'
+      triggerToast(`Falha na Bipagem (400 Bad Request): ${descError}${detailsMsg}`, 'error')
+    } else if (status === 403) {
+      const descError = errorData?.error || 'Acesso ou liberação negada pelo Gate de Qualidade.'
+      triggerToast(`Handoff Negado: ${descError}`, 'error')
+    } else if (status === 409) {
+      checklistConcluidoComSucesso.value = true
+      const descError = errorData?.error || 'A bipagem desta OP já está ativa ou foi concluída neste setor.'
+      triggerToast(descError, 'error')
+    } else if (status === 404) {
+      const descError = errorData?.error || 'Nenhuma bipagem de entrada ativa localizada para efetuar a saída deste lote.'
+      triggerToast(descError, 'error')
+    } else {
+      const descError = errorData?.error || 'Erro de rede ou comunicação com o servidor.'
+      triggerToast(`Falha operacional: ${descError}`, 'error')
+    }
+  } finally {
+    loadingBip.value = false
+    forcarFocoInput()
+  }
+}
+
 async function processarBipagem(acao: 'entrada' | 'saida') {
   const codigo = codigoLeitura.value.trim().toUpperCase()
 
@@ -585,8 +671,6 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
   }
 
   ordemAtiva.value = loteEncontrado
-  const ordemTesteId = loteEncontrado.id
-  const setorId = selecionouSetorId.value
 
   if (acao === 'saida' && isSetorFaseInicial.value && !checklistConcluidoComSucesso.value) {
     triggerToast('Preencha o Checklist de Saída antes de registrar a saída deste setor.', 'error')
@@ -594,65 +678,13 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
     return
   }
 
-  loadingBip.value = true
-
-  try {
-    const endpoint = acao === 'entrada'
-      ? '/rastreamentos/bipar-entrada'
-      : '/rastreamentos/bipar-saida'
-
-    const payload: any = {
-      ordemTesteId,
-      setorId,
-      tipoLote: tipoLote.value,
-    }
-
-    const res = await api.post(endpoint, payload)
-
-    const acaoTexto = acao === 'entrada' ? 'Entrada' : 'Saída'
-    const opNome = loteEncontrado.codigoBarras || 'OP'
-    triggerToast(`Bipagem de ${acaoTexto} registrada com sucesso para ${opNome}.`, 'success')
-    tocarSomSucesso()
-
-    const resLotes = await api.get('/lotes')
-    lotesDisponiveis.value = resLotes.data
-
-    codigoLeitura.value = ''
-    ordemAtiva.value = null
-    checklistConcluidoComSucesso.value = false
-  } catch (err: any) {
-    console.error('Zod Error / Bipagem Error:', err?.response?.data || err?.message || err)
-    if (err?.response?.data?.details) {
-      console.error('Zod Error Details:', JSON.stringify(err.response.data.details, null, 2))
-    }
-
-    const response = err.response
-    const status = response?.status
-    const errorData = response?.data
-
-    if (err.message === 'LOTE_NOT_FOUND') {
-      triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
-    } else if (status === 400) {
-      const detailsMsg = errorData?.details ? ` (${JSON.stringify(errorData.details)})` : ''
-      const descError = errorData?.error || 'Dados de bipagem inválidos.'
-      triggerToast(`Falha na Bipagem (400 Bad Request): ${descError}${detailsMsg}`, 'error')
-    } else if (status === 403) {
-      const descError = errorData?.error || 'Acesso ou liberacao negada pelo Gate de Qualidade.'
-      triggerToast(`Handoff Negado: ${descError}`, 'error')
-    } else if (status === 409) {
-      checklistConcluidoComSucesso.value = true
-      const descError = errorData?.error || 'A saída desta OP já foi registrada neste setor.'
-      triggerToast(descError, 'error')
-    } else if (status === 404) {
-      triggerToast('Nenhuma bipagem de entrada ativa localizada para efetuar a saida deste lote.', 'error')
-    } else {
-      const descError = errorData?.error || 'Erro de rede ou comunicacao com o servidor.'
-      triggerToast(`Falha operacional: ${descError}`, 'error')
-    }
-  } finally {
-    loadingBip.value = false
-    forcarFocoInput()
-  }
+  // Intermediário: Aproxime o crachá para registrar Entrada / Saída / Handoff
+  acaoPendente.value = acao
+  modalQuiosqueTitulo.value = acao === 'entrada' ? 'Autenticação de Entrada' : 'Autenticação de Saída'
+  modalQuiosqueSubtitulo.value = acao === 'entrada'
+    ? 'Aproxime o crachá para registrar a Entrada'
+    : 'Aproxime o crachá para registrar a Saída'
+  showModalQuiosque.value = true
 }
 
 // ─── 4. Watchers & Lifecycle Hooks (DECLARADOS POR ÚLTIMO) ─────────────────
@@ -1421,11 +1453,11 @@ onMounted(async () => {
       </div>
     </Transition>
 
-    <!-- ── MODAL QUIOSQUE (VALIDAÇÃO RFID / BARCODE DO GESTOR) ── -->
+    <!-- ── MODAL QUIOSQUE (VALIDAÇÃO RFID / BARCODE DO OPERADOR / GESTOR) ── -->
     <ModalAuthQuiosque
       :show="showModalQuiosque"
-      titulo="Ação Restrita"
-      subtitulo="Bipe o Crachá ou RFID do Gestor"
+      :titulo="modalQuiosqueTitulo"
+      :subtitulo="modalQuiosqueSubtitulo"
       @fechar="showModalQuiosque = false"
       @sucesso="onGestorAutenticadoSucesso"
     />

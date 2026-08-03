@@ -79,6 +79,22 @@ export class RastreamentosController {
     }
 
     try {
+      // 1.0. Trava de Nascimento da Caixa Teste: impede entrada de CAIXA_TESTE em setores iniciais
+      if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
+        const setorRepo = AppDataSource.getRepository(Setor);
+        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+        const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
+        if (setorInfo?.tipoOpcaoId) {
+          const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
+          if (tipoOpcao && SETORES_HANDOFF_AUTOMATICO_VALORES.includes(tipoOpcao.valor)) {
+            return res.status(400).json({
+              error: 'A Caixa Teste só pode dar entrada a partir das máquinas de Corte Automático (Ponte, Lectra, etc.).',
+              code: 'CAIXA_TESTE_NOT_ALLOWED_IN_INITIAL_SECTOR'
+            });
+          }
+        }
+      }
+
       // 1.1. Busca a Ordem de Teste correspondente para obter o modeloId
       const ordemRepo = AppDataSource.getRepository(OrdemTeste);
       const ordem = await ordemRepo.findOne({ where: { id: ordemTesteId } });
