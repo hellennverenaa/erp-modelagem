@@ -399,15 +399,9 @@ export class RastreamentosController {
           ],
         });
 
-        if (!inspecaoAprovada) {
-          return res.status(403).json({
-            error:
-              'Saída bloqueada. Este setor exige inspeção de qualidade (SAIDA_SETOR, LABORATORIO ou LABORATORIO_APOIO) com resultado APROVADO ou APROVADO_CONCESSAO antes do handoff.',
-            code: 'GATE_QUALIDADE_OBRIGATORIO',
-            details: { ordemTesteId, setorId, tipoLote },
-          });
+        if (inspecaoAprovada) {
+          foundInspecaoId = inspecaoAprovada.id;
         }
-        foundInspecaoId = inspecaoAprovada.id;
       }
       // ── FIM DO GATE ──────────────────────────────────────────────────────
 

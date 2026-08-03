@@ -42,6 +42,11 @@ const router = createRouter({
           component: () => import('../views/BipagemView.vue'),
         },
         {
+          path: 'inspecao',
+          name: 'inspecao',
+          component: () => import('../views/InspecaoQualidadeView.vue'),
+        },
+        {
           path: 'ordens',
           name: 'ordens',
           component: () => import('../views/GestaoOrdensView.vue'),

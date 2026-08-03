@@ -112,6 +112,21 @@ router.post(
 
 /**
  * @swagger
+ * /api/inspecoes/pendentes:
+ *   get:
+ *     summary: Lista os rastreamentos pendentes em setores de Gate Obrigatório (Categoria B)
+ *     tags:
+ *       - inspecoes
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de rastreamentos pendentes de inspeção
+ */
+router.get('/pendentes', inspecoesController.getPendentes);
+
+/**
+ * @swagger
  * /api/inspecoes/divergencias:
  *   get:
  *     summary: Lista as divergências registradas nas inspeções
