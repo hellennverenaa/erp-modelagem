@@ -159,16 +159,15 @@ export class RastreamentosController {
 
       const registroExistente = await queryExistente.getOne();
       if (registroExistente) {
-        // Idempotência: Se o registro já existir com status EM_PROCESSO, retorne 200 OK assumindo sucesso
+        // Bloqueio de Múltiplas Entradas Ativas (Idempotência / HTTP 409)
         if (registroExistente.status === RastreamentoStatus.EM_PROCESSO) {
-          return res.status(200).json({
-            message: 'Bipagem de entrada já em processo neste setor (Idempotência).',
-            rastreamento: registroExistente,
-            idempotent: true
+          return res.status(409).json({
+            error: 'Esta OP já possui uma entrada ativa neste setor e aguarda fechamento/saída.',
+            code: 'ENTRY_ALREADY_ACTIVE'
           });
         }
 
-        // Retorna erro de duplicidade APENAS se o lote/peça já tiver sido CONCLUIDO neste setor
+        // Retorna erro de duplicidade se o lote/peça já tiver sido CONCLUIDO neste setor
         if (registroExistente.status === RastreamentoStatus.CONCLUIDO) {
           return res.status(400).json({
             error: 'Bloqueio: Esta ordem já concluiu o processamento e a saída neste setor.',

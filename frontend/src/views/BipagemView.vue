@@ -376,14 +376,37 @@ async function executarFechamentoDefinitivoLote(gestor: any) {
     const setorId = selecionouSetorId.value
     const templateId = templateChecklist.value?.id || '00000000-0000-0000-0000-000000000000'
 
-    const respostasPayload = itensChecklist.value.map(item => ({
-      itemTemplateId: item.isAvulso ? undefined : item.id,
-      catalogItemId: item.catalogItemId || undefined,
-      descricaoAvulsa: item.isAvulso ? item.descricaoAvulsa : undefined,
-      quantidade: item.quantidade,
-      status: item.status,
-      observacao: item.observacao || undefined
-    }))
+    const isUuid = (str?: string | null) => typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str)
+
+    const itensSanitizados = itensChecklist.value
+      .filter(item => {
+        const templateItemIdValido = !item.isAvulso && isUuid(item.templateItemId || item.id) ? (item.templateItemId || item.id) : null
+        const catalogItemIdValido = isUuid(item.catalogItemId) ? item.catalogItemId : null
+        const descText = (item.descricaoAvulsa || item.descricao || '').trim()
+
+        if (!templateItemIdValido && !catalogItemIdValido && !descText) {
+          return false
+        }
+        return true
+      })
+      .map(item => {
+        const templateItemIdValido = !item.isAvulso && isUuid(item.templateItemId || item.id) ? (item.templateItemId || item.id) : undefined
+        const descText = (item.descricaoAvulsa || item.descricao || '').trim()
+
+        return {
+          templateItemId: templateItemIdValido,
+          catalogItemId: isUuid(item.catalogItemId) ? item.catalogItemId : undefined,
+          descricaoAvulsa: !templateItemIdValido ? (descText || 'Item sem descrição') : (item.isAvulso ? descText : undefined),
+          valorResposta: item.status || 'OK',
+          conforme: item.status !== 'NAO_OK',
+          observacao: item.observacao ? item.observacao.trim() : undefined
+        }
+      })
+
+    if (itensSanitizados.length === 0) {
+      triggerToast('Informe ao menos um item de checklist válido.', 'error')
+      return
+    }
 
     await api.post('/checklists/responder', {
       ordemTesteId,
@@ -391,7 +414,7 @@ async function executarFechamentoDefinitivoLote(gestor: any) {
       setorId,
       bloqueante: bloqueante.value,
       observacoes: observacoesGerais.value || undefined,
-      respostas: respostasPayload
+      respostas: itensSanitizados
     })
 
     if (bloqueante.value) {
