@@ -169,5 +169,6 @@ router.post('/', lotesController.createLote);
  */
 router.put('/:id', lotesController.updateLote);
 router.put('/:id/manutencao', lotesController.updateManutencao);
+router.get('/:id/auditoria', lotesController.getAuditoria);
 
 export default router;

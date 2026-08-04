@@ -26,7 +26,10 @@ import {
   Calendar,
   Clock,
   Sliders,
-  Scissors
+  Scissors,
+  Lock,
+  ShieldCheck,
+  History
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -623,13 +626,47 @@ function formatPermanencia(min: number | null) {
 }
 
 // ─── Modal de Manutenção e Remanejamento ─────────────────────────────────────
+const canEditSla = computed(() => authStore.isAdmin.value || authStore.isModelista.value)
+
+export interface SlaSetorFormItem {
+  setorKey: string
+  setorNome: string
+  valor: number
+  unidade: 'min' | 'h' | 'd'
+}
+
+function hydratateReverseSla(minutos: number): { valor: number; unidade: 'min' | 'h' | 'd' } {
+  const min = Number(minutos) || 0
+  if (min <= 0) {
+    return { valor: 0, unidade: 'min' }
+  }
+  if (min % 1440 === 0 && min >= 1440) {
+    return { valor: min / 1440, unidade: 'd' }
+  }
+  if (min % 60 === 0 && min >= 60) {
+    return { valor: min / 60, unidade: 'h' }
+  }
+  return { valor: min, unidade: 'min' }
+}
+
 const showManutencaoModal = ref(false)
 const manutencaoOrdem = ref<OrdemTeste | null>(null)
-const activeTabManutencao = ref<'geral' | 'pecas'>('geral')
+const activeTabManutencao = ref<'geral' | 'pecas' | 'auditoria'>('geral')
+const loadingAuditoria = ref(false)
+const logsAuditoria = ref<Array<{
+  id: string
+  acao: string
+  entidadeTipo: string
+  dadosAnteriores: Record<string, any> | null
+  dadosNovos: Record<string, any> | null
+  ipAddress: string | null
+  criadoEm: string
+  usuario: { id: string; nome: string } | null
+}>>([])
 const loadingManutencao = ref(false)
 const formManutencao = ref({
   dataPrevistaProducao: '',
-  slaDefaultMinutos: 120,
+  slas: [] as SlaSetorFormItem[],
   pecas: [] as Array<{ id: string; nome: string; setorCorteOpcaoId: string }>
 })
 const maquinasCorteManutencao = ref<Array<{ id: string; label: string; valor: string }>>([])
@@ -644,7 +681,44 @@ async function abrirManutencao(ordem: OrdemTeste) {
     dtStr = d.toISOString().slice(0, 16)
   }
 
-  const defaultSla = ordem.slasPorSetor?.default || 120
+  // Fonte primaria: SLAs proprios da ordem
+  const ordemSlaMap: Record<string, number> = ordem.slasPorSetor || {}
+
+  // Fonte secundaria: herda do modelo (rota ou modelo.slasPorSetor)
+  const modeloSlaMap: Record<string, number> =
+    (ordem as any).modelo?.rota?.slasPorSetor ||
+    (ordem as any).modelo?.slasPorSetor ||
+    {}
+
+  // Setores industriais reais do chao de fabrica (sem 'default')
+  const standardSectors = [
+    'Conferencia Inicial',
+    'Corte Recebimento',
+    'Serigrafia',
+    'Apoio',
+    'Costura',
+    'Montagem',
+    'Vulcanizado',
+    'Laboratorio'
+  ]
+
+  // Coleta chaves reais: da ordem + do modelo, excluindo 'default'
+  const sectorKeys = new Set<string>(standardSectors)
+  Object.keys(ordemSlaMap).forEach(k => { if (k !== 'default') sectorKeys.add(k) })
+  Object.keys(modeloSlaMap).forEach(k => { if (k !== 'default') sectorKeys.add(k) })
+
+  const slasItems: SlaSetorFormItem[] = []
+  sectorKeys.forEach(key => {
+    // Prioridade 1: SLA proprio da ordem; Prioridade 2: herda do modelo; Prioridade 3: zero
+    const rawMin = ordemSlaMap[key] ?? modeloSlaMap[key]
+
+    if (rawMin !== undefined && rawMin !== null) {
+      const { valor, unidade } = hydratateReverseSla(rawMin)
+      slasItems.push({ setorKey: key, setorNome: key, valor, unidade })
+    } else {
+      slasItems.push({ setorKey: key, setorNome: key, valor: 0, unidade: 'min' })
+    }
+  })
 
   let pecasList = ordem.modelo?.pecas || []
   if (pecasList.length === 0 && ordem.modeloId) {
@@ -661,7 +735,7 @@ async function abrirManutencao(ordem: OrdemTeste) {
 
   formManutencao.value = {
     dataPrevistaProducao: dtStr,
-    slaDefaultMinutos: defaultSla,
+    slas: slasItems,
     pecas: pecasList.map(p => ({
       id: p.id,
       nome: p.nome,
@@ -685,18 +759,48 @@ async function abrirManutencao(ordem: OrdemTeste) {
   showManutencaoModal.value = true
 }
 
+async function loadAuditoria() {
+  activeTabManutencao.value = 'auditoria'
+  if (!manutencaoOrdem.value) return
+  loadingAuditoria.value = true
+  logsAuditoria.value = []
+  try {
+    const res = await api.get(`/lotes/${manutencaoOrdem.value.id}/auditoria`)
+    logsAuditoria.value = res.data || []
+  } catch (err) {
+    console.error('[loadAuditoria] Erro ao buscar historico de auditoria:', err)
+    logsAuditoria.value = []
+  } finally {
+    loadingAuditoria.value = false
+  }
+}
+
 async function salvarManutencao() {
   if (!manutencaoOrdem.value) return
   loadingManutencao.value = true
   try {
-    const response = await api.put(`/ordens-teste/${manutencaoOrdem.value.id}/manutencao`, {
+    const payload: any = {
       dataPrevistaProducao: formManutencao.value.dataPrevistaProducao || null,
-      slasPorSetor: { default: Number(formManutencao.value.slaDefaultMinutos) },
       pecas: formManutencao.value.pecas.map(p => ({
         id: p.id,
         setorCorteOpcaoId: p.setorCorteOpcaoId
       }))
-    })
+    }
+
+    if (canEditSla.value) {
+      const slasPorSetorPayload: Record<string, number> = {}
+      // Serializa os SLAs editados (exclui itens com valor 0 para nao poluir)
+      for (const item of formManutencao.value.slas) {
+        let min = Number(item.valor) || 0
+        if (item.unidade === 'd') min *= 1440
+        else if (item.unidade === 'h') min *= 60
+        if (min > 0) slasPorSetorPayload[item.setorKey] = min
+      }
+
+      payload.slasPorSetor = slasPorSetorPayload
+    }
+
+    const response = await api.put(`/ordens-teste/${manutencaoOrdem.value.id}/manutencao`, payload)
 
     const loteAtualizado = response.data.lote || response.data
     const idx = ordens.value.findIndex(o => o.id === loteAtualizado.id)
@@ -1280,7 +1384,7 @@ onMounted(async () => {
                 <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
                   <input type="checkbox" id="chk-caixa-teste" v-model="form.possuiCaixaTeste" style="opacity: 0; width: 0; height: 0;">
                   <span class="slider round" :style="{ backgroundColor: form.possuiCaixaTeste ? '#0284c7' : '#cbd5e1', position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, transition: '.4s', borderRadius: '34px' }">
-                    <span style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: '.4s', borderRadius: '50%'" :style="form.possuiCaixaTeste ? 'transform: translateX(20px);' : ''"></span>
+                    <span style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: 0.4s; border-radius: 50%;" :style="form.possuiCaixaTeste ? 'transform: translateX(20px);' : ''"></span>
                   </span>
                 </label>
               </div>
@@ -1433,7 +1537,7 @@ onMounted(async () => {
 
                     <!-- Máquina / Estação Utilizada -->
                     <div v-if="item.estacao" class="tl-maquina-tag">
-                      <Cpu :size="12" class="tl-maquina-icon" aria-hidden="true" />
+                      <Sliders :size="12" class="tl-maquina-icon" aria-hidden="true" />
                       <span class="tl-maquina-label">Máquina:</span>
                       <span class="tl-maquina-val font-semibold">{{ item.estacao.codigo || item.estacao.nome }}</span>
                     </div>
@@ -1515,7 +1619,7 @@ onMounted(async () => {
           aria-labelledby="modal-title-manutencao"
           @click.self="showManutencaoModal = false"
         >
-          <div class="modal-panel max-w-xl">
+          <div class="modal-panel modal-panel--manutencao">
             <div class="modal-header">
               <div class="modal-header-left">
                 <div class="modal-icon-wrap" aria-hidden="true">
@@ -1537,38 +1641,50 @@ onMounted(async () => {
             </div>
 
             <!-- Abas do Modal -->
-            <div class="flex items-center gap-2 px-6 pt-3 border-b border-slate-200 bg-slate-50">
+            <div class="flex items-center gap-1 px-5 pt-3 border-b border-white/8 bg-zinc-900/60 overflow-x-auto">
               <button
                 type="button"
-                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
-                :class="activeTabManutencao === 'geral' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
+                :class="activeTabManutencao === 'geral' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
                 @click="activeTabManutencao = 'geral'"
               >
                 <div class="flex items-center gap-1.5">
-                  <Sliders :size="14" />
+                  <Sliders :size="13" />
                   <span>1. Prazos e SLAs</span>
                 </div>
               </button>
               <button
                 type="button"
-                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
-                :class="activeTabManutencao === 'pecas' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
+                :class="activeTabManutencao === 'pecas' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
                 @click="activeTabManutencao = 'pecas'"
               >
                 <div class="flex items-center gap-1.5">
-                  <Scissors :size="14" />
-                  <span>2. Remanejamento de Peças ({{ formManutencao.pecas.length }})</span>
+                  <Scissors :size="13" />
+                  <span>2. Remanejamento ({{ formManutencao.pecas.length }})</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
+                :class="activeTabManutencao === 'auditoria' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
+                @click="loadAuditoria"
+              >
+                <div class="flex items-center gap-1.5">
+                  <History :size="13" />
+                  <span>3. Historico ISO</span>
                 </div>
               </button>
             </div>
 
             <div class="modal-body p-6 space-y-4">
               <!-- ABA 1: Prazos e SLAs -->
-              <div v-if="activeTabManutencao === 'geral'" class="space-y-4">
+              <div v-if="activeTabManutencao === 'geral'" class="space-y-5">
+                <!-- Campo data -->
                 <div class="form-group">
                   <label for="manut-data-prevista" class="form-label flex items-center gap-1">
-                    <Calendar :size="13" class="text-slate-500" />
-                    <span>Data Prevista de Início na Produção</span>
+                    <Calendar :size="13" class="text-zinc-400" />
+                    <span>Data Prevista de Inicio na Producao</span>
                   </label>
                   <input
                     id="manut-data-prevista"
@@ -1578,31 +1694,90 @@ onMounted(async () => {
                   />
                 </div>
 
-                <div class="form-group">
-                  <label for="manut-sla-minutos" class="form-label flex items-center gap-1">
-                    <Clock :size="13" class="text-slate-500" />
-                    <span>SLA Padrão por Setor (Minutos)</span>
-                  </label>
-                  <input
-                    id="manut-sla-minutos"
-                    type="number"
-                    min="5"
-                    step="5"
-                    v-model.number="formManutencao.slaDefaultMinutos"
-                    placeholder="Ex: 120"
-                    class="form-input"
-                  />
+                <!-- Cabecalho SLA -->
+                <div class="flex items-center justify-between gap-3 flex-wrap">
+                  <div class="flex items-center gap-2">
+                    <Clock :size="14" class="text-zinc-400 shrink-0" />
+                    <span class="text-xs font-black text-zinc-100 uppercase tracking-widest">Prazos de SLA por Setor</span>
+                  </div>
+                  <span
+                    v-if="!canEditSla"
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-800 border border-white/10 text-zinc-400 text-xs font-bold"
+                  >
+                    <Lock :size="11" />
+                    Somente leitura
+                  </span>
+                  <span
+                    v-else
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-700/40 text-emerald-300 text-xs font-bold"
+                  >
+                    <ShieldCheck :size="11" />
+                    Edicao liberada
+                  </span>
+                </div>
+
+                <!-- Grid de cards SLA por setor -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 max-h-80 overflow-y-auto pr-1 w-full">
+                  <div
+                    v-for="s in formManutencao.slas"
+                    :key="s.setorKey"
+                    class="bg-zinc-900/30 backdrop-blur-xl border border-white/10 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors"
+                    :class="canEditSla ? 'hover:border-white/20' : 'opacity-70'"
+                  >
+                    <!-- Nome do setor -->
+                    <div class="flex items-center justify-between min-w-0">
+                      <div class="flex items-center gap-2 min-w-0 flex-1">
+                        <Clock
+                          :size="13"
+                          class="shrink-0"
+                          :class="canEditSla ? 'text-emerald-400' : 'text-zinc-500'"
+                        />
+                        <span
+                          class="text-sm font-semibold truncate"
+                          :class="canEditSla ? 'text-zinc-100' : 'text-zinc-400'"
+                        >{{ s.setorNome }}</span>
+                      </div>
+                      <Lock v-if="!canEditSla" :size="12" class="text-amber-400 shrink-0 ml-2" />
+                    </div>
+
+                    <!-- Divisor -->
+                    <div class="h-px bg-white/8"></div>
+
+                    <!-- Controles: valor + unidade -->
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        v-model.number="s.valor"
+                        :disabled="!canEditSla"
+                        class="w-20 px-2 h-9 text-sm font-black font-mono text-white bg-black/50 border border-slate-700/60 rounded-lg outline-none focus:border-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <select
+                        v-model="s.unidade"
+                        :disabled="!canEditSla"
+                        class="flex-1 min-w-[100px] h-9 px-3 py-2 text-xs font-bold text-white bg-black/50 border border-slate-700/60 rounded-lg outline-none focus:border-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <option value="min">Minutos</option>
+                        <option value="h">Horas</option>
+                        <option value="d">Dias</option>
+                      </select>
+                    </div>
+
+                    <!-- Equivalencia em minutos -->
+                    <p class="text-xs font-semibold text-zinc-500 text-right tabular-nums">
+                      = {{ s.unidade === 'd' ? s.valor * 1440 : s.unidade === 'h' ? s.valor * 60 : s.valor }} min
+                    </p>
+                  </div>
                 </div>
               </div>
-
-              <!-- ABA 2: Remanejamento de Peças -->
+              <!-- ABA 2: Remanejamento de Pecas -->
               <div v-else-if="activeTabManutencao === 'pecas'" class="space-y-3">
                 <p class="text-xs text-slate-500">
-                  Altere a máquina de destino de cada peça técnica do corte automático:
+                  Altere a maquina de destino de cada peca tecnica do corte automatico:
                 </p>
 
                 <div v-if="formManutencao.pecas.length === 0" class="p-4 text-center bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-xs">
-                  Este modelo não possui peças cadastradas para remanejamento.
+                  Este modelo nao possui pecas cadastradas para remanejamento.
                 </div>
 
                 <div v-else class="space-y-2.5 max-h-64 overflow-y-auto pr-1">
@@ -1619,7 +1794,7 @@ onMounted(async () => {
                         v-model="p.setorCorteOpcaoId"
                         class="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md font-medium text-slate-800"
                       >
-                        <option value="">Selecione a máquina...</option>
+                        <option value="">Selecione a maquina...</option>
                         <option
                           v-for="m in maquinasCorteManutencao"
                           :key="m.id"
@@ -1628,6 +1803,62 @@ onMounted(async () => {
                           {{ m.label }}
                         </option>
                       </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ABA 3: Historico ISO -->
+              <div v-else-if="activeTabManutencao === 'auditoria'" class="space-y-3">
+                <!-- Loading -->
+                <div v-if="loadingAuditoria" class="flex items-center justify-center py-12 gap-2">
+                  <Loader2 :size="18" class="animate-spin text-emerald-500" />
+                  <span class="text-slate-400 text-sm">Carregando historico...</span>
+                </div>
+
+                <!-- Vazio -->
+                <div
+                  v-else-if="logsAuditoria.length === 0"
+                  class="p-8 text-center text-slate-400 text-sm border border-dashed border-slate-300 rounded-2xl bg-slate-50/50"
+                >
+                  <History :size="28" class="mx-auto mb-2 text-slate-300" />
+                  <p>Nenhum registro de auditoria encontrado para esta ordem.</p>
+                </div>
+
+                <!-- Lista de registros de auditoria -->
+                <div v-else class="max-h-80 overflow-y-auto pr-1 space-y-2">
+                  <div
+                    v-for="log in logsAuditoria"
+                    :key="log.id"
+                    class="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-2.5 transition-colors hover:border-emerald-300 hover:shadow-sm"
+                  >
+                    <!-- Cabeçalho: ação + timestamp -->
+                    <div class="flex items-start justify-between gap-2 flex-wrap">
+                      <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-black tracking-wider uppercase">
+                        <ShieldCheck :size="10" />
+                        {{ log.acao }}
+                      </span>
+                      <span class="text-slate-400 text-xs font-mono">
+                        {{ new Date(log.criadoEm).toLocaleString('pt-BR') }}
+                      </span>
+                    </div>
+
+                    <!-- Operador -->
+                    <div class="flex items-center gap-2">
+                      <span class="text-slate-500 text-xs font-semibold">Operador:</span>
+                      <span class="text-slate-800 text-xs font-bold">{{ log.usuario?.nome || 'Sistema' }}</span>
+                    </div>
+
+                    <!-- Diff: Antes / Depois -->
+                    <div v-if="log.dadosAnteriores || log.dadosNovos" class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <div v-if="log.dadosAnteriores" class="bg-red-50 rounded-lg p-2.5 border border-red-100">
+                        <p class="text-red-500 text-xs font-bold mb-1.5 uppercase tracking-wide">Antes</p>
+                        <pre class="text-slate-600 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ JSON.stringify(log.dadosAnteriores, null, 2) }}</pre>
+                      </div>
+                      <div v-if="log.dadosNovos" class="bg-emerald-50 rounded-lg p-2.5 border border-emerald-100">
+                        <p class="text-emerald-600 text-xs font-bold mb-1.5 uppercase tracking-wide">Depois</p>
+                        <pre class="text-emerald-800 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ JSON.stringify(log.dadosNovos, null, 2) }}</pre>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2059,6 +2290,56 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Variante do modal de manutencao: glassmorphism escuro + largura expandida */
+.modal-panel--manutencao {
+  max-width: 48rem;
+  background: rgba(9, 9, 11, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 32px 80px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+/* ─── Overrides do modal de manutencao (tema escuro) ─── */
+.modal-panel--manutencao .modal-header {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  background: transparent;
+}
+.modal-panel--manutencao .modal-title {
+  color: #f4f4f5;
+}
+.modal-panel--manutencao .modal-description {
+  color: #a1a1aa;
+}
+.modal-panel--manutencao .modal-icon-wrap {
+  background: linear-gradient(135deg, #064e3b, #065f46);
+}
+.modal-panel--manutencao .modal-close {
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #71717a;
+}
+.modal-panel--manutencao .modal-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f4f5;
+}
+.modal-panel--manutencao .modal-footer {
+  border-top-color: rgba(255, 255, 255, 0.06);
+  background: transparent;
+}
+.modal-panel--manutencao .form-label {
+  color: #d4d4d8;
+}
+.modal-panel--manutencao .form-input {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #f4f4f5;
+  color-scheme: dark;
+}
+.modal-panel--manutencao .form-input:focus {
+  border-color: #34d399;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15);
 }
 
 .modal-header {

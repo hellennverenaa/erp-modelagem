@@ -78,6 +78,8 @@ function getId(nome: string): string {
 // ─── SLA por Setor ────────────────────────────────────────────────────────
 const sectorSlaMap = ref<Record<string, number>>({})
 
+const sectorSlaConfigMap = ref<Record<string, { valor: number; unidade: 'min' | 'h' | 'd' }>>({})
+
 function getSetorIdForBlock(block: any): string {
   if (!block) return ''
   if (typeof block === 'string') return getId(block)
@@ -87,15 +89,46 @@ function getSetorIdForBlock(block: any): string {
   return getId(block.label || block.id)
 }
 
-function getSlaForBlock(block: any): number {
-  const sId = getSetorIdForBlock(block)
-  return sectorSlaMap.value[sId] ?? 120
+function calculateMinutes(valor: number, unidade: 'min' | 'h' | 'd'): number {
+  const v = Math.max(1, Number(valor) || 1)
+  if (unidade === 'd') return v * 1440
+  if (unidade === 'h') return v * 60
+  return v
 }
 
-function setSlaForBlock(block: any, value: number) {
+function getSlaConfigForBlock(block: any): { valor: number; unidade: 'min' | 'h' | 'd' } {
+  const sId = getSetorIdForBlock(block)
+  if (!sectorSlaConfigMap.value[sId]) {
+    const rawMin = sectorSlaMap.value[sId] ?? 120
+    let valor = rawMin
+    let unidade: 'min' | 'h' | 'd' = 'min'
+    if (rawMin % 1440 === 0 && rawMin >= 1440) {
+      valor = rawMin / 1440
+      unidade = 'd'
+    } else if (rawMin % 60 === 0 && rawMin >= 60) {
+      valor = rawMin / 60
+      unidade = 'h'
+    }
+    sectorSlaConfigMap.value[sId] = { valor, unidade }
+  }
+  return sectorSlaConfigMap.value[sId]
+}
+
+function updateSlaValor(block: any, val: number) {
+  const cfg = getSlaConfigForBlock(block)
+  cfg.valor = Math.max(1, Number(val) || 1)
   const sId = getSetorIdForBlock(block)
   if (sId) {
-    sectorSlaMap.value[sId] = Number(value) || 120
+    sectorSlaMap.value[sId] = calculateMinutes(cfg.valor, cfg.unidade)
+  }
+}
+
+function updateSlaUnidade(block: any, unit: 'min' | 'h' | 'd') {
+  const cfg = getSlaConfigForBlock(block)
+  cfg.unidade = unit
+  const sId = getSetorIdForBlock(block)
+  if (sId) {
+    sectorSlaMap.value[sId] = calculateMinutes(cfg.valor, cfg.unidade)
   }
 }
 
@@ -967,17 +1000,24 @@ defineExpose({
                 </div>
               </div>
               <div class="tl-block-right flex-row-layout">
-                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                   <Clock :size="11" class="text-slate-500 shrink-0" />
                   <input
                     type="number"
-                    min="5"
-                    step="5"
-                    :value="getSlaForBlock(fixedStart)"
-                    @input="setSlaForBlock(fixedStart, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    min="1"
+                    :value="getSlaConfigForBlock(fixedStart).valor"
+                    @input="updateSlaValor(fixedStart, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                   />
-                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  <select
+                    :value="getSlaConfigForBlock(fixedStart).unidade"
+                    @change="updateSlaUnidade(fixedStart, ($event.target as HTMLSelectElement).value as any)"
+                    class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                  >
+                    <option value="min">min</option>
+                    <option value="h">h</option>
+                    <option value="d">d</option>
+                  </select>
                 </div>
                 <span class="badge badge--fixo">
                   <Lock :size="10" aria-hidden="true" />
@@ -1009,17 +1049,24 @@ defineExpose({
                 </div>
               </div>
               <div class="tl-block-right flex-row-layout">
-                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                   <Clock :size="11" class="text-slate-500 shrink-0" />
                   <input
                     type="number"
-                    min="5"
-                    step="5"
-                    :value="getSlaForBlock('Corte Recebimento')"
-                    @input="setSlaForBlock('Corte Recebimento', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    min="1"
+                    :value="getSlaConfigForBlock('Corte Recebimento').valor"
+                    @input="updateSlaValor('Corte Recebimento', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                   />
-                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  <select
+                    :value="getSlaConfigForBlock('Corte Recebimento').unidade"
+                    @change="updateSlaUnidade('Corte Recebimento', ($event.target as HTMLSelectElement).value as any)"
+                    class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                  >
+                    <option value="min">min</option>
+                    <option value="h">h</option>
+                    <option value="d">d</option>
+                  </select>
                 </div>
                 <span class="badge badge--fixo">
                   <Lock :size="10" aria-hidden="true" />
@@ -1044,17 +1091,24 @@ defineExpose({
                   </div>
                 </div>
                 <div class="tl-block-right flex-row-layout">
-                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                     <Clock :size="11" class="text-slate-500 shrink-0" />
                     <input
                       type="number"
-                      min="5"
-                      step="5"
-                      :value="getSlaForBlock('Serigrafia')"
-                      @input="setSlaForBlock('Serigrafia', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                      min="1"
+                      :value="getSlaConfigForBlock('Serigrafia').valor"
+                      @input="updateSlaValor('Serigrafia', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                     />
-                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                    <select
+                      :value="getSlaConfigForBlock('Serigrafia').unidade"
+                      @change="updateSlaUnidade('Serigrafia', ($event.target as HTMLSelectElement).value as any)"
+                      class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                    >
+                      <option value="min">min</option>
+                      <option value="h">h</option>
+                      <option value="d">d</option>
+                    </select>
                   </div>
                   <span class="badge badge--condicional">Condicional</span>
                 </div>
@@ -1097,17 +1151,24 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
-                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                         <Clock :size="11" class="text-slate-500 shrink-0" />
                         <input
                           type="number"
-                          min="5"
-                          step="5"
-                          :value="getSlaForBlock(element)"
-                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                          min="1"
+                          :value="getSlaConfigForBlock(element).valor"
+                          @input="updateSlaValor(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                         />
-                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                        <select
+                          :value="getSlaConfigForBlock(element).unidade"
+                          @change="updateSlaUnidade(element, ($event.target as HTMLSelectElement).value as any)"
+                          class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                        >
+                          <option value="min">min</option>
+                          <option value="h">h</option>
+                          <option value="d">d</option>
+                        </select>
                       </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
@@ -1140,17 +1201,24 @@ defineExpose({
                   </div>
                 </div>
                 <div class="tl-block-right flex-row-layout">
-                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                     <Clock :size="11" class="text-slate-500 shrink-0" />
                     <input
                       type="number"
-                      min="5"
-                      step="5"
-                      :value="getSlaForBlock('Apoio')"
-                      @input="setSlaForBlock('Apoio', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                      min="1"
+                      :value="getSlaConfigForBlock('Apoio').valor"
+                      @input="updateSlaValor('Apoio', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                     />
-                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                    <select
+                      :value="getSlaConfigForBlock('Apoio').unidade"
+                      @change="updateSlaUnidade('Apoio', ($event.target as HTMLSelectElement).value as any)"
+                      class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                    >
+                      <option value="min">min</option>
+                      <option value="h">h</option>
+                      <option value="d">d</option>
+                    </select>
                   </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
@@ -1191,6 +1259,25 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="1"
+                          :value="getSlaConfigForBlock(element).valor"
+                          @input="updateSlaValor(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <select
+                          :value="getSlaConfigForBlock(element).unidade"
+                          @change="updateSlaUnidade(element, ($event.target as HTMLSelectElement).value as any)"
+                          class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                        >
+                          <option value="min">min</option>
+                          <option value="h">h</option>
+                          <option value="d">d</option>
+                        </select>
+                      </div>
                       <span class="badge badge--parallel">Paralelo</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1237,6 +1324,25 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="1"
+                          :value="getSlaConfigForBlock(element).valor"
+                          @input="updateSlaValor(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <select
+                          :value="getSlaConfigForBlock(element).unidade"
+                          @change="updateSlaUnidade(element, ($event.target as HTMLSelectElement).value as any)"
+                          class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                        >
+                          <option value="min">min</option>
+                          <option value="h">h</option>
+                          <option value="d">d</option>
+                        </select>
+                      </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1268,17 +1374,24 @@ defineExpose({
                   </div>
                 </div>
                 <div class="tl-block-right flex-row-layout">
-                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                     <Clock :size="11" class="text-slate-500 shrink-0" />
                     <input
                       type="number"
-                      min="5"
-                      step="5"
-                      :value="getSlaForBlock('Costura')"
-                      @input="setSlaForBlock('Costura', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                      min="1"
+                      :value="getSlaConfigForBlock('Costura').valor"
+                      @input="updateSlaValor('Costura', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                     />
-                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                    <select
+                      :value="getSlaConfigForBlock('Costura').unidade"
+                      @change="updateSlaUnidade('Costura', ($event.target as HTMLSelectElement).value as any)"
+                      class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                    >
+                      <option value="min">min</option>
+                      <option value="h">h</option>
+                      <option value="d">d</option>
+                    </select>
                   </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
@@ -1319,6 +1432,25 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="1"
+                          :value="getSlaConfigForBlock(element).valor"
+                          @input="updateSlaValor(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <select
+                          :value="getSlaConfigForBlock(element).unidade"
+                          @change="updateSlaUnidade(element, ($event.target as HTMLSelectElement).value as any)"
+                          class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                        >
+                          <option value="min">min</option>
+                          <option value="h">h</option>
+                          <option value="d">d</option>
+                        </select>
+                      </div>
                       <span class="badge badge--parallel">Paralelo</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1365,6 +1497,25 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="1"
+                          :value="getSlaConfigForBlock(element).valor"
+                          @input="updateSlaValor(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <select
+                          :value="getSlaConfigForBlock(element).unidade"
+                          @change="updateSlaUnidade(element, ($event.target as HTMLSelectElement).value as any)"
+                          class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                        >
+                          <option value="min">min</option>
+                          <option value="h">h</option>
+                          <option value="d">d</option>
+                        </select>
+                      </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1396,17 +1547,24 @@ defineExpose({
                   </div>
                 </div>
                 <div class="tl-block-right flex-row-layout">
-                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                     <Clock :size="11" class="text-slate-500 shrink-0" />
                     <input
                       type="number"
-                      min="5"
-                      step="5"
-                      :value="getSlaForBlock('Montagem')"
-                      @input="setSlaForBlock('Montagem', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                      min="1"
+                      :value="getSlaConfigForBlock('Montagem').valor"
+                      @input="updateSlaValor('Montagem', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                     />
-                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                    <select
+                      :value="getSlaConfigForBlock('Montagem').unidade"
+                      @change="updateSlaUnidade('Montagem', ($event.target as HTMLSelectElement).value as any)"
+                      class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                    >
+                      <option value="min">min</option>
+                      <option value="h">h</option>
+                      <option value="d">d</option>
+                    </select>
                   </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
@@ -1447,17 +1605,24 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
-                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                         <Clock :size="11" class="text-slate-500 shrink-0" />
                         <input
                           type="number"
-                          min="5"
-                          step="5"
-                          :value="getSlaForBlock(element)"
-                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                          min="1"
+                          :value="getSlaConfigForBlock(element).valor"
+                          @input="updateSlaValor(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                         />
-                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                        <select
+                          :value="getSlaConfigForBlock(element).unidade"
+                          @change="updateSlaUnidade(element, ($event.target as HTMLSelectElement).value as any)"
+                          class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                        >
+                          <option value="min">min</option>
+                          <option value="h">h</option>
+                          <option value="d">d</option>
+                        </select>
                       </div>
                       <span class="badge badge--parallel">Paralelo</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
@@ -1481,17 +1646,24 @@ defineExpose({
                     </div>
                   </div>
                   <div class="tl-block-right flex-row-layout">
-                    <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                       <Clock :size="11" class="text-slate-500 shrink-0" />
                       <input
                         type="number"
-                        min="5"
-                        step="5"
-                        :value="getSlaForBlock('Vulcanizado')"
-                        @input="setSlaForBlock('Vulcanizado', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                        class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        min="1"
+                        :value="getSlaConfigForBlock('Vulcanizado').valor"
+                        @input="updateSlaValor('Vulcanizado', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                        class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                       />
-                      <span class="text-[10px] font-semibold text-slate-500">min</span>
+                      <select
+                        :value="getSlaConfigForBlock('Vulcanizado').unidade"
+                        @change="updateSlaUnidade('Vulcanizado', ($event.target as HTMLSelectElement).value as any)"
+                        class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                      >
+                        <option value="min">min</option>
+                        <option value="h">h</option>
+                        <option value="d">d</option>
+                      </select>
                     </div>
                     <span class="badge badge--parallel">Paralelo</span>
                   </div>
@@ -1535,17 +1707,24 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
-                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                         <Clock :size="11" class="text-slate-500 shrink-0" />
                         <input
                           type="number"
-                          min="5"
-                          step="5"
-                          :value="getSlaForBlock(element)"
-                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                          min="1"
+                          :value="getSlaConfigForBlock(element).valor"
+                          @input="updateSlaValor(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                         />
-                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                        <select
+                          :value="getSlaConfigForBlock(element).unidade"
+                          @change="updateSlaUnidade(element, ($event.target as HTMLSelectElement).value as any)"
+                          class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                        >
+                          <option value="min">min</option>
+                          <option value="h">h</option>
+                          <option value="d">d</option>
+                        </select>
                       </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
@@ -1577,17 +1756,24 @@ defineExpose({
                 </div>
               </div>
               <div class="tl-block-right flex-row-layout">
-                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
                   <Clock :size="11" class="text-slate-500 shrink-0" />
                   <input
                     type="number"
-                    min="5"
-                    step="5"
-                    :value="getSlaForBlock(fixedEnd)"
-                    @input="setSlaForBlock(fixedEnd, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    min="1"
+                    :value="getSlaConfigForBlock(fixedEnd).valor"
+                    @input="updateSlaValor(fixedEnd, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
                   />
-                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  <select
+                    :value="getSlaConfigForBlock(fixedEnd).unidade"
+                    @change="updateSlaUnidade(fixedEnd, ($event.target as HTMLSelectElement).value as any)"
+                    class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                  >
+                    <option value="min">min</option>
+                    <option value="h">h</option>
+                    <option value="d">d</option>
+                  </select>
                 </div>
                 <span class="badge badge--fixo badge--end">
                   <Lock :size="10" aria-hidden="true" />

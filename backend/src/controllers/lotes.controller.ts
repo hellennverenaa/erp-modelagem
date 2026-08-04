@@ -4,6 +4,7 @@ import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Peca } from '../entities/Peca';
+import { AuditLog } from '../entities/AuditLog';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -47,7 +48,11 @@ export class LotesController {
         },
         order: { createdAt: 'DESC' }
       });
-      return res.json(lotes);
+      const lotesComSla = lotes.map(l => ({
+        ...l,
+        slasPorSetor: l.slasPorSetor || null
+      }));
+      return res.json(lotesComSla);
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordens de teste:', error);
       return res.status(500).json({ error: 'Erro ao listar ordens de teste' });
@@ -78,7 +83,10 @@ export class LotesController {
         });
       }
 
-      return res.json(lote);
+      return res.json({
+        ...lote,
+        slasPorSetor: lote.slasPorSetor || null
+      });
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordem de teste:', error);
       return res.status(500).json({ error: 'Erro ao buscar ordem de teste' });
@@ -259,20 +267,88 @@ export class LotesController {
 
       const { dataPrevistaProducao, slasPorSetor, pecas } = parseResult.data;
 
+      const reqUser = (req as any).user || (req as any).usuario || {};
+      const usuarioId = (req as any).usuario?.id || (req as any).user?.id || (req as any).user?.usuarioId || null;
+      const userPerfil = (reqUser.perfilNome || reqUser.perfil?.nome || reqUser.perfil || '').toString().toUpperCase();
+
+      let slaModificado = false;
+      const slaAntigo = lote.slasPorSetor || null;
+
+      if (slasPorSetor !== undefined) {
+        const isAllowedRole = userPerfil === 'MODELISTA' || userPerfil === 'ADMIN';
+        const mudouSla = JSON.stringify(lote.slasPorSetor) !== JSON.stringify(slasPorSetor);
+
+        if (mudouSla && !isAllowedRole) {
+          return res.status(403).json({
+            error: 'Acesso Negado: Apenas Modelistas e Administradores podem alterar os prazos (SLA) de produção.',
+            code: 'FORBIDDEN_SLA_EDIT'
+          });
+        }
+
+        if (mudouSla) {
+          slaModificado = true;
+          lote.slasPorSetor = slasPorSetor;
+        }
+      }
+
       if (dataPrevistaProducao !== undefined) {
         lote.dataPrevistaProducao = dataPrevistaProducao ? new Date(dataPrevistaProducao) : null;
-      }
-      if (slasPorSetor !== undefined) {
-        lote.slasPorSetor = slasPorSetor;
       }
 
       await loteRepo.save(lote);
 
-      // Remanejamento de Peças de Corte
+      // Auditoria ISO de Alteração de SLA
+      if (slaModificado) {
+        try {
+          const auditLogRepository = AppDataSource.getRepository(AuditLog);
+          const logSla = auditLogRepository.create({
+            usuarioId,
+            acao: 'ALTERACAO_SLA',
+            entidadeTipo: 'ordem_teste',
+            entidadeId: lote.id,
+            dadosAnteriores: slaAntigo as any,
+            dadosNovos: slasPorSetor as any,
+            ipAddress: req.ip || null
+          });
+          await auditLogRepository.save(logSla);
+        } catch (auditError: any) {
+          console.error('[Auditoria ISO] Erro ao salvar log de alteração de SLA:', auditError);
+        }
+      }
+
+      // Remanejamento de Peças de Corte com Rastreabilidade ISO
       if (pecas && pecas.length > 0) {
+        const auditLogRepository = AppDataSource.getRepository(AuditLog);
+        const usuarioId = (req as any).usuario?.id || (req as any).user?.id || (req as any).user?.usuarioId || null;
+
         for (const p of pecas) {
           if (p.id && p.setorCorteOpcaoId) {
-            await pecaRepo.update({ id: p.id }, { setorCorteOpcaoId: p.setorCorteOpcaoId });
+            const pecaExistente = await pecaRepo.findOne({ where: { id: p.id } });
+            if (pecaExistente && pecaExistente.setorCorteOpcaoId !== p.setorCorteOpcaoId) {
+              const antigoId = pecaExistente.setorCorteOpcaoId;
+              const novoId = p.setorCorteOpcaoId;
+
+              pecaExistente.setorCorteOpcaoId = novoId;
+              await pecaRepo.save(pecaExistente);
+
+              try {
+                const log = auditLogRepository.create({
+                  usuarioId,
+                  acao: 'REMANEJAMENTO_MAQUINA',
+                  entidadeTipo: 'peca',
+                  entidadeId: pecaExistente.id,
+                  dadosAnteriores: { setorCorteOpcaoId: antigoId },
+                  dadosNovos: {
+                    setorCorteOpcaoId: novoId,
+                    detalhes: `Máquina alterada de ${antigoId} para ${novoId} na OP ${lote.id}`
+                  },
+                  ipAddress: req.ip || null
+                });
+                await auditLogRepository.save(log);
+              } catch (auditError: any) {
+                console.error('[Auditoria ISO] Erro ao salvar log de remanejamento:', auditError);
+              }
+            }
           }
         }
       }
@@ -284,7 +360,7 @@ export class LotesController {
 
       return res.json({
         message: 'Manutenção da Ordem realizada com sucesso.',
-        lote: loteAtualizado
+        lote: loteAtualizado ? { ...loteAtualizado, slasPorSetor: loteAtualizado.slasPorSetor || null } : null
       });
 
     } catch (error: any) {
@@ -292,6 +368,43 @@ export class LotesController {
       return res.status(500).json({
         error: error.message || 'Erro ao realizar manutenção da ordem.',
         code: 'MANUTENCAO_FAILED'
+      });
+    }
+  };
+
+  /**
+   * GET /api/lotes/:id/auditoria
+   * Retorna o histórico de auditoria ISO de uma ordem de teste.
+   */
+  public getAuditoria = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { id } = req.params;
+      const auditRepo = AppDataSource.getRepository(AuditLog);
+      const logs = await auditRepo.find({
+        where: { entidadeId: String(id) },
+        relations: { usuario: true },
+        order: { createdAt: 'DESC' },
+      });
+
+      const result = logs.map(l => ({
+        id: l.id,
+        acao: l.acao,
+        entidadeTipo: l.entidadeTipo,
+        dadosAnteriores: l.dadosAnteriores,
+        dadosNovos: l.dadosNovos,
+        ipAddress: l.ipAddress,
+        criadoEm: l.createdAt,
+        usuario: l.usuario
+          ? { id: l.usuario.id, nome: (l.usuario as any).nome || (l.usuario as any).username || 'Sistema' }
+          : null,
+      }));
+
+      return res.json(result);
+    } catch (error: any) {
+      console.error('[LotesController.getAuditoria] Erro:', error);
+      return res.status(500).json({
+        error: error.message || 'Erro ao buscar histórico de auditoria.',
+        code: 'AUDITORIA_FETCH_FAILED'
       });
     }
   };
