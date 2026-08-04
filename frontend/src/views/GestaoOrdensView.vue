@@ -29,7 +29,9 @@ import {
   Scissors,
   Lock,
   ShieldCheck,
-  History
+  History,
+  User,
+  Cpu
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -673,7 +675,7 @@ const logsAuditoria = ref<Array<{
   dadosNovos: Record<string, any> | null
   ipAddress: string | null
   criadoEm: string
-  usuario: { id: string; nome: string } | null
+  usuario: { id: string; nome?: string; nomeCompleto?: string; usuario?: string } | null
 }>>([])
 const loadingManutencao = ref(false)
 const formManutencao = ref({
@@ -711,18 +713,21 @@ async function abrirManutencao(ordem: OrdemTeste) {
   } else if (ordem.modeloId) {
     // Fallback: busca a rota via API caso nao tenha vindo na listagem principal
     try {
-      const resModelo = await api.get(`/admin/modelos/${ordem.modeloId}`)
-      const modeloData = resModelo.data.modelo || resModelo.data
-      if (Array.isArray(modeloData?.rotas) && modeloData.rotas.length > 0) {
-        rotaSetores = (modeloData.rotas as RotaModeloItem[])
-          .sort((a, b) => a.ordem - b.ordem)
-          .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem }))
-        // Atualiza a ordem em cache para proximas aberturas
+      const resRota = await api.get(`/rotas/${ordem.modeloId}`).catch(() => api.get(`/admin/modelos/${ordem.modeloId}`))
+      const rotaData = resRota.data.rota || resRota.data.rotas || resRota.data.modelo?.rotas || resRota.data
+      if (Array.isArray(rotaData) && rotaData.length > 0) {
+        rotaSetores = (rotaData as any[])
+          .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
+          .map(r => ({
+            id: r.setor?.id || r.setorId || r.id,
+            nome: r.setor?.nome || r.setorNome || r.nome || 'Setor',
+            ordem: r.ordem || 0
+          }))
         if (ordem.modelo) {
-          ;(ordem.modelo as any).rotas = modeloData.rotas
+          ;(ordem.modelo as any).rotas = rotaData
         }
       }
-      // Captura tambem o slasPorSetor do modelo se disponivel
+      const modeloData = resRota.data.modelo || resRota.data
       if (modeloData?.slasPorSetor && typeof modeloData.slasPorSetor === 'object') {
         Object.assign(modeloSlaMap, modeloData.slasPorSetor)
       }
@@ -807,6 +812,71 @@ async function loadAuditoria() {
   }
 }
 
+function getSetorNome(key: string): string {
+  if (!key) return '-'
+  if (key === 'default') return 'SLA Padrão'
+
+  const itemForm = formManutencao.value.slas.find(s => s.setorKey === key || s.setorNome === key)
+  if (itemForm?.setorNome) return itemForm.setorNome
+
+  const rotas = manutencaoOrdem.value?.modelo?.rotas || (manutencaoOrdem.value?.modelo as any)?.rota_modelo
+  if (Array.isArray(rotas)) {
+    const match = rotas.find((r: any) => r.setor?.id === key || r.setorId === key || r.setor?.nome === key)
+    if (match?.setor?.nome) return match.setor.nome
+  }
+
+  for (const o of ordens.value) {
+    const rList = o.modelo?.rotas || (o.modelo as any)?.rota_modelo
+    if (Array.isArray(rList)) {
+      const match = rList.find((r: any) => r.setor?.id === key || r.setorId === key)
+      if (match?.setor?.nome) return match.setor.nome
+    }
+  }
+
+  return key
+}
+
+function formatSlaDiff(dadosAnt: Record<string, any> | null, dadosNov: Record<string, any> | null): string {
+  const oldObj = dadosAnt || {}
+  const newObj = dadosNov || {}
+
+  const keys = Object.keys(newObj).filter(k => k !== 'default')
+  if (keys.length === 0) {
+    const oldKeys = Object.keys(oldObj).filter(k => k !== 'default')
+    if (oldKeys.length === 0) return '-'
+    return oldKeys.map(k => `${getSetorNome(k)}: ${oldObj[k]} min`).join('\n')
+  }
+
+  return keys.map(k => {
+    const nomeSector = getSetorNome(k)
+    const vOld = oldObj[k] !== undefined && oldObj[k] !== null ? `${oldObj[k]} min` : '0 min'
+    const vNew = newObj[k] !== undefined && newObj[k] !== null ? `${newObj[k]} min` : '0 min'
+    return `${nomeSector}: ${vOld} ➔ ${vNew}`
+  }).join('\n')
+}
+
+function formatPecaRemanejada(dadosAnt: Record<string, any> | null, dadosNov: Record<string, any> | null): string {
+  const pecaNome = dadosNov?.pecaNome || dadosAnt?.pecaNome || 'Peça'
+  const origem = dadosAnt?.maquinaNome || dadosAnt?.setorCorteOpcaoId || 'Sem máquina'
+  const destino = dadosNov?.maquinaNome || dadosNov?.setorCorteOpcaoId || 'Sem máquina'
+  return `Peça ${String(pecaNome).toUpperCase()} remanejada do subsetor ${origem} para ${destino}`
+}
+
+function formatAuditJson(data: Record<string, any> | null): string {
+  if (!data) return '-'
+  if (typeof data !== 'object') return String(data)
+  const keys = Object.keys(data)
+  if (keys.length === 0) return '-'
+  return keys.map(k => {
+    const nomeAmigavel = getSetorNome(k)
+    const v = data[k]
+    if (typeof v === 'object' && v !== null) {
+      return `${nomeAmigavel}: ${JSON.stringify(v)}`
+    }
+    return `${nomeAmigavel}: ${v} min`
+  }).join('\n')
+}
+
 async function salvarManutencao() {
   if (!manutencaoOrdem.value) return
   loadingManutencao.value = true
@@ -838,6 +908,9 @@ async function salvarManutencao() {
     const idx = ordens.value.findIndex(o => o.id === loteAtualizado.id)
     if (idx !== -1) {
       ordens.value[idx] = { ...ordens.value[idx], ...loteAtualizado }
+    }
+    if (Array.isArray(loteAtualizado.auditLogs)) {
+      logsAuditoria.value = loteAtualizado.auditLogs
     }
 
     addToast('success', 'Manutenção da Ordem salva com sucesso!')
@@ -1877,19 +1950,19 @@ onMounted(async () => {
                     <!-- Operador -->
                     <div class="flex items-center gap-2">
                       <span class="text-slate-500 text-xs font-semibold">Operador:</span>
-                      <span class="text-slate-800 text-xs font-bold">{{ log.usuario?.nome || 'Sistema' }}</span>
+                      <span class="text-slate-800 text-xs font-bold">{{ log.usuario?.nomeCompleto || log.usuario?.nome || log.usuario?.usuario || 'Sistema' }}</span>
                     </div>
 
-                    <!-- Diff: Antes / Depois -->
-                    <div v-if="log.dadosAnteriores || log.dadosNovos" class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                      <div v-if="log.dadosAnteriores" class="bg-red-50 rounded-lg p-2.5 border border-red-100">
-                        <p class="text-red-500 text-xs font-bold mb-1.5 uppercase tracking-wide">Antes</p>
-                        <pre class="text-slate-600 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ JSON.stringify(log.dadosAnteriores, null, 2) }}</pre>
-                      </div>
-                      <div v-if="log.dadosNovos" class="bg-emerald-50 rounded-lg p-2.5 border border-emerald-100">
-                        <p class="text-emerald-600 text-xs font-bold mb-1.5 uppercase tracking-wide">Depois</p>
-                        <pre class="text-emerald-800 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ JSON.stringify(log.dadosNovos, null, 2) }}</pre>
-                      </div>
+                    <!-- Diff Inteligente ISO (Apenas o que mudou) -->
+                    <div v-if="log.acao === 'PECA_REMANEJADA'" class="bg-emerald-50/80 rounded-lg p-3 border border-emerald-200">
+                      <p class="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                        <Scissors :size="13" class="text-emerald-600 shrink-0" />
+                        <span>{{ formatPecaRemanejada(log.dadosAnteriores, log.dadosNovos) }}</span>
+                      </p>
+                    </div>
+                    <div v-else-if="log.dadosAnteriores || log.dadosNovos" class="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                      <p class="text-slate-500 text-xs font-bold mb-1 uppercase tracking-wide">Diferença de SLA (Diff ISO)</p>
+                      <pre class="text-slate-800 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ formatSlaDiff(log.dadosAnteriores, log.dadosNovos) }}</pre>
                     </div>
                   </div>
                 </div>

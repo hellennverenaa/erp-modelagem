@@ -5,6 +5,8 @@ import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Peca } from '../entities/Peca';
 import { AuditLog } from '../entities/AuditLog';
+import { Usuario } from '../entities/Usuario';
+import { ConfigOpcao } from '../entities/ConfigOpcao';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -23,11 +25,16 @@ const updateLoteSchema = z.object({
   observacoes: z.string().optional().nullable(),
 });
 
+const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+function isUuid(val: any): boolean {
+  return typeof val === 'string' && uuidRegex.test(val);
+}
+
 const updateManutencaoSchema = z.object({
   dataPrevistaProducao: z.string().optional().nullable(),
   slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
   pecas: z.array(z.object({
-    id: z.string().uuid(),
+    id: z.string(),
     setorCorteOpcaoId: z.string()
   })).optional()
 });
@@ -83,9 +90,33 @@ export class LotesController {
         });
       }
 
+      const auditRepo = AppDataSource.getRepository(AuditLog);
+      const auditLogs = await auditRepo.find({
+        where: { entidadeId: id },
+        relations: { usuario: true },
+        order: { createdAt: 'DESC' }
+      });
+
       return res.json({
         ...lote,
-        slasPorSetor: lote.slasPorSetor || null
+        slasPorSetor: lote.slasPorSetor || null,
+        auditLogs: auditLogs.map(l => ({
+          id: l.id,
+          acao: l.acao,
+          entidadeTipo: l.entidadeTipo,
+          dadosAnteriores: l.dadosAnteriores,
+          dadosNovos: l.dadosNovos,
+          ipAddress: l.ipAddress,
+          criadoEm: l.createdAt,
+          usuario: l.usuario
+            ? {
+                id: l.usuario.id,
+                nome: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario || 'Sistema',
+                nomeCompleto: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario,
+                usuario: (l.usuario as any).usuario
+              }
+            : null
+        }))
       });
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordem de teste:', error);
@@ -255,7 +286,7 @@ export class LotesController {
 
       let lote = await loteRepo.findOne({
         where: { id },
-        relations: { modelo: { pecas: true }, planta: true }
+        relations: { modelo: { pecas: true, rotas: { setor: true } }, planta: true }
       });
 
       if (!lote) {
@@ -265,29 +296,87 @@ export class LotesController {
         });
       }
 
-      const { dataPrevistaProducao, slasPorSetor, pecas } = parseResult.data;
+      const { dataPrevistaProducao, pecas } = parseResult.data;
 
       const reqUser = (req as any).user || (req as any).usuario || {};
-      const usuarioId = (req as any).usuario?.id || (req as any).user?.id || (req as any).user?.usuarioId || null;
       const userPerfil = (reqUser.perfilNome || reqUser.perfil?.nome || reqUser.perfil || '').toString().toUpperCase();
 
-      let slaModificado = false;
-      const slaAntigo = lote.slasPorSetor || null;
+      // Lookup do Usuário Autenticado por Username (SSO Unix)
+      let auditUsuarioId: string | null = null;
+      try {
+        const userRepo = AppDataSource.getRepository(Usuario);
+        const usernameToken = reqUser.usuario || reqUser.username || reqUser.nome || reqUser.preferred_username;
 
-      if (slasPorSetor !== undefined) {
+        let localUsuario: Usuario | null = null;
+        if (usernameToken) {
+          const cleanUserStr = String(usernameToken).trim();
+          // 1. Busca exata por usuario
+          localUsuario = await userRepo.findOne({ where: { usuario: cleanUserStr } });
+          if (!localUsuario) {
+            // 2. Busca case-insensitive
+            localUsuario = await userRepo.createQueryBuilder('u')
+              .where('LOWER(u.usuario) = LOWER(:usr)', { usr: cleanUserStr })
+              .getOne();
+          }
+        }
+        if (!localUsuario && reqUser.id && isUuid(reqUser.id)) {
+          localUsuario = await userRepo.findOne({ where: { id: String(reqUser.id) } });
+        }
+        if (localUsuario) {
+          auditUsuarioId = localUsuario.id;
+        }
+      } catch (err) {
+        console.warn('[updateManutencao] Erro ao realizar lookup de usuário:', err);
+      }
+
+      // SLA Efetivo Anterior
+      const slasAnterioresEfetivos: Record<string, number> = {};
+      if (lote.slasPorSetor && Object.keys(lote.slasPorSetor).length > 0) {
+        Object.assign(slasAnterioresEfetivos, lote.slasPorSetor);
+      } else {
+        const modeloSlaMap = (lote.modelo as any)?.slasPorSetor;
+        if (modeloSlaMap && typeof modeloSlaMap === 'object') {
+          Object.assign(slasAnterioresEfetivos, modeloSlaMap);
+        } else if (Array.isArray(lote.modelo?.rotas)) {
+          for (const r of lote.modelo!.rotas!) {
+            const key = r.setor?.id || r.setorId || r.setor?.nome;
+            if (key) {
+              slasAnterioresEfetivos[key] = (r as any).tempoSla || (r as any).tempo_sla || 0;
+            }
+          }
+        }
+      }
+
+      const novosSlas = req.body.slasPorSetor !== undefined ? req.body.slasPorSetor : req.body.slas_por_setor;
+      const diffAnterior: Record<string, number> = {};
+      const diffNovo: Record<string, number> = {};
+
+      if (novosSlas !== undefined && typeof novosSlas === 'object' && novosSlas !== null) {
         const isAllowedRole = userPerfil === 'MODELISTA' || userPerfil === 'ADMIN';
-        const mudouSla = JSON.stringify(lote.slasPorSetor) !== JSON.stringify(slasPorSetor);
 
-        if (mudouSla && !isAllowedRole) {
+        const allKeys = Array.from(new Set([...Object.keys(slasAnterioresEfetivos), ...Object.keys(novosSlas)]));
+        for (const key of allKeys) {
+          if (key === 'default') continue;
+          const vAnt = slasAnterioresEfetivos[key] !== undefined ? Number(slasAnterioresEfetivos[key]) : 0;
+          const vNov = novosSlas[key] !== undefined ? Number(novosSlas[key]) : 0;
+
+          if (vAnt !== vNov) {
+            diffAnterior[key] = vAnt;
+            diffNovo[key] = vNov;
+          }
+        }
+
+        const mudouSlaReal = Object.keys(diffNovo).length > 0;
+
+        if (mudouSlaReal && !isAllowedRole) {
           return res.status(403).json({
             error: 'Acesso Negado: Apenas Modelistas e Administradores podem alterar os prazos (SLA) de produção.',
             code: 'FORBIDDEN_SLA_EDIT'
           });
         }
 
-        if (mudouSla) {
-          slaModificado = true;
-          lote.slasPorSetor = slasPorSetor;
+        if (mudouSlaReal) {
+          lote.slasPorSetor = novosSlas;
         }
       }
 
@@ -297,18 +386,18 @@ export class LotesController {
 
       await loteRepo.save(lote);
 
-      // Auditoria ISO de Alteração de SLA
-      if (slaModificado) {
+      // Trava Antispam: Auditoria ISO de Alteração de SLA — Grava apenas se houver diff real
+      if (Object.keys(diffNovo).length > 0) {
         try {
           const auditLogRepository = AppDataSource.getRepository(AuditLog);
           const logSla = auditLogRepository.create({
-            usuarioId,
-            acao: 'ALTERACAO_SLA',
-            entidadeTipo: 'ordem_teste',
+            usuarioId: auditUsuarioId,
+            acao: 'SLA_ALTERADO',
+            entidadeTipo: 'ordens_teste',
             entidadeId: lote.id,
-            dadosAnteriores: slaAntigo as any,
-            dadosNovos: slasPorSetor as any,
-            ipAddress: req.ip || null
+            dadosAnteriores: diffAnterior as any,
+            dadosNovos: diffNovo as any,
+            ipAddress: req.ip || req.socket.remoteAddress || null
           });
           await auditLogRepository.save(logSla);
         } catch (auditError: any) {
@@ -319,30 +408,44 @@ export class LotesController {
       // Remanejamento de Peças de Corte com Rastreabilidade ISO
       if (pecas && pecas.length > 0) {
         const auditLogRepository = AppDataSource.getRepository(AuditLog);
-        const usuarioId = (req as any).usuario?.id || (req as any).user?.id || (req as any).user?.usuarioId || null;
+        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
 
         for (const p of pecas) {
-          if (p.id && p.setorCorteOpcaoId) {
-            const pecaExistente = await pecaRepo.findOne({ where: { id: p.id } });
+          if (p.id && isUuid(p.id) && p.setorCorteOpcaoId && isUuid(p.setorCorteOpcaoId)) {
+            const pecaExistente = await pecaRepo.findOne({
+              where: { id: p.id },
+              relations: { setorCorteOpcao: true }
+            });
+
             if (pecaExistente && pecaExistente.setorCorteOpcaoId !== p.setorCorteOpcaoId) {
               const antigoId = pecaExistente.setorCorteOpcaoId;
-              const novoId = p.setorCorteOpcaoId;
+              const antigaMaquina = pecaExistente.setorCorteOpcao?.valor || pecaExistente.setorCorteOpcao?.label || 'Sem máquina';
 
-              pecaExistente.setorCorteOpcaoId = novoId;
+              const novaOpcao = await configOpcaoRepo.findOne({ where: { id: p.setorCorteOpcaoId } });
+              const novaMaquina = novaOpcao?.valor || novaOpcao?.label || p.setorCorteOpcaoId;
+
+              pecaExistente.setorCorteOpcaoId = p.setorCorteOpcaoId;
               await pecaRepo.save(pecaExistente);
 
               try {
                 const log = auditLogRepository.create({
-                  usuarioId,
-                  acao: 'REMANEJAMENTO_MAQUINA',
-                  entidadeTipo: 'peca',
-                  entidadeId: pecaExistente.id,
-                  dadosAnteriores: { setorCorteOpcaoId: antigoId },
-                  dadosNovos: {
-                    setorCorteOpcaoId: novoId,
-                    detalhes: `Máquina alterada de ${antigoId} para ${novoId} na OP ${lote.id}`
+                  usuarioId: auditUsuarioId,
+                  acao: 'PECA_REMANEJADA',
+                  entidadeTipo: 'ordens_teste',
+                  entidadeId: lote.id,
+                  dadosAnteriores: {
+                    pecaId: pecaExistente.id,
+                    pecaNome: pecaExistente.nome,
+                    maquinaId: antigoId,
+                    maquinaNome: antigaMaquina
                   },
-                  ipAddress: req.ip || null
+                  dadosNovos: {
+                    pecaId: pecaExistente.id,
+                    pecaNome: pecaExistente.nome,
+                    maquinaId: p.setorCorteOpcaoId,
+                    maquinaNome: novaMaquina
+                  },
+                  ipAddress: req.ip || req.socket.remoteAddress || null
                 });
                 await auditLogRepository.save(log);
               } catch (auditError: any) {
@@ -355,12 +458,39 @@ export class LotesController {
 
       const loteAtualizado = await loteRepo.findOne({
         where: { id },
-        relations: { modelo: { pecas: true, marca: true }, planta: true, criadoPor: true }
+        relations: { modelo: { pecas: true, marca: true, rotas: { setor: true } }, planta: true, criadoPor: true }
+      });
+
+      const auditRepo = AppDataSource.getRepository(AuditLog);
+      const auditLogs = await auditRepo.find({
+        where: { entidadeId: id },
+        relations: { usuario: true },
+        order: { createdAt: 'DESC' }
       });
 
       return res.json({
         message: 'Manutenção da Ordem realizada com sucesso.',
-        lote: loteAtualizado ? { ...loteAtualizado, slasPorSetor: loteAtualizado.slasPorSetor || null } : null
+        lote: loteAtualizado ? {
+          ...loteAtualizado,
+          slasPorSetor: loteAtualizado.slasPorSetor || null,
+          auditLogs: auditLogs.map(l => ({
+            id: l.id,
+            acao: l.acao,
+            entidadeTipo: l.entidadeTipo,
+            dadosAnteriores: l.dadosAnteriores,
+            dadosNovos: l.dadosNovos,
+            ipAddress: l.ipAddress,
+            criadoEm: l.createdAt,
+            usuario: l.usuario
+              ? {
+                  id: l.usuario.id,
+                  nome: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario || 'Sistema',
+                  nomeCompleto: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario,
+                  usuario: (l.usuario as any).usuario
+                }
+              : null
+          }))
+        } : null
       });
 
     } catch (error: any) {
@@ -395,7 +525,12 @@ export class LotesController {
         ipAddress: l.ipAddress,
         criadoEm: l.createdAt,
         usuario: l.usuario
-          ? { id: l.usuario.id, nome: (l.usuario as any).nome || (l.usuario as any).username || 'Sistema' }
+          ? {
+              id: l.usuario.id,
+              nome: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario || 'Sistema',
+              nomeCompleto: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario,
+              usuario: (l.usuario as any).usuario
+            }
           : null,
       }));
 
