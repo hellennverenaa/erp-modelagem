@@ -26,7 +26,12 @@ import {
   Calendar,
   Clock,
   Sliders,
-  Scissors
+  Scissors,
+  Lock,
+  ShieldCheck,
+  History,
+  User,
+  Cpu
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -45,12 +50,24 @@ interface MarcaInfo {
   nome: string
 }
 
+interface RotaModeloItem {
+  id: string
+  ordem: number
+  obrigatorio: boolean
+  setor: {
+    id: string
+    nome: string
+  }
+}
+
 interface Modelo {
   id: string
   nome: string
   codigoProduto: string
   pecas?: PecaInfo[]
   marca?: MarcaInfo
+  rotas?: RotaModeloItem[]
+  slasPorSetor?: Record<string, number> | null
 }
 
 interface OrdemTeste {
@@ -623,13 +640,47 @@ function formatPermanencia(min: number | null) {
 }
 
 // ─── Modal de Manutenção e Remanejamento ─────────────────────────────────────
+const canEditSla = computed(() => authStore.isAdmin.value || authStore.isModelista.value)
+
+export interface SlaSetorFormItem {
+  setorKey: string
+  setorNome: string
+  valor: number
+  unidade: 'min' | 'h' | 'd'
+}
+
+function hydratateReverseSla(minutos: number): { valor: number; unidade: 'min' | 'h' | 'd' } {
+  const min = Number(minutos) || 0
+  if (min <= 0) {
+    return { valor: 0, unidade: 'min' }
+  }
+  if (min % 1440 === 0 && min >= 1440) {
+    return { valor: min / 1440, unidade: 'd' }
+  }
+  if (min % 60 === 0 && min >= 60) {
+    return { valor: min / 60, unidade: 'h' }
+  }
+  return { valor: min, unidade: 'min' }
+}
+
 const showManutencaoModal = ref(false)
 const manutencaoOrdem = ref<OrdemTeste | null>(null)
-const activeTabManutencao = ref<'geral' | 'pecas'>('geral')
+const activeTabManutencao = ref<'geral' | 'pecas' | 'auditoria'>('geral')
+const loadingAuditoria = ref(false)
+const logsAuditoria = ref<Array<{
+  id: string
+  acao: string
+  entidadeTipo: string
+  dadosAnteriores: Record<string, any> | null
+  dadosNovos: Record<string, any> | null
+  ipAddress: string | null
+  criadoEm: string
+  usuario: { id: string; nome?: string; nomeCompleto?: string; usuario?: string } | null
+}>>([])
 const loadingManutencao = ref(false)
 const formManutencao = ref({
   dataPrevistaProducao: '',
-  slaDefaultMinutos: 120,
+  slas: [] as SlaSetorFormItem[],
   pecas: [] as Array<{ id: string; nome: string; setorCorteOpcaoId: string }>
 })
 const maquinasCorteManutencao = ref<Array<{ id: string; label: string; valor: string }>>([])
@@ -644,7 +695,67 @@ async function abrirManutencao(ordem: OrdemTeste) {
     dtStr = d.toISOString().slice(0, 16)
   }
 
-  const defaultSla = ordem.slasPorSetor?.default || 120
+  // Fonte primaria: SLAs proprios da ordem
+  const ordemSlaMap: Record<string, number> = ordem.slasPorSetor || {}
+
+  // Fonte secundaria: herda do modelo (slasPorSetor do modelo)
+  const modeloSlaMap: Record<string, number> = (ordem.modelo as any)?.slasPorSetor || {}
+
+  // Fonte de setores: rota cadastrada no banco para o modelo desta ordem
+  // Se a rota ainda nao estiver carregada na ordem, busca via API
+  let rotaSetores: Array<{ id: string; nome: string; ordem: number }> = []
+
+  if (Array.isArray(ordem.modelo?.rotas) && ordem.modelo!.rotas!.length > 0) {
+    // Usa a rota ja carregada (TypeORM relation eager/explicit)
+    rotaSetores = ordem.modelo!.rotas!
+      .sort((a, b) => a.ordem - b.ordem)
+      .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem }))
+  } else if (ordem.modeloId) {
+    // Fallback: busca a rota via API caso nao tenha vindo na listagem principal
+    try {
+      const resRota = await api.get(`/rotas/${ordem.modeloId}`).catch(() => api.get(`/admin/modelos/${ordem.modeloId}`))
+      const rotaData = resRota.data.rota || resRota.data.rotas || resRota.data.modelo?.rotas || resRota.data
+      if (Array.isArray(rotaData) && rotaData.length > 0) {
+        rotaSetores = (rotaData as any[])
+          .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
+          .map(r => ({
+            id: r.setor?.id || r.setorId || r.id,
+            nome: r.setor?.nome || r.setorNome || r.nome || 'Setor',
+            ordem: r.ordem || 0
+          }))
+        if (ordem.modelo) {
+          ;(ordem.modelo as any).rotas = rotaData
+        }
+      }
+      const modeloData = resRota.data.modelo || resRota.data
+      if (modeloData?.slasPorSetor && typeof modeloData.slasPorSetor === 'object') {
+        Object.assign(modeloSlaMap, modeloData.slasPorSetor)
+      }
+    } catch (err) {
+      console.warn('[abrirManutencao] Erro ao buscar rota do modelo:', err)
+    }
+  }
+
+  // Monta a lista de SLA a partir dos setores reais da rota
+  // Prioridade 1: SLA proprio da ordem; Prioridade 2: herda modelo; Prioridade 3: 0 min
+  const slasItems: SlaSetorFormItem[] = rotaSetores.map(setor => {
+    const rawMin = ordemSlaMap[setor.nome] ?? ordemSlaMap[setor.id] ?? modeloSlaMap[setor.nome] ?? modeloSlaMap[setor.id]
+    if (rawMin !== undefined && rawMin !== null) {
+      const { valor, unidade } = hydratateReverseSla(rawMin)
+      return { setorKey: setor.id, setorNome: setor.nome, valor, unidade }
+    }
+    return { setorKey: setor.id, setorNome: setor.nome, valor: 0, unidade: 'min' as const }
+  })
+
+  // Inclui chaves da ordem que nao pertencem a nenhum setor da rota (ex: SLAs customizados)
+  const rotaIds = new Set(rotaSetores.map(s => s.id))
+  const rotaNomes = new Set(rotaSetores.map(s => s.nome))
+  Object.keys(ordemSlaMap).forEach(k => {
+    if (k !== 'default' && !rotaIds.has(k) && !rotaNomes.has(k)) {
+      const { valor, unidade } = hydratateReverseSla(ordemSlaMap[k])
+      slasItems.push({ setorKey: k, setorNome: k, valor, unidade })
+    }
+  })
 
   let pecasList = ordem.modelo?.pecas || []
   if (pecasList.length === 0 && ordem.modeloId) {
@@ -661,7 +772,7 @@ async function abrirManutencao(ordem: OrdemTeste) {
 
   formManutencao.value = {
     dataPrevistaProducao: dtStr,
-    slaDefaultMinutos: defaultSla,
+    slas: slasItems,
     pecas: pecasList.map(p => ({
       id: p.id,
       nome: p.nome,
@@ -685,23 +796,121 @@ async function abrirManutencao(ordem: OrdemTeste) {
   showManutencaoModal.value = true
 }
 
+async function loadAuditoria() {
+  activeTabManutencao.value = 'auditoria'
+  if (!manutencaoOrdem.value) return
+  loadingAuditoria.value = true
+  logsAuditoria.value = []
+  try {
+    const res = await api.get(`/lotes/${manutencaoOrdem.value.id}/auditoria`)
+    logsAuditoria.value = res.data || []
+  } catch (err) {
+    console.error('[loadAuditoria] Erro ao buscar historico de auditoria:', err)
+    logsAuditoria.value = []
+  } finally {
+    loadingAuditoria.value = false
+  }
+}
+
+function getSetorNome(key: string): string {
+  if (!key) return '-'
+  if (key === 'default') return 'SLA Padrão'
+
+  const itemForm = formManutencao.value.slas.find(s => s.setorKey === key || s.setorNome === key)
+  if (itemForm?.setorNome) return itemForm.setorNome
+
+  const rotas = manutencaoOrdem.value?.modelo?.rotas || (manutencaoOrdem.value?.modelo as any)?.rota_modelo
+  if (Array.isArray(rotas)) {
+    const match = rotas.find((r: any) => r.setor?.id === key || r.setorId === key || r.setor?.nome === key)
+    if (match?.setor?.nome) return match.setor.nome
+  }
+
+  for (const o of ordens.value) {
+    const rList = o.modelo?.rotas || (o.modelo as any)?.rota_modelo
+    if (Array.isArray(rList)) {
+      const match = rList.find((r: any) => r.setor?.id === key || r.setorId === key)
+      if (match?.setor?.nome) return match.setor.nome
+    }
+  }
+
+  return key
+}
+
+function formatSlaDiff(dadosAnt: Record<string, any> | null, dadosNov: Record<string, any> | null): string {
+  const oldObj = dadosAnt || {}
+  const newObj = dadosNov || {}
+
+  const keys = Object.keys(newObj).filter(k => k !== 'default')
+  if (keys.length === 0) {
+    const oldKeys = Object.keys(oldObj).filter(k => k !== 'default')
+    if (oldKeys.length === 0) return '-'
+    return oldKeys.map(k => `${getSetorNome(k)}: ${oldObj[k]} min`).join('\n')
+  }
+
+  return keys.map(k => {
+    const nomeSector = getSetorNome(k)
+    const vOld = oldObj[k] !== undefined && oldObj[k] !== null ? `${oldObj[k]} min` : '0 min'
+    const vNew = newObj[k] !== undefined && newObj[k] !== null ? `${newObj[k]} min` : '0 min'
+    return `${nomeSector}: ${vOld} ➔ ${vNew}`
+  }).join('\n')
+}
+
+function formatPecaRemanejada(dadosAnt: Record<string, any> | null, dadosNov: Record<string, any> | null): string {
+  const pecaNome = dadosNov?.pecaNome || dadosAnt?.pecaNome || 'Peça'
+  const origem = dadosAnt?.maquinaNome || dadosAnt?.setorCorteOpcaoId || 'Sem máquina'
+  const destino = dadosNov?.maquinaNome || dadosNov?.setorCorteOpcaoId || 'Sem máquina'
+  return `Peça ${String(pecaNome).toUpperCase()} remanejada do subsetor ${origem} para ${destino}`
+}
+
+function formatAuditJson(data: Record<string, any> | null): string {
+  if (!data) return '-'
+  if (typeof data !== 'object') return String(data)
+  const keys = Object.keys(data)
+  if (keys.length === 0) return '-'
+  return keys.map(k => {
+    const nomeAmigavel = getSetorNome(k)
+    const v = data[k]
+    if (typeof v === 'object' && v !== null) {
+      return `${nomeAmigavel}: ${JSON.stringify(v)}`
+    }
+    return `${nomeAmigavel}: ${v} min`
+  }).join('\n')
+}
+
 async function salvarManutencao() {
   if (!manutencaoOrdem.value) return
   loadingManutencao.value = true
   try {
-    const response = await api.put(`/ordens-teste/${manutencaoOrdem.value.id}/manutencao`, {
+    const payload: any = {
       dataPrevistaProducao: formManutencao.value.dataPrevistaProducao || null,
-      slasPorSetor: { default: Number(formManutencao.value.slaDefaultMinutos) },
       pecas: formManutencao.value.pecas.map(p => ({
         id: p.id,
         setorCorteOpcaoId: p.setorCorteOpcaoId
       }))
-    })
+    }
+
+    if (canEditSla.value) {
+      const slasPorSetorPayload: Record<string, number> = {}
+      // Serializa os SLAs editados (exclui itens com valor 0 para nao poluir)
+      for (const item of formManutencao.value.slas) {
+        let min = Number(item.valor) || 0
+        if (item.unidade === 'd') min *= 1440
+        else if (item.unidade === 'h') min *= 60
+        if (min > 0) slasPorSetorPayload[item.setorKey] = min
+      }
+
+      payload.slasPorSetor = slasPorSetorPayload
+    }
+
+    const response = await api.put(`/ordens-teste/${manutencaoOrdem.value.id}/manutencao`, payload)
 
     const loteAtualizado = response.data.lote || response.data
     const idx = ordens.value.findIndex(o => o.id === loteAtualizado.id)
     if (idx !== -1) {
       ordens.value[idx] = { ...ordens.value[idx], ...loteAtualizado }
+    }
+    if (Array.isArray(loteAtualizado.auditLogs)) {
+      logsAuditoria.value = loteAtualizado.auditLogs
     }
 
     addToast('success', 'Manutenção da Ordem salva com sucesso!')
@@ -1280,7 +1489,7 @@ onMounted(async () => {
                 <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
                   <input type="checkbox" id="chk-caixa-teste" v-model="form.possuiCaixaTeste" style="opacity: 0; width: 0; height: 0;">
                   <span class="slider round" :style="{ backgroundColor: form.possuiCaixaTeste ? '#0284c7' : '#cbd5e1', position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, transition: '.4s', borderRadius: '34px' }">
-                    <span style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: '.4s', borderRadius: '50%'" :style="form.possuiCaixaTeste ? 'transform: translateX(20px);' : ''"></span>
+                    <span style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: 0.4s; border-radius: 50%;" :style="form.possuiCaixaTeste ? 'transform: translateX(20px);' : ''"></span>
                   </span>
                 </label>
               </div>
@@ -1433,7 +1642,7 @@ onMounted(async () => {
 
                     <!-- Máquina / Estação Utilizada -->
                     <div v-if="item.estacao" class="tl-maquina-tag">
-                      <Cpu :size="12" class="tl-maquina-icon" aria-hidden="true" />
+                      <Sliders :size="12" class="tl-maquina-icon" aria-hidden="true" />
                       <span class="tl-maquina-label">Máquina:</span>
                       <span class="tl-maquina-val font-semibold">{{ item.estacao.codigo || item.estacao.nome }}</span>
                     </div>
@@ -1515,11 +1724,11 @@ onMounted(async () => {
           aria-labelledby="modal-title-manutencao"
           @click.self="showManutencaoModal = false"
         >
-          <div class="modal-panel max-w-xl">
+          <div class="modal-panel modal-panel--manutencao">
             <div class="modal-header">
               <div class="modal-header-left">
                 <div class="modal-icon-wrap" aria-hidden="true">
-                  <Settings :size="20" class="text-indigo-600" />
+                  <Settings :size="20" />
                 </div>
                 <div>
                   <h2 id="modal-title-manutencao" class="modal-title">Manutenção da Ordem {{ manutencaoOrdem?.codigoBarras }}</h2>
@@ -1537,38 +1746,50 @@ onMounted(async () => {
             </div>
 
             <!-- Abas do Modal -->
-            <div class="flex items-center gap-2 px-6 pt-3 border-b border-slate-200 bg-slate-50">
+            <div class="flex items-center gap-1 px-5 pt-3 border-b border-white/8 bg-zinc-900/60 overflow-x-auto">
               <button
                 type="button"
-                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
-                :class="activeTabManutencao === 'geral' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
+                :class="activeTabManutencao === 'geral' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
                 @click="activeTabManutencao = 'geral'"
               >
                 <div class="flex items-center gap-1.5">
-                  <Sliders :size="14" />
+                  <Sliders :size="13" />
                   <span>1. Prazos e SLAs</span>
                 </div>
               </button>
               <button
                 type="button"
-                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
-                :class="activeTabManutencao === 'pecas' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
+                :class="activeTabManutencao === 'pecas' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
                 @click="activeTabManutencao = 'pecas'"
               >
                 <div class="flex items-center gap-1.5">
-                  <Scissors :size="14" />
-                  <span>2. Remanejamento de Peças ({{ formManutencao.pecas.length }})</span>
+                  <Scissors :size="13" />
+                  <span>2. Remanejamento ({{ formManutencao.pecas.length }})</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
+                :class="activeTabManutencao === 'auditoria' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
+                @click="loadAuditoria"
+              >
+                <div class="flex items-center gap-1.5">
+                  <History :size="13" />
+                  <span>3. Historico ISO</span>
                 </div>
               </button>
             </div>
 
             <div class="modal-body p-6 space-y-4">
               <!-- ABA 1: Prazos e SLAs -->
-              <div v-if="activeTabManutencao === 'geral'" class="space-y-4">
+              <div v-if="activeTabManutencao === 'geral'" class="space-y-5">
+                <!-- Campo data -->
                 <div class="form-group">
                   <label for="manut-data-prevista" class="form-label flex items-center gap-1">
-                    <Calendar :size="13" class="text-slate-500" />
-                    <span>Data Prevista de Início na Produção</span>
+                    <Calendar :size="13" class="text-zinc-400" />
+                    <span>Data Prevista de Inicio na Producao</span>
                   </label>
                   <input
                     id="manut-data-prevista"
@@ -1578,31 +1799,89 @@ onMounted(async () => {
                   />
                 </div>
 
-                <div class="form-group">
-                  <label for="manut-sla-minutos" class="form-label flex items-center gap-1">
-                    <Clock :size="13" class="text-slate-500" />
-                    <span>SLA Padrão por Setor (Minutos)</span>
-                  </label>
-                  <input
-                    id="manut-sla-minutos"
-                    type="number"
-                    min="5"
-                    step="5"
-                    v-model.number="formManutencao.slaDefaultMinutos"
-                    placeholder="Ex: 120"
-                    class="form-input"
-                  />
+                <!-- Cabecalho SLA -->
+                <div class="flex items-center justify-between gap-3 flex-wrap">
+                  <div class="flex items-center gap-2">
+                    <Clock :size="14" class="text-slate-500 shrink-0" />
+                    <span class="text-xs font-black text-slate-800 uppercase tracking-widest">Prazos de SLA por Setor</span>
+                  </div>
+                  <span
+                    v-if="!canEditSla"
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-xs font-bold"
+                  >
+                    <Lock :size="11" />
+                    Somente leitura
+                  </span>
+                  <span
+                    v-else
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold"
+                  >
+                    <ShieldCheck :size="11" />
+                    Edicao liberada
+                  </span>
+                </div>
+
+                <!-- Grid de cards SLA por setor -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 max-h-80 overflow-y-auto pr-1 w-full">
+                  <div
+                    v-for="s in formManutencao.slas"
+                    :key="s.setorKey"
+                    class="bg-slate-50/70 backdrop-blur-md border border-slate-200/80 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_4px_20px_rgba(0,0,0,0.02)] text-slate-800 transition-colors"
+                    :class="canEditSla ? 'hover:border-emerald-500/40' : 'opacity-80'"
+                  >
+                    <!-- Nome do setor -->
+                    <div class="flex items-center justify-between min-w-0">
+                      <div class="flex items-center gap-2 min-w-0 flex-1">
+                        <Clock
+                          :size="13"
+                          class="shrink-0"
+                          :class="canEditSla ? 'text-emerald-600' : 'text-slate-400'"
+                        />
+                        <span
+                          class="text-sm font-bold truncate text-slate-800"
+                        >{{ s.setorNome }}</span>
+                      </div>
+                      <Lock v-if="!canEditSla" :size="12" class="text-amber-500 shrink-0 ml-2" />
+                    </div>
+
+                    <!-- Divisor -->
+                    <div class="h-px bg-slate-200/60"></div>
+
+                    <!-- Controles: valor + unidade -->
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        v-model.number="s.valor"
+                        :disabled="!canEditSla"
+                        class="w-20 px-3 py-2 text-sm font-bold font-mono text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+                      />
+                      <select
+                        v-model="s.unidade"
+                        :disabled="!canEditSla"
+                        class="flex-1 min-w-[100px] px-3 py-2 text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+                      >
+                        <option value="min">Minutos</option>
+                        <option value="h">Horas</option>
+                        <option value="d">Dias</option>
+                      </select>
+                    </div>
+
+                    <!-- Equivalencia em minutos -->
+                    <p class="text-xs font-semibold text-slate-500 text-right tabular-nums">
+                      = {{ s.unidade === 'd' ? s.valor * 1440 : s.unidade === 'h' ? s.valor * 60 : s.valor }} min
+                    </p>
+                  </div>
                 </div>
               </div>
-
-              <!-- ABA 2: Remanejamento de Peças -->
+              <!-- ABA 2: Remanejamento de Pecas -->
               <div v-else-if="activeTabManutencao === 'pecas'" class="space-y-3">
                 <p class="text-xs text-slate-500">
-                  Altere a máquina de destino de cada peça técnica do corte automático:
+                  Altere a maquina de destino de cada peca tecnica do corte automatico:
                 </p>
 
                 <div v-if="formManutencao.pecas.length === 0" class="p-4 text-center bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-xs">
-                  Este modelo não possui peças cadastradas para remanejamento.
+                  Este modelo nao possui pecas cadastradas para remanejamento.
                 </div>
 
                 <div v-else class="space-y-2.5 max-h-64 overflow-y-auto pr-1">
@@ -1619,7 +1898,7 @@ onMounted(async () => {
                         v-model="p.setorCorteOpcaoId"
                         class="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md font-medium text-slate-800"
                       >
-                        <option value="">Selecione a máquina...</option>
+                        <option value="">Selecione a maquina...</option>
                         <option
                           v-for="m in maquinasCorteManutencao"
                           :key="m.id"
@@ -1628,6 +1907,62 @@ onMounted(async () => {
                           {{ m.label }}
                         </option>
                       </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ABA 3: Historico ISO -->
+              <div v-else-if="activeTabManutencao === 'auditoria'" class="space-y-3">
+                <!-- Loading -->
+                <div v-if="loadingAuditoria" class="flex items-center justify-center py-12 gap-2">
+                  <Loader2 :size="18" class="animate-spin text-emerald-500" />
+                  <span class="text-slate-400 text-sm">Carregando historico...</span>
+                </div>
+
+                <!-- Vazio -->
+                <div
+                  v-else-if="logsAuditoria.length === 0"
+                  class="p-8 text-center text-slate-400 text-sm border border-dashed border-slate-300 rounded-2xl bg-slate-50/50"
+                >
+                  <History :size="28" class="mx-auto mb-2 text-slate-300" />
+                  <p>Nenhum registro de auditoria encontrado para esta ordem.</p>
+                </div>
+
+                <!-- Lista de registros de auditoria -->
+                <div v-else class="max-h-80 overflow-y-auto pr-1 space-y-2">
+                  <div
+                    v-for="log in logsAuditoria"
+                    :key="log.id"
+                    class="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-2.5 transition-colors hover:border-emerald-300 hover:shadow-sm"
+                  >
+                    <!-- Cabeçalho: ação + timestamp -->
+                    <div class="flex items-start justify-between gap-2 flex-wrap">
+                      <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-black tracking-wider uppercase">
+                        <ShieldCheck :size="10" />
+                        {{ log.acao }}
+                      </span>
+                      <span class="text-slate-400 text-xs font-mono">
+                        {{ new Date(log.criadoEm).toLocaleString('pt-BR') }}
+                      </span>
+                    </div>
+
+                    <!-- Operador -->
+                    <div class="flex items-center gap-2">
+                      <span class="text-slate-500 text-xs font-semibold">Operador:</span>
+                      <span class="text-slate-800 text-xs font-bold">{{ log.usuario?.nomeCompleto || log.usuario?.nome || log.usuario?.usuario || 'Sistema' }}</span>
+                    </div>
+
+                    <!-- Diff Inteligente ISO (Apenas o que mudou) -->
+                    <div v-if="log.acao === 'PECA_REMANEJADA'" class="bg-emerald-50/80 rounded-lg p-3 border border-emerald-200">
+                      <p class="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                        <Scissors :size="13" class="text-emerald-600 shrink-0" />
+                        <span>{{ formatPecaRemanejada(log.dadosAnteriores, log.dadosNovos) }}</span>
+                      </p>
+                    </div>
+                    <div v-else-if="log.dadosAnteriores || log.dadosNovos" class="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                      <p class="text-slate-500 text-xs font-bold mb-1 uppercase tracking-wide">Diferença de SLA (Diff ISO)</p>
+                      <pre class="text-slate-800 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ formatSlaDiff(log.dadosAnteriores, log.dadosNovos) }}</pre>
                     </div>
                   </div>
                 </div>
@@ -2060,6 +2395,56 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
 }
+
+/* Variante do modal de manutencao: glassmorphism claro + largura expandida */
+.modal-panel--manutencao {
+  max-width: 48rem;
+  background: rgba(255, 255, 255, 0.80);
+  border: 1px solid rgba(203, 213, 225, 0.60);
+  border-radius: 1.5rem;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+.modal-panel--manutencao .modal-header {
+  border-bottom-color: rgba(226, 232, 240, 0.80);
+  background: transparent;
+}
+.modal-panel--manutencao .modal-title {
+  color: #0f172a;
+}
+.modal-panel--manutencao .modal-description {
+  color: #64748b;
+}
+.modal-panel--manutencao .modal-icon-wrap {
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+}
+.modal-panel--manutencao .modal-close {
+  border-color: #e2e8f0;
+  color: #94a3b8;
+}
+.modal-panel--manutencao .modal-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.modal-panel--manutencao .modal-footer {
+  border-top-color: #f1f5f9;
+  background: transparent;
+}
+.modal-panel--manutencao .form-label {
+  color: #334155;
+}
+.modal-panel--manutencao .form-input {
+  background: #ffffff;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+.modal-panel--manutencao .form-input:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
+}
+
 
 .modal-header {
   display: flex;

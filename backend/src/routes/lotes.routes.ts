@@ -167,7 +167,10 @@ router.post('/', lotesController.createLote);
  *       500:
  *         description: Erro interno do servidor
  */
+import { verificaToken } from '../middlewares/auth.middleware';
+
 router.put('/:id', lotesController.updateLote);
-router.put('/:id/manutencao', lotesController.updateManutencao);
+router.put('/:id/manutencao', verificaToken, lotesController.updateManutencao);
+router.get('/:id/auditoria', lotesController.getAuditoria);
 
 export default router;
