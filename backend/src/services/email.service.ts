@@ -24,7 +24,7 @@ const transporter = nodemailer.createTransport({
  */
 function generateChecklistHtml(
   testOrder: OrdemTeste | null,
-  checklist: Checklist,
+  _checklist: Checklist,
   labelSetor: string,
   checklistData: {
     setor: string;
@@ -42,67 +42,142 @@ function generateChecklistHtml(
     }[];
   }
 ): string {
-  const itemsRowsHtml = checklistData.itens.map((it) => `
-    <tr style="border-bottom: 1px solid #ddd;">
-      <td style="padding: 10px; text-align: left; font-size: 14px;">${labelSetor}</td>
-      <td style="padding: 10px; text-align: left; font-size: 14px;">${it.descricao}</td>
-      <td style="padding: 10px; text-align: center; font-size: 14px; font-weight: bold; color: ${it.conforme ? '#22c55e' : '#ef4444'};">${it.conforme ? 'Sim' : 'Nao'}</td>
-      <td style="padding: 10px; text-align: left; font-size: 14px;">${it.resposta || '-'}</td>
-      <td style="padding: 10px; text-align: left; font-size: 14px;">${it.observacao || '-'}</td>
+  const modeloNome = testOrder?.modelo?.nome || 'MODELO NÃO IDENTIFICADO';
+  const marcaNome = testOrder?.modelo?.marca?.nome || 'NIKE / DASS';
+  const codigoProduto = testOrder?.modelo?.codigoProduto || 'N/A';
+  const categoriaTemporada = testOrder?.modelo?.temporada || 'NSW CASUAL';
+  const codigoBarras = testOrder?.codigoBarras || 'N/A';
+  const dataRevisao = checklistData.dataPreenchimento 
+    ? new Date(checklistData.dataPreenchimento).toLocaleString('pt-BR') 
+    : new Date().toLocaleString('pt-BR');
+  
+  const hasPending = checklistData.status === ChecklistStatus.COM_PENDENCIAS || checklistData.itens.some(i => !i.conforme);
+
+  const pendingItemsList = checklistData.itens
+    .filter(i => !i.conforme)
+    .map(i => `<li style="margin-bottom: 4px;"><strong>${i.descricao}</strong>: ${i.observacao || i.resposta || 'Não Conforme'}</li>`)
+    .join('');
+
+  const itemsRowsHtml = checklistData.itens.map((it, idx) => `
+    <tr style="background-color: ${idx % 2 === 0 ? '#ffffff' : '#f8fafc'}; border-bottom: 1px solid #e2e8f0;">
+      <td style="padding: 10px 12px; font-weight: 600; font-size: 13px; color: #1e293b;">${it.descricao}</td>
+      <td style="padding: 10px 12px; text-align: center; font-weight: bold; font-size: 12px;">
+        <span style="display: inline-block; padding: 4px 10px; border-radius: 4px; color: #ffffff; background-color: ${it.conforme ? '#16a34a' : '#dc2626'};">
+          ${it.conforme ? 'OK (CONFORME)' : 'NÃO OK'}
+        </span>
+      </td>
+      <td style="padding: 10px 12px; font-size: 12px; color: #475569;">
+        ${it.observacao ? `<strong>Obs:</strong> ${it.observacao}` : (it.resposta || '-')}
+      </td>
     </tr>
   `).join('');
 
-  return `
-    <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Resumo do Checklist - Setor ${labelSetor}</title>
-      </head>
-      <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 20px; background-color: #f9f9f9;">
-        <div style="max-width: 600px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e0e0e0;">
-          <h2 style="color: #0b3c5d; border-bottom: 2px solid #0b3c5d; padding-bottom: 10px; margin-top: 0;">
-            Relatorio de Checklist - Chao de Fabrica
-          </h2>
-          
-          <div style="margin-bottom: 20px; background-color: #f2f4f7; padding: 15px; border-radius: 6px;">
-            <p style="margin: 5px 0; font-size: 14px;"><strong>Ordem de Teste:</strong> ${testOrder?.codigoBarras || 'N/A'}</p>
-            <p style="margin: 5px 0; font-size: 14px;"><strong>Modelo:</strong> ${testOrder?.modelo?.nome || 'N/A'} (${testOrder?.modelo?.codigoProduto || 'N/A'})</p>
-            <p style="margin: 5px 0; font-size: 14px;"><strong>Setor:</strong> ${labelSetor}</p>
-            <p style="margin: 5px 0; font-size: 14px;"><strong>Preenchido Por:</strong> ${checklistData.preenchidoPor}</p>
-            <p style="margin: 5px 0; font-size: 14px;"><strong>Data:</strong> ${checklistData.dataPreenchimento ? new Date(checklistData.dataPreenchimento).toLocaleString('pt-BR') : 'N/A'}</p>
-            <p style="margin: 5px 0; font-size: 14px;"><strong>Status Geral:</strong> <span style="font-weight: bold; color: ${checklistData.status === 'COM_PENDENCIAS' ? '#ef4444' : '#22c55e'};">${checklistData.status}</span></p>
-          </div>
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>REVISÃO DO PACOTE TÉCNICO DE QUALIDADE - ${modeloNome}</title>
+</head>
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1e293b; line-height: 1.5; margin: 0; padding: 24px; background-color: #f1f5f9;">
+  <div style="max-width: 680px; margin: 0 auto; background-color: #ffffff; padding: 24px; border-radius: 12px; border: 1px solid #cbd5e1; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+    
+    <!-- BLOCO 1: CABEÇALHO DE IDENTIFICAÇÃO -->
+    <div style="margin-bottom: 24px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px;">
+      <h2 style="margin: 0 0 14px 0; font-size: 15px; font-weight: bold; color: #0f172a; text-transform: uppercase; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px;">
+        1. PACOTE TÉCNICO & IDENTIFICAÇÃO DO MODELO
+      </h2>
+      <table style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 6px 10px; font-weight: bold; width: 35%; color: #475569;">MODELO:</td>
+          <td style="padding: 6px 10px; font-weight: bold; color: #0f172a;">${modeloNome}</td>
+        </tr>
+        <tr style="background-color: #ffffff;">
+          <td style="padding: 6px 10px; font-weight: bold; color: #475569;">MARCA / CÓD PRODUTO:</td>
+          <td style="padding: 6px 10px;">${marcaNome} — ${codigoProduto}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 10px; font-weight: bold; color: #475569;">CATEGORIA / TEMPORADA:</td>
+          <td style="padding: 6px 10px;">${categoriaTemporada}</td>
+        </tr>
+        <tr style="background-color: #ffffff;">
+          <td style="padding: 6px 10px; font-weight: bold; color: #475569;">CÓDIGO OP / BARRAS:</td>
+          <td style="padding: 6px 10px; font-weight: bold; color: #2563eb;">${codigoBarras}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 10px; font-weight: bold; color: #475569;">ETAPA / SETOR:</td>
+          <td style="padding: 6px 10px; font-weight: bold; color: #0f172a;">${labelSetor}</td>
+        </tr>
+        <tr style="background-color: #ffffff;">
+          <td style="padding: 6px 10px; font-weight: bold; color: #475569;">MODELISTA / RESPONSÁVEL:</td>
+          <td style="padding: 6px 10px;">${checklistData.preenchidoPor}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 10px; font-weight: bold; color: #475569;">DATA DE REVISÃO:</td>
+          <td style="padding: 6px 10px;">${dataRevisao}</td>
+        </tr>
+      </table>
+    </div>
 
-          <h3 style="color: #328cc1; margin-top: 25px; font-size: 16px;">Itens do Checklist</h3>
-          <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-            <thead>
-              <tr style="background-color: #0b3c5d; color: #fff;">
-                <th style="padding: 10px; text-align: left; font-size: 13px;">Setor</th>
-                <th style="padding: 10px; text-align: left; font-size: 13px;">Item / Requisito</th>
-                <th style="padding: 10px; text-align: center; font-size: 13px;">Conforme</th>
-                <th style="padding: 10px; text-align: left; font-size: 13px;">Resposta</th>
-                <th style="padding: 10px; text-align: left; font-size: 13px;">Observacao</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsRowsHtml}
-            </tbody>
-          </table>
+    <!-- BLOCO 2: PACOTE TÉCNICO DE CORTE / REVISÃO DE ITENS -->
+    <div style="margin-bottom: 24px;">
+      <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: bold; color: #0f172a; text-transform: uppercase; border-bottom: 2px solid #cbd5e1; padding-bottom: 6px;">
+        2. PACOTE TÉCNICO & PEÇAS DE REVISÃO (${labelSetor})
+      </h3>
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px; color: #334155;">
+        <thead>
+          <tr style="background-color: #0f172a; color: #ffffff; text-align: left;">
+            <th style="padding: 10px 12px; border: 1px solid #1e293b;">ITEM / REQUISITO TÉCNICO</th>
+            <th style="padding: 10px 12px; border: 1px solid #1e293b; text-align: center; width: 130px;">CONFORMIDADE</th>
+            <th style="padding: 10px 12px; border: 1px solid #1e293b;">OBSERVAÇÃO / RESPOSTA</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsRowsHtml || '<tr><td colspan="3" style="padding: 12px; text-align: center; color: #64748b;">Nenhum item individual marcado.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
 
-          ${checklist.observacoes ? `
-            <div style="margin-top: 20px; padding: 10px; border-left: 4px solid #328cc1; background-color: #f9f9f9; font-size: 14px;">
-              <p style="margin: 0;"><strong>Observacoes Gerais:</strong></p>
-              <p style="margin: 5px 0 0 0; font-style: italic;">${checklist.observacoes}</p>
-            </div>
-          ` : ''}
+    <!-- BLOCO 3: MATERIAIS SEPARADOS EM SEST PARA TESTES -->
+    <div style="margin-bottom: 24px; background-color: #f1f5f9; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 0 8px 8px 0;">
+      <h3 style="margin: 0 0 10px 0; font-size: 13px; font-weight: bold; color: #1e3a8a; text-transform: uppercase;">
+        3. MATERIAIS SEPARADOS EM SEST PARA TESTAR DUBLAGEM & COMPLETAR TESTE
+      </h3>
+      <ul style="margin: 0; padding-left: 18px; font-size: 12px; color: #334155; line-height: 1.8;">
+        <li>Cartela de Dublagem, Pé Aberto (MST), Ficha Técnica e Ficha de Peça conferidas.</li>
+        <li>Materiais recebidos e separados no setor para teste de fusão / dublagem conforme especificação do modelo.</li>
+        <li>Gabaritos conferidores e ferramentas de preparação verificadas para liberação da ordem.</li>
+      </ul>
+    </div>
 
-          <div style="margin-top: 30px; border-top: 1px solid #e0e0e0; padding-top: 15px; font-size: 12px; color: #777; text-align: center;">
-            Este e um e-mail automatico gerado pelo ERP Dass de Modelagem de Calcados.
-          </div>
+    <!-- BLOCO 4: PENDÊNCIAS / OBSERVAÇÕES IMPORTANTES -->
+    <div style="margin-bottom: 24px; background-color: ${hasPending ? '#fff1f2' : '#f0fdf4'}; border-left: 4px solid ${hasPending ? '#e11d48' : '#16a34a'}; padding: 16px; border-radius: 0 8px 8px 0;">
+      <h3 style="margin: 0 0 10px 0; font-size: 13px; font-weight: bold; color: ${hasPending ? '#9f1239' : '#14532d'}; text-transform: uppercase;">
+        4. PENDÊNCIAS / OBSERVAÇÕES IMPORTANTES
+      </h3>
+      <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: bold; color: ${hasPending ? '#be123c' : '#15803d'};">
+        STATUS DO CHECKLIST: ${hasPending ? 'COM PENDÊNCIAS (ATENÇÃO/BLOQUEANTE)' : 'PREENCHIDO COM SUCESSO (LIBERADO)'}
+      </p>
+      ${checklistData.observacoes ? `<p style="margin: 6px 0 0 0; font-size: 12px; color: #475569;"><strong>Observações Gerais do Operador:</strong> ${checklistData.observacoes}</p>` : ''}
+      ${pendingItemsList ? `
+        <div style="margin-top: 10px; font-size: 12px; color: #9f1239;">
+          <strong>Itens Registrados com Não Conformidade:</strong>
+          <ul style="margin: 4px 0 0 0; padding-left: 18px;">
+            ${pendingItemsList}
+          </ul>
         </div>
-      </body>
-    </html>
-  `;
+      ` : ''}
+    </div>
+
+    <!-- BLOCO 5: ASSINATURA CORPORATIVA E RODAPÉ -->
+    <div style="margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 18px; font-size: 12px; color: #64748b;">
+      <p style="margin: 0 0 4px 0; font-weight: bold; color: #0f172a; font-size: 13px;">Almoxarifado da Modelagem — Grupo Dass</p>
+      <p style="margin: 0 0 4px 0; color: #475569;">Pacote Técnico de Qualidade — Unidade Santo Estêvão</p>
+      <p style="margin: 8px 0 0 0; color: #94a3b8; font-size: 11px; font-style: italic;">Este é um e-mail corporativo gerado automaticamente pelo ERP Dass de Modelagem de Calçados. Não responda diretamente a esta mensagem.</p>
+    </div>
+
+  </div>
+</body>
+</html>`;
 }
 
 /**
@@ -139,10 +214,10 @@ export async function dispararEmailChecklist(
     });
     const labelSetor = currentSectorOpt?.label || checklist.setor.nome;
 
-    // 3. Busca a Ordem de Teste e o Modelo
+    // 3. Busca a Ordem de Teste, o Modelo e a Marca
     const testOrder = await AppDataSource.getRepository(OrdemTeste).findOne({
       where: { id: ordemTesteId },
-      relations: { modelo: true },
+      relations: { modelo: { marca: true } },
     });
 
     // 4. Formata dados dos itens
@@ -210,7 +285,7 @@ export async function dispararEmailChecklist(
     // 10. Envia o e-mail via SMTP
     try {
       await transporter.sendMail({
-        from: '"ERP Chao de Fabrica" <noreply@dass.com.br>',
+        from: '"ERP Chao de Fabrica" <noreply@grupodass.com.br>',
         to: uniqueEmails.join(','),
         subject: assunto,
         html: corpoHtml,

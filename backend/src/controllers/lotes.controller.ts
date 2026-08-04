@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
+import { Peca } from '../entities/Peca';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -10,24 +11,40 @@ const createLoteSchema = z.object({
   plantaId: z.string().uuid({ message: 'plantaId deve ser um UUID válido.' }),
   prioridadePcp: z.string().min(1, { message: 'prioridadePcp é obrigatória.' }),
   possuiCaixaTeste: z.boolean().optional().default(false),
-  observacoes: z.string().optional().nullable()
+  observacoes: z.string().optional().nullable(),
+  dataPrevistaProducao: z.string().optional().nullable(),
+  slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
 });
 
 const updateLoteSchema = z.object({
   status: z.nativeEnum(OrdemTesteStatus).optional(),
   liberadoProducao: z.boolean().optional(),
-  observacoes: z.string().optional().nullable()
+  observacoes: z.string().optional().nullable(),
+});
+
+const updateManutencaoSchema = z.object({
+  dataPrevistaProducao: z.string().optional().nullable(),
+  slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
+  pecas: z.array(z.object({
+    id: z.string().uuid(),
+    setorCorteOpcaoId: z.string()
+  })).optional()
 });
 
 export class LotesController {
   /**
-   * GET /api/lotes
+   * GET /api/lotes ou /api/ordens-teste
    * Lista todas as ordens de teste cadastradas no sistema.
    */
   public getLotes = async (_req: Request, res: Response): Promise<Response> => {
     try {
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const lotes = await loteRepo.find({
+        relations: {
+          modelo: { pecas: { setorCorteOpcao: true }, marca: true },
+          planta: true,
+          criadoPor: true
+        },
         order: { createdAt: 'DESC' }
       });
       return res.json(lotes);
@@ -38,7 +55,7 @@ export class LotesController {
   };
 
   /**
-   * GET /api/lotes/:id
+   * GET /api/lotes/:id ou /api/ordens-teste/:id
    * Retorna os detalhes de uma ordem de teste específica.
    */
   public getLoteById = async (req: Request, res: Response): Promise<Response> => {
@@ -46,7 +63,12 @@ export class LotesController {
       const id = req.params.id as string;
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const lote = await loteRepo.findOne({
-        where: { id }
+        where: { id },
+        relations: {
+          modelo: { pecas: { setorCorteOpcao: true }, marca: true },
+          planta: true,
+          criadoPor: true
+        }
       });
 
       if (!lote) {
@@ -64,7 +86,7 @@ export class LotesController {
   };
 
   /**
-   * POST /api/lotes
+   * POST /api/lotes ou /api/ordens-teste
    * Cria e persiste uma nova ordem de teste com código de barras dinâmico e status inicial padrão.
    */
   public createLote = async (req: Request, res: Response): Promise<Response> => {
@@ -76,7 +98,6 @@ export class LotesController {
         });
       }
 
-      // Validação Zod do payload
       const parseResult = createLoteSchema.safeParse(req.body);
       if (!parseResult.success) {
         return res.status(400).json({
@@ -86,12 +107,18 @@ export class LotesController {
         });
       }
 
-      const { modeloId, plantaId, prioridadePcp, possuiCaixaTeste, observacoes } = parseResult.data;
+      const {
+        modeloId,
+        plantaId,
+        prioridadePcp,
+        possuiCaixaTeste,
+        observacoes,
+        dataPrevistaProducao,
+        slasPorSetor
+      } = parseResult.data;
 
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
 
-      // ─── Trava de Segurança 1:1 ────────────────────────────────────────────
-      // Regra de negócio inegociável: cada modelo só pode ter UM teste de produção.
       const ordemExistente = await loteRepo.findOne({ where: { modeloId } });
       if (ordemExistente) {
         return res.status(400).json({
@@ -101,9 +128,7 @@ export class LotesController {
           codigoBarras: ordemExistente.codigoBarras,
         });
       }
-      // ───────────────────────────────────────────────────────────────────────
 
-      // ─── Trava de Rota Existente ───────────────────────────────────────────
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
       const countRotas = await rotaRepo.count({ where: { modeloId } });
       if (countRotas === 0) {
@@ -112,9 +137,7 @@ export class LotesController {
           code: 'ROTA_NOT_FOUND'
         });
       }
-      // ───────────────────────────────────────────────────────────────────────
 
-      // Cria a entidade da Ordem de Teste de forma dinâmica (Zero Hardcode)
       const lote = loteRepo.create({
         modeloId,
         plantaId,
@@ -125,7 +148,9 @@ export class LotesController {
         status: OrdemTesteStatus.AGUARDANDO_MATERIAL,
         liberadoProducao: false,
         possuiCaixaTeste,
-        observacoes: observacoes || null
+        observacoes: observacoes || null,
+        dataPrevistaProducao: dataPrevistaProducao ? new Date(dataPrevistaProducao) : null,
+        slasPorSetor: slasPorSetor || null,
       });
 
       const savedLote = await loteRepo.save(lote);
@@ -145,7 +170,7 @@ export class LotesController {
   };
 
   /**
-   * PUT /api/lotes/:id
+   * PUT /api/lotes/:id ou /api/ordens-teste/:id
    * Atualiza os dados ou status de uma ordem de teste.
    */
   public updateLote = async (req: Request, res: Response): Promise<Response> => {
@@ -173,7 +198,6 @@ export class LotesController {
         });
       }
 
-      // Atualiza apenas os campos enviados
       const { status, liberadoProducao, observacoes } = parseResult.data;
 
       if (status !== undefined) {
@@ -198,6 +222,76 @@ export class LotesController {
       return res.status(400).json({
         error: error.message || 'Erro ao atualizar ordem de teste.',
         code: 'LOTE_UPDATE_FAILED'
+      });
+    }
+  };
+
+  /**
+   * PUT /api/ordens-teste/:id/manutencao ou /api/lotes/:id/manutencao
+   * Atualiza datas de SLA e permite remanejamento de máquinas/peças.
+   */
+  public updateManutencao = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const id = req.params.id as string;
+      const parseResult = updateManutencaoSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({
+          error: 'Dados de manutenção inválidos.',
+          code: 'VALIDATION_ERROR',
+          details: parseResult.error.flatten().fieldErrors
+        });
+      }
+
+      const loteRepo = AppDataSource.getRepository(OrdemTeste);
+      const pecaRepo = AppDataSource.getRepository(Peca);
+
+      let lote = await loteRepo.findOne({
+        where: { id },
+        relations: { modelo: { pecas: true }, planta: true }
+      });
+
+      if (!lote) {
+        return res.status(404).json({
+          error: 'Ordem de teste não encontrada.',
+          code: 'LOTE_NOT_FOUND'
+        });
+      }
+
+      const { dataPrevistaProducao, slasPorSetor, pecas } = parseResult.data;
+
+      if (dataPrevistaProducao !== undefined) {
+        lote.dataPrevistaProducao = dataPrevistaProducao ? new Date(dataPrevistaProducao) : null;
+      }
+      if (slasPorSetor !== undefined) {
+        lote.slasPorSetor = slasPorSetor;
+      }
+
+      await loteRepo.save(lote);
+
+      // Remanejamento de Peças de Corte
+      if (pecas && pecas.length > 0) {
+        for (const p of pecas) {
+          if (p.id && p.setorCorteOpcaoId) {
+            await pecaRepo.update({ id: p.id }, { setorCorteOpcaoId: p.setorCorteOpcaoId });
+          }
+        }
+      }
+
+      const loteAtualizado = await loteRepo.findOne({
+        where: { id },
+        relations: { modelo: { pecas: true, marca: true }, planta: true, criadoPor: true }
+      });
+
+      return res.json({
+        message: 'Manutenção da Ordem realizada com sucesso.',
+        lote: loteAtualizado
+      });
+
+    } catch (error: any) {
+      console.error('[LotesController.updateManutencao] Erro:', error);
+      return res.status(500).json({
+        error: error.message || 'Erro ao realizar manutenção da ordem.',
+        code: 'MANUTENCAO_FAILED'
       });
     }
   };

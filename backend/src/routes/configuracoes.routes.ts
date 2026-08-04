@@ -37,6 +37,30 @@ const configuracoesController = new ConfiguracoesController();
 router.get('/', configuracoesController.getConfiguracoes);
 
 /**
+ * GET /api/config/opcoes/:categoria ou /api/configuracoes/opcoes/:categoria
+ * Retorna opções ativas filtradas pela categoria (ex: subsetor_corte)
+ */
+router.get('/opcoes/:categoria', async (req, res) => {
+  try {
+    const { AppDataSource } = await import('../config/database');
+    const { ConfigOpcao } = await import('../entities/ConfigOpcao');
+    const categoria = req.params.categoria;
+    const repo = AppDataSource.getRepository(ConfigOpcao);
+    const opcoes = await repo
+      .createQueryBuilder('o')
+      .innerJoin('o.categoria', 'c')
+      .where('c.slug = :categoria', { categoria })
+      .andWhere('o.ativo = true')
+      .orderBy('o.ordem', 'ASC')
+      .getMany();
+    return res.json(opcoes);
+  } catch (error) {
+    console.error('[ConfiguracoesRouter] Erro ao buscar opcoes por categoria:', error);
+    return res.status(500).json({ error: 'Erro ao buscar opções por categoria.' });
+  }
+});
+
+/**
  * @swagger
  * /api/configuracoes/{chave}:
  *   put:

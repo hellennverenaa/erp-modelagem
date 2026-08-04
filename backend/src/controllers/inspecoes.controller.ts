@@ -37,6 +37,70 @@ const createInspecaoSchema = z.object({
 
 export class InspecoesController {
   /**
+   * GET /api/inspecoes/pendentes
+   * Lista os rastreamentos ativos (status EM_PROCESSO) de setores pertencentes à Categoria B (Gate Obrigatório)
+   */
+  public getPendentes = async (_req: Request, res: Response): Promise<Response> => {
+    try {
+      const SETORES_EXCLUIDOS = [
+        'ALMOXARIFADO',
+        'NAVALHA',
+        'TELAS',
+        'CORTE RECEBIMENTO',
+        'CORTE SEPARAÇÃO',
+        'CORTE SEPARACAO',
+        'CORTE DUBLAGEM',
+        'RECEBIMENTO_CORTE',
+        'SEPARACAO_CORTE',
+        'DUBLAGEM_CORTE',
+      ];
+
+      const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+      const inspecaoRepo = AppDataSource.getRepository(Inspecao);
+
+      // Busca os rastreamentos cuja saída foi concluída pelo operador (dataSaida IS NOT NULL)
+      const qb = rastreamentoRepo.createQueryBuilder('r')
+        .leftJoinAndSelect('r.ordemTeste', 'ordemTeste')
+        .leftJoinAndSelect('ordemTeste.modelo', 'modelo')
+        .leftJoinAndSelect('r.setor', 'setor')
+        .leftJoinAndSelect('r.peca', 'peca')
+        .where('r.dataSaida IS NOT NULL')
+        .orderBy('r.dataSaida', 'DESC');
+
+      const rastreamentos = await qb.getMany();
+
+      // Busca inspeções efetuadas para excluir rastreamentos já inspecionados
+      const inspecoes = await inspecaoRepo.find({
+        select: { ordemTesteId: true, setorId: true, tipoLote: true }
+      });
+
+      const inspecoesSet = new Set(
+        inspecoes.map(i => `${i.ordemTesteId}_${i.setorId}_${i.tipoLote}`)
+      );
+
+      // Filtro estrito:
+      // 1. Exclui setores de Handoff Automático / Recebimento
+      // 2. Exclui rastreamentos que já possuem inspeção cadastrada
+      const pendentes = rastreamentos.filter((r) => {
+        const setorNome = (r.setor?.nome || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const isExcluido = SETORES_EXCLUIDOS.some((se) => {
+          const seNorm = se.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          return setorNome.includes(seNorm);
+        });
+        if (isExcluido) return false;
+
+        const chave = `${r.ordemTesteId}_${r.setorId}_${r.tipoLote}`;
+        return !inspecoesSet.has(chave);
+      });
+
+      return res.json(pendentes);
+    } catch (error: any) {
+      console.error('[InspecoesController] Erro ao buscar inspeções pendentes:', error);
+      return res.status(500).json({ error: 'Erro ao buscar inspeções pendentes.' });
+    }
+  };
+
+  /**
    * POST /api/inspecoes
    * Cria uma inspeção e, em caso de reprovação, abre a divergência/retrabalho sob transação ACID.
    */

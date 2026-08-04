@@ -21,12 +21,38 @@ import {
   Timer,
   ChevronRight,
   Info,
-  Printer
+  Printer,
+  Settings,
+  Calendar,
+  Clock,
+  Sliders,
+  Scissors
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
+interface PecaInfo {
+  id: string
+  nome: string
+  codigoBarras: string | null
+  descricao: string | null
+  setorCorteOpcaoId: string
+}
+
+interface MarcaInfo {
+  id: string
+  nome: string
+}
+
+interface Modelo {
+  id: string
+  nome: string
+  codigoProduto: string
+  pecas?: PecaInfo[]
+  marca?: MarcaInfo
+}
+
 interface OrdemTeste {
   id: string
   codigoBarras: string
@@ -37,14 +63,11 @@ interface OrdemTeste {
   liberadoProducao: boolean
   possuiCaixaTeste: boolean
   observacoes: string | null
+  dataPrevistaProducao?: string | null
+  slasPorSetor?: Record<string, number> | null
   createdAt: string
   updatedAt: string
-}
-
-interface Modelo {
-  id: string
-  nome: string
-  codigoProduto: string
+  modelo?: Modelo
 }
 
 interface Planta {
@@ -72,6 +95,12 @@ interface OperadorInfo {
   usuario: string
 }
 
+interface EstacaoInfo {
+  id?: string
+  nome?: string
+  codigo?: string
+}
+
 interface RastreamentoHistorico {
   id: string
   ordemTesteId: string
@@ -84,6 +113,7 @@ interface RastreamentoHistorico {
   setor: SetorInfo | null
   operadorEntrada: OperadorInfo | null
   operadorSaida: OperadorInfo | null
+  estacao?: EstacaoInfo | null
 }
 
 interface HistoricoResponse {
@@ -153,6 +183,395 @@ async function imprimirOrdem(ordem: OrdemTeste, tipoLote: 'CAIXA_TESTE' | 'LOTE_
   }
 }
 
+// ─── Gerador de Código de Barras SVG Code 128 (Zero Dependências) ────────────
+function generateCode128Svg(text: string): string {
+  const code128patterns: string[] = [
+    '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
+    '221312', '231212', '112232', '122132', '122231', '113222', '123122', '123221', '223211', '221132',
+    '221231', '213212', '223112', '312131', '311222', '321122', '321221', '312212', '322112', '322211',
+    '212123', '212321', '232121', '111323', '131123', '131321', '112313', '132113', '132311', '211313',
+    '231113', '231311', '112133', '112331', '132131', '113123', '113321', '133121', '313121', '211331',
+    '231131', '213113', '213311', '213131', '311123', '311321', '331121', '312113', '312311', '332111',
+    '314111', '221411', '431111', '111224', '111422', '121124', '121421', '141122', '141221', '112214',
+    '112412', '122114', '122411', '142112', '142411', '241211', '221114', '413111', '241112', '134111',
+    '111242', '121142', '121241', '114212', '124112', '124211', '411212', '421112', '421211', '212141',
+    '214121', '412121', '111143', '111341', '131141', '114113', '114311', '411113', '411311', '113141',
+    '114131', '311141', '411131', '611111', '123311', '123131', '116111'
+  ]
+  
+  let checksum = 104
+  let patternStr = code128patterns[104]
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i) - 32
+    if (code >= 0 && code <= 95) {
+      checksum += code * (i + 1)
+      patternStr += code128patterns[code]
+    }
+  }
+  checksum %= 103
+  patternStr += code128patterns[checksum]
+  patternStr += code128patterns[106]
+  
+  let x = 10
+  let rects = ''
+  for (let i = 0; i < patternStr.length; i++) {
+    const width = parseInt(patternStr[i], 10) * 2
+    if (i % 2 === 0) {
+      rects += `<rect x="${x}" y="4" width="${width}" height="42" fill="#000000" />`
+    }
+    x += width
+  }
+  
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x + 10}" height="62" viewBox="0 0 ${x + 10} 62" style="display: block; margin: 0 auto;"><rect width="100%" height="100%" fill="#ffffff"/>${rects}<text x="${(x + 10) / 2}" y="57" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle" fill="#000000">${text}</text></svg>`
+}
+
+// ─── Lógica de Impressão de Tickets Físicos de Corte (Agrupados por Máquina) ──
+const loadingTicketsId = ref<string | null>(null)
+const corteOpcoesMap = ref<Record<string, string>>({})
+
+async function fetchCorteOpcoesMap() {
+  if (Object.keys(corteOpcoesMap.value).length > 0) return
+  try {
+    let opcoes = []
+    try {
+      const res = await api.get('/config/opcoes/subsetor_corte')
+      opcoes = res.data || []
+    } catch {
+      const resFallback = await api.get('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
+      opcoes = resFallback.data || []
+    }
+    const map: Record<string, string> = {}
+    for (const opt of opcoes) {
+      map[opt.id] = opt.label || opt.valor
+    }
+    corteOpcoesMap.value = map
+  } catch (err) {
+    console.warn('[GestaoOrdensView] Não foi possível carregar opções de subsetor_corte:', err)
+  }
+}
+
+async function imprimirTicketsCorte(ordem: OrdemTeste) {
+  if (loadingTicketsId.value) return
+  loadingTicketsId.value = ordem.id
+
+  try {
+    await fetchCorteOpcoesMap()
+
+    const { data: ordemCompleta } = await api.get(`/lotes/${ordem.id}`)
+    
+    let pecas: PecaInfo[] = ordemCompleta.modelo?.pecas || ordem.modelo?.pecas || []
+    
+    if (pecas.length === 0 && (ordemCompleta.modeloId || ordem.modeloId)) {
+      try {
+        const targetModeloId = ordemCompleta.modeloId || ordem.modeloId
+        const { data: pecasRes } = await api.get(`/pecas/modelo/${targetModeloId}`)
+        pecas = pecasRes || []
+      } catch (errPecas) {
+        console.warn('[GestaoOrdensView] Falha ao carregar peças do modelo:', errPecas)
+      }
+    }
+
+    if (pecas.length === 0) {
+      addToast('error', 'Nenhuma peça cadastrada para este modelo.')
+      return
+    }
+
+    // 1. Agrupa peças por setorCorteOpcaoId (Máquina de Corte)
+    const agrupamento: Record<string, { machineName: string; pecas: PecaInfo[] }> = {}
+
+    for (const peca of pecas) {
+      const machineId = peca.setorCorteOpcaoId || 'OUTROS'
+      let machineName = corteOpcoesMap.value[machineId] || 'Corte — Geral'
+      
+      if (machineName.toLowerCase().startsWith('corte ')) {
+        machineName = machineName.replace(/^corte\s+/i, 'Corte — ')
+      } else if (!machineName.toLowerCase().includes('corte')) {
+        machineName = `Corte — ${machineName}`
+      }
+
+      if (!agrupamento[machineId]) {
+        agrupamento[machineId] = { machineName, pecas: [] }
+      }
+      agrupamento[machineId].pecas.push(peca)
+    }
+
+    const modeloNome = ordemCompleta.modelo?.nome || getModeloNome(ordem.modeloId)
+    const modeloRef = ordemCompleta.modelo?.codigoProduto || getModeloReferencia(ordem.modeloId)
+    const plantaNome = ordemCompleta.planta?.nome || 'Planta Padrão'
+    const codigoBarrasOP = ordemCompleta.codigoBarras || ordem.codigoBarras
+    const dataHoje = new Date().toLocaleDateString('pt-BR')
+
+    // 2. Fatiamento (Chunking) das peças por máquina para paginação física de etiquetas
+    const MAX_PECAS_POR_TICKET = 6
+
+    interface TicketCardData {
+      machineBadgeText: string
+      pecasChunk: PecaInfo[]
+    }
+
+    const ticketCardsData: TicketCardData[] = []
+
+    for (const grupo of Object.values(agrupamento)) {
+      const totalPecas = grupo.pecas.length
+      
+      if (totalPecas <= MAX_PECAS_POR_TICKET) {
+        ticketCardsData.push({
+          machineBadgeText: grupo.machineName,
+          pecasChunk: grupo.pecas
+        })
+      } else {
+        const totalPaginas = Math.ceil(totalPecas / MAX_PECAS_POR_TICKET)
+        for (let page = 0; page < totalPaginas; page++) {
+          const start = page * MAX_PECAS_POR_TICKET
+          const end = start + MAX_PECAS_POR_TICKET
+          const chunk = grupo.pecas.slice(start, end)
+
+          ticketCardsData.push({
+            machineBadgeText: `${grupo.machineName} (${page + 1}/${totalPaginas})`,
+            pecasChunk: chunk
+          })
+        }
+      }
+    }
+
+    // 3. Monta o HTML de cada Ticket Card a partir das etiquetas fatiadas
+    const ticketCardsHtml = ticketCardsData.map((card) => {
+      const barcodeSvg = generateCode128Svg(codigoBarrasOP)
+      const pecasListText = card.pecasChunk.map(p => p.nome).join(' • ')
+
+      return `
+        <div class="ticket-card">
+          <!-- LINHA DE CABEÇALHO DO CARD (NOME DO MODELO + BADGE DE MÁQUINA) -->
+          <div class="ticket-header-row">
+            <span class="model-title">${modeloNome}</span>
+            <span class="machine-badge">${card.machineBadgeText}</span>
+          </div>
+
+          <!-- SUB-CABEÇALHO COM CAIXA DE BORDA -->
+          <div class="sub-header-box">
+            <span>TESTE DE PRODUÇÃO</span>
+          </div>
+
+          <!-- CÓDIGO DE BARRAS CENTRALIZADO -->
+          <div class="barcode-container">
+            ${barcodeSvg}
+            <div class="barcode-text">${codigoBarrasOP}</div>
+          </div>
+
+          <!-- PEÇAS ATRIBUÍDAS EM LINHA COMPACTA -->
+          <div class="pieces-inline-section">
+            <span class="pieces-label">PEÇAS (${card.pecasChunk.length}):</span>
+            <span class="pieces-list">${pecasListText}</span>
+          </div>
+
+          <!-- RODAPÉ COMPACTO EM 3 COLUNAS -->
+          <div class="ticket-footer-row">
+            <span class="footer-left">${plantaNome}</span>
+            <span class="footer-center">REF: ${modeloRef} ${modeloNome}</span>
+            <span class="footer-right">${dataHoje}</span>
+          </div>
+        </div>
+      `
+    }).join('')
+
+    const fullPrintHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>TICKETS CORTE — ${codigoBarrasOP}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 5mm 6mm;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #000000;
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .tickets-grid {
+      display: grid;
+      grid-template-columns: 98mm 98mm;
+      grid-auto-rows: 53mm;
+      gap: 2mm 2mm;
+      width: 198mm;
+      margin: 0 auto;
+    }
+    .ticket-card {
+      width: 98mm;
+      max-width: 98mm;
+      height: 53mm;
+      max-height: 53mm;
+      box-sizing: border-box;
+      overflow: hidden;
+      border: 1px dashed #b0b0b0;
+      padding: 6px 10px;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .ticket-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2px;
+      width: 100%;
+    }
+    .model-title {
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      color: #000000;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 60%;
+    }
+    .machine-badge {
+      background: #000000;
+      color: #ffffff;
+      font-size: 8.5px;
+      font-weight: 900;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+    .sub-header-box {
+      border: 1.5px solid #000000;
+      text-align: center;
+      padding: 1.5px 0;
+      margin-bottom: 3px;
+      width: 100%;
+    }
+    .sub-header-box span {
+      font-size: 9px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #000000;
+    }
+    .barcode-container {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      max-width: 100%;
+      overflow: hidden;
+      margin: 2px 0;
+    }
+    .barcode-container svg {
+      max-width: 95%;
+      max-height: 34px;
+      height: auto;
+    }
+    .barcode-text {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 9.5px;
+      font-weight: 900;
+      letter-spacing: 1.2px;
+      margin-top: 2px;
+      color: #000000;
+    }
+    .pieces-inline-section {
+      font-size: 8px;
+      color: #333333;
+      margin: 1px 0;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      width: 100%;
+    }
+    .pieces-label {
+      font-weight: 900;
+      color: #000000;
+      margin-right: 4px;
+    }
+    .pieces-list {
+      font-weight: 600;
+      color: #222222;
+      text-transform: uppercase;
+    }
+    .ticket-footer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 7.5px;
+      color: #666666;
+      border-top: 1px solid #f0f0f0;
+      padding-top: 2px;
+      width: 100%;
+    }
+    .footer-left {
+      color: #666666;
+      white-space: nowrap;
+    }
+    .footer-center {
+      font-weight: 700;
+      color: #222222;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 50%;
+    }
+    .footer-right {
+      color: #666666;
+      white-space: nowrap;
+    }
+    @media print {
+      body {
+        padding: 0;
+        background: #ffffff;
+      }
+      .tickets-grid {
+        width: 198mm;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="tickets-grid">
+    ${ticketCardsHtml}
+  </div>
+</body>
+</html>`
+
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.open()
+      printWindow.document.write(fullPrintHtml)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => {
+        printWindow.print()
+      }, 400)
+    } else {
+      addToast('error', 'Bloqueador de pop-ups impediu a janela de impressão.')
+    }
+  } catch (err) {
+    console.error('[imprimirTicketsCorte] Erro ao gerar tickets de corte:', err)
+    addToast('error', 'Falha ao gerar tickets de corte.')
+  } finally {
+    loadingTicketsId.value = null
+  }
+}
+
 async function openTimeline(ordem: OrdemTeste) {
   timelineOrdem.value = ordem
   timelineData.value = []
@@ -203,12 +622,105 @@ function formatPermanencia(min: number | null) {
   return m > 0 ? `${h}h ${m}min` : `${h}h`
 }
 
+// ─── Modal de Manutenção e Remanejamento ─────────────────────────────────────
+const showManutencaoModal = ref(false)
+const manutencaoOrdem = ref<OrdemTeste | null>(null)
+const activeTabManutencao = ref<'geral' | 'pecas'>('geral')
+const loadingManutencao = ref(false)
+const formManutencao = ref({
+  dataPrevistaProducao: '',
+  slaDefaultMinutos: 120,
+  pecas: [] as Array<{ id: string; nome: string; setorCorteOpcaoId: string }>
+})
+const maquinasCorteManutencao = ref<Array<{ id: string; label: string; valor: string }>>([])
+
+async function abrirManutencao(ordem: OrdemTeste) {
+  manutencaoOrdem.value = ordem
+  activeTabManutencao.value = 'geral'
+
+  let dtStr = ''
+  if (ordem.dataPrevistaProducao) {
+    const d = new Date(ordem.dataPrevistaProducao)
+    dtStr = d.toISOString().slice(0, 16)
+  }
+
+  const defaultSla = ordem.slasPorSetor?.default || 120
+
+  let pecasList = ordem.modelo?.pecas || []
+  if (pecasList.length === 0 && ordem.modeloId) {
+    try {
+      const resMod = await api.get(`/admin/modelos/${ordem.modeloId}`)
+      const m = resMod.data.modelo || resMod.data
+      if (m && Array.isArray(m.pecas)) {
+        pecasList = m.pecas
+      }
+    } catch (err) {
+      console.warn('[abrirManutencao] Erro ao buscar peças dinâmicas:', err)
+    }
+  }
+
+  formManutencao.value = {
+    dataPrevistaProducao: dtStr,
+    slaDefaultMinutos: defaultSla,
+    pecas: pecasList.map(p => ({
+      id: p.id,
+      nome: p.nome,
+      setorCorteOpcaoId: (p as any).setorCorteOpcaoId || (p as any).setorCorteOpcao?.id || ''
+    }))
+  }
+
+  try {
+    const res = await api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
+      api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
+    )
+    maquinasCorteManutencao.value = (res.data || []).map((m: any) => ({
+      id: m.id,
+      label: m.label || m.valor,
+      valor: m.valor
+    }))
+  } catch (err) {
+    console.error('[abrirManutencao] Erro ao buscar máquinas de corte:', err)
+  }
+
+  showManutencaoModal.value = true
+}
+
+async function salvarManutencao() {
+  if (!manutencaoOrdem.value) return
+  loadingManutencao.value = true
+  try {
+    const response = await api.put(`/ordens-teste/${manutencaoOrdem.value.id}/manutencao`, {
+      dataPrevistaProducao: formManutencao.value.dataPrevistaProducao || null,
+      slasPorSetor: { default: Number(formManutencao.value.slaDefaultMinutos) },
+      pecas: formManutencao.value.pecas.map(p => ({
+        id: p.id,
+        setorCorteOpcaoId: p.setorCorteOpcaoId
+      }))
+    })
+
+    const loteAtualizado = response.data.lote || response.data
+    const idx = ordens.value.findIndex(o => o.id === loteAtualizado.id)
+    if (idx !== -1) {
+      ordens.value[idx] = { ...ordens.value[idx], ...loteAtualizado }
+    }
+
+    addToast('success', 'Manutenção da Ordem salva com sucesso!')
+    showManutencaoModal.value = false
+  } catch (err: any) {
+    console.error('[salvarManutencao] Erro:', err)
+    addToast('error', err.response?.data?.error || 'Erro ao salvar manutenção.')
+  } finally {
+    loadingManutencao.value = false
+  }
+}
+
 // ─── Formulário ──────────────────────────────────────────────────────────────
 const form = ref({
   modeloId: '',
   plantaId: '',
   prioridadePcp: '',
   observacoes: '',
+  possuiCaixaTeste: false,
 })
 const formErrors = ref<Record<string, string>>({})
 
@@ -324,6 +836,7 @@ async function handleCreateOrdem() {
       plantaId:      form.value.plantaId,
       prioridadePcp: form.value.prioridadePcp,
       observacoes:   form.value.observacoes || null,
+      possuiCaixaTeste: form.value.possuiCaixaTeste,
     })
     addToast('success', 'Ordem de teste criada com sucesso.')
     // Recarrega dropdown para remover o modelo que agora tem ordem ativa
@@ -353,7 +866,7 @@ async function handleCreateOrdem() {
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
 function openModal() {
-  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '' }
+  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '', possuiCaixaTeste: false }
   formErrors.value = {}
   showModal.value = true
 }
@@ -564,6 +1077,29 @@ onMounted(async () => {
                     <Activity :size="14" aria-hidden="true" />
                     <span>Rastrear Dual</span>
                   </button>
+                  <button
+                    type="button"
+                    class="btn-action-timeline"
+                    style="background: #f1f5f9; color: #334155; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
+                    @click="abrirManutencao(ordem)"
+                    title="Manutenção da Ordem (SLAs e Remanejamento)"
+                  >
+                    <Settings :size="14" aria-hidden="true" />
+                    <span>Manutenção</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-action-print"
+                    style="background: #f8fafc; color: #0f172a; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
+                    @click="imprimirTicketsCorte(ordem)"
+                    :disabled="loadingTicketsId === ordem.id"
+                    :aria-label="`Imprimir tickets físicos de corte da ordem ${ordem.codigoBarras}`"
+                    title="Imprimir Tickets Físicos de Corte (Baixa por Máquina)"
+                  >
+                    <Loader2 v-if="loadingTicketsId === ordem.id" :size="14" class="spin-anim" aria-hidden="true" />
+                    <Printer v-else :size="14" aria-hidden="true" />
+                    <span>{{ loadingTicketsId === ordem.id ? 'Gerando...' : 'Tickets Corte' }}</span>
+                  </button>
                   <template v-if="ordem.possuiCaixaTeste">
                     <button
                       type="button"
@@ -731,6 +1267,24 @@ onMounted(async () => {
                 </span>
               </div>
 
+              <!-- Possui Caixa Teste -->
+              <div class="form-field toggle-field" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 16px;">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <label for="chk-caixa-teste" style="font-weight: 600; color: #1e293b; font-size: 0.875rem; margin: 0; cursor: pointer;">
+                    Bifurcação de Fluxo (Caixa Teste)
+                  </label>
+                  <span style="font-size: 0.75rem; color: #64748b;">
+                    Gera lote principal e caixa de teste separados.
+                  </span>
+                </div>
+                <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                  <input type="checkbox" id="chk-caixa-teste" v-model="form.possuiCaixaTeste" style="opacity: 0; width: 0; height: 0;">
+                  <span class="slider round" :style="{ backgroundColor: form.possuiCaixaTeste ? '#0284c7' : '#cbd5e1', position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, transition: '.4s', borderRadius: '34px' }">
+                    <span style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: '.4s', borderRadius: '50%'" :style="form.possuiCaixaTeste ? 'transform: translateX(20px);' : ''"></span>
+                  </span>
+                </label>
+              </div>
+
               <!-- Observações (opcional) -->
               <div class="form-field">
                 <label for="txt-observacoes" class="form-label">Observações <span class="optional-tag">opcional</span></label>
@@ -877,6 +1431,13 @@ onMounted(async () => {
                       {{ item.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste' : 'Lote Principal' }}
                     </div>
 
+                    <!-- Máquina / Estação Utilizada -->
+                    <div v-if="item.estacao" class="tl-maquina-tag">
+                      <Cpu :size="12" class="tl-maquina-icon" aria-hidden="true" />
+                      <span class="tl-maquina-label">Máquina:</span>
+                      <span class="tl-maquina-val font-semibold">{{ item.estacao.codigo || item.estacao.nome }}</span>
+                    </div>
+
                     <!-- Datas -->
                     <div class="tl-dates">
                       <div class="tl-date-row">
@@ -891,22 +1452,27 @@ onMounted(async () => {
                       </div>
                     </div>
 
-                    <!-- Tempo de permanência -->
+                    <!-- Tempo de permanência em Tempo Real -->
                     <div v-if="formatPermanencia(item.tempoPermanenciaMin)" class="tl-permanencia">
                       <Timer :size="12" class="tl-perm-icon" aria-hidden="true" />
-                      <span class="tl-perm-label">Permanência:</span>
-                      <span class="tl-perm-val">{{ formatPermanencia(item.tempoPermanenciaMin) }}</span>
+                      <span class="tl-perm-label">Permanência Real:</span>
+                      <span class="tl-perm-val font-bold text-indigo-700">{{ formatPermanencia(item.tempoPermanenciaMin) }}</span>
                     </div>
 
-                    <!-- Operadores -->
+                    <!-- Operadores (Modo Quiosque / Crachá) -->
                     <div v-if="item.operadorEntrada || item.operadorSaida" class="tl-operadores">
-                      <div v-if="item.operadorEntrada" class="tl-op">
-                        <span class="tl-op-tag">Entrada</span>
-                        <span class="tl-op-nome">{{ item.operadorEntrada.nomeCompleto }}</span>
+                      <div class="tl-op-header">
+                        <User :size="12" class="tl-op-icon" aria-hidden="true" />
+                        <span class="tl-op-title font-semibold">Operadores (Crachá):</span>
                       </div>
-                      <div v-if="item.operadorSaida" class="tl-op">
-                        <span class="tl-op-tag">Saída</span>
-                        <span class="tl-op-nome">{{ item.operadorSaida.nomeCompleto }}</span>
+                      <div class="tl-op-list">
+                        <span v-if="item.operadorEntrada">
+                          <span class="tl-op-tag">Entrada:</span> {{ item.operadorEntrada.nomeCompleto }}
+                        </span>
+                        <span v-if="item.operadorEntrada && item.operadorSaida" class="tl-op-sep">|</span>
+                        <span v-if="item.operadorSaida">
+                          <span class="tl-op-tag">Saída:</span> {{ item.operadorSaida.nomeCompleto }}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -932,6 +1498,162 @@ onMounted(async () => {
             </div>
 
           </aside>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL — MANUTENÇÃO DA ORDEM & REMANEJAMENTO DE PEÇAS
+    ══════════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="showManutencaoModal"
+          class="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title-manutencao"
+          @click.self="showManutencaoModal = false"
+        >
+          <div class="modal-panel max-w-xl">
+            <div class="modal-header">
+              <div class="modal-header-left">
+                <div class="modal-icon-wrap" aria-hidden="true">
+                  <Settings :size="20" class="text-indigo-600" />
+                </div>
+                <div>
+                  <h2 id="modal-title-manutencao" class="modal-title">Manutenção da Ordem {{ manutencaoOrdem?.codigoBarras }}</h2>
+                  <p class="modal-description">Edite prazos, metas de tempo (SLA) ou altere a máquina de peças técnicas.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="modal-close"
+                aria-label="Fechar modal"
+                @click="showManutencaoModal = false"
+              >
+                <X :size="18" aria-hidden="true" />
+              </button>
+            </div>
+
+            <!-- Abas do Modal -->
+            <div class="flex items-center gap-2 px-6 pt-3 border-b border-slate-200 bg-slate-50">
+              <button
+                type="button"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
+                :class="activeTabManutencao === 'geral' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                @click="activeTabManutencao = 'geral'"
+              >
+                <div class="flex items-center gap-1.5">
+                  <Sliders :size="14" />
+                  <span>1. Prazos e SLAs</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                class="px-4 py-2 text-xs font-bold rounded-t-lg transition border-b-2"
+                :class="activeTabManutencao === 'pecas' ? 'border-indigo-600 text-indigo-600 bg-white shadow-xs' : 'border-transparent text-slate-500 hover:text-slate-700'"
+                @click="activeTabManutencao = 'pecas'"
+              >
+                <div class="flex items-center gap-1.5">
+                  <Scissors :size="14" />
+                  <span>2. Remanejamento de Peças ({{ formManutencao.pecas.length }})</span>
+                </div>
+              </button>
+            </div>
+
+            <div class="modal-body p-6 space-y-4">
+              <!-- ABA 1: Prazos e SLAs -->
+              <div v-if="activeTabManutencao === 'geral'" class="space-y-4">
+                <div class="form-group">
+                  <label for="manut-data-prevista" class="form-label flex items-center gap-1">
+                    <Calendar :size="13" class="text-slate-500" />
+                    <span>Data Prevista de Início na Produção</span>
+                  </label>
+                  <input
+                    id="manut-data-prevista"
+                    type="datetime-local"
+                    v-model="formManutencao.dataPrevistaProducao"
+                    class="form-input"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="manut-sla-minutos" class="form-label flex items-center gap-1">
+                    <Clock :size="13" class="text-slate-500" />
+                    <span>SLA Padrão por Setor (Minutos)</span>
+                  </label>
+                  <input
+                    id="manut-sla-minutos"
+                    type="number"
+                    min="5"
+                    step="5"
+                    v-model.number="formManutencao.slaDefaultMinutos"
+                    placeholder="Ex: 120"
+                    class="form-input"
+                  />
+                </div>
+              </div>
+
+              <!-- ABA 2: Remanejamento de Peças -->
+              <div v-else-if="activeTabManutencao === 'pecas'" class="space-y-3">
+                <p class="text-xs text-slate-500">
+                  Altere a máquina de destino de cada peça técnica do corte automático:
+                </p>
+
+                <div v-if="formManutencao.pecas.length === 0" class="p-4 text-center bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-xs">
+                  Este modelo não possui peças cadastradas para remanejamento.
+                </div>
+
+                <div v-else class="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                  <div
+                    v-for="p in formManutencao.pecas"
+                    :key="p.id"
+                    class="p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div class="text-xs font-bold text-slate-800">
+                      {{ p.nome }}
+                    </div>
+                    <div class="sm:w-64">
+                      <select
+                        v-model="p.setorCorteOpcaoId"
+                        class="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md font-medium text-slate-800"
+                      >
+                        <option value="">Selecione a máquina...</option>
+                        <option
+                          v-for="m in maquinasCorteManutencao"
+                          :key="m.id"
+                          :value="m.id"
+                        >
+                          {{ m.label }}
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-footer">
+              <button
+                type="button"
+                class="btn-outline"
+                @click="showManutencaoModal = false"
+                :disabled="loadingManutencao"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                class="btn-primary"
+                @click="salvarManutencao"
+                :disabled="loadingManutencao"
+              >
+                <Loader2 v-if="loadingManutencao" :size="14" class="animate-spin" />
+                <span>{{ loadingManutencao ? 'Salvando...' : 'Salvar Manutenção' }}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </Transition>
     </Teleport>
@@ -1793,19 +2515,29 @@ onMounted(async () => {
 .tl-perm-label { font-weight: 600; color: #64748b; }
 .tl-perm-val   { font-weight: 800; color: #1d4ed8; }
 
-.tl-operadores { display: flex; flex-direction: column; gap: 0.25rem; border-top: 1px solid #f1f5f9; padding-top: 0.5rem; }
-.tl-op { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; }
-.tl-op-tag {
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: #64748b;
-  background: #f1f5f9;
-  padding: 0.05rem 0.35rem;
-  border-radius: 0.2rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
+.tl-maquina-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: #4338ca;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
 }
+.tl-maquina-icon { color: #6366f1; flex-shrink: 0; }
+.tl-maquina-label { font-weight: 600; color: #3730a3; }
+.tl-maquina-val { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: #312e81; }
+
+.tl-operadores { display: flex; flex-direction: column; gap: 0.375rem; border-top: 1px solid #f1f5f9; padding-top: 0.5rem; background: #f8fafc; border-radius: 0.375rem; padding: 0.5rem 0.625rem; }
+.tl-op-header { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; color: #334155; }
+.tl-op-icon { color: #64748b; flex-shrink: 0; }
+.tl-op-title { font-weight: 700; color: #1e293b; }
+.tl-op-list { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: #475569; flex-wrap: wrap; }
+.tl-op-tag { font-weight: 700; color: #334155; }
+.tl-op-sep { color: #cbd5e1; }
+.tl-op { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; }
 .tl-op-nome { color: #334155; font-weight: 500; }
 
 .tl-footer {

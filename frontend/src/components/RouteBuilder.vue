@@ -24,34 +24,79 @@ import {
   Trash2,
   AlertTriangle,
   RotateCcw,
-  Loader2
+  Loader2,
+  Clock
 } from '@lucide/vue'
 import api from '../api/axios'
 
 const props = defineProps<{
   modeloId?: string
   isWizardMode?: boolean
+  autoEnableMaquinas?: {
+    cn?: boolean
+    couro?: boolean
+    laser?: boolean
+  }
 }>()
 
 const emit = defineEmits<{
-  (e: 'rota-salva'): void
+  (e: 'rota-salva', slasPorSetor?: Record<string, number>): void
 }>()
 
-const MAP_SETORES_REAL: Record<string, string> = {
-  'conferencia-inicial': 'ecb2d21d-51db-41a7-8261-17e8a5f03fed',
-  'corte-automatico': '9ab65b01-cc61-4ab7-9ede-50ac10aed941',
-  'apoio': 'c6a2909a-1d09-48e0-8949-aaa5a99e854c',
-  'costura': '682ba50a-0f31-4ed9-aa5f-d2565c04f2f8',
-  'montagem': '368c6f80-0e87-40b1-8e08-dc8b811da29b',
-  'laboratorio': '566aae2e-7645-411a-9542-3554bfd33f25',
-  'serigrafia': 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8',
-  'bordado': 'e80c2b61-6b00-4657-9b1a-2b51688fce01',
-  'costura-programada': 'b30cfd86-c496-476b-90b9-49db72a3a736',
-  'pre-fabricado': 'fd774810-8f85-4fcb-bffe-3b70d323f798',
-  'vulcanizado': '2e2475db-56a3-4673-91a9-dbb0b42fa57b',
-  'corte-cn': '1ee99690-f3b5-4c07-b644-197488e84d1b',
-  'corte-couro': 'c85a4c3c-0018-4a24-8a64-d030a5e69e2f',
-  'corte-laser': 'c980a1bf-7979-4d67-b426-2c5246890f98',
+const MAP_BLOCK_TO_NOME: Record<string, string> = {
+  'apoio': 'Apoio',
+  'costura': 'Costura',
+  'montagem': 'Montagem',
+  'laboratorio': 'Laboratório',
+  'serigrafia': 'Serigrafia',
+  'bordado': 'Bordado',
+  'costura-programada': 'Costura Programada',
+  'pre-fabricado': 'Pré-Fabricado',
+  'vulcanizado': 'Vulcanizado',
+  'corte-cn': 'Corte CN',
+  'corte-couro': 'Corte Couro',
+  'corte-laser': 'Corte Laser',
+}
+
+const setoresData = ref<any[]>([])
+
+async function carregarSetores() {
+  try {
+    const res = await api.get('/admin/setores')
+    setoresData.value = res.data || []
+  } catch (err) {
+    console.error('[RouteBuilder] Erro ao carregar setores:', err)
+  }
+}
+
+function getId(nome: string): string {
+  const s = setoresData.value.find(s => s.nome.trim().toLowerCase() === nome.trim().toLowerCase())
+  if (!s) console.warn(`[RouteBuilder] Setor '${nome}' não encontrado no BD.`)
+  return s ? s.id : ''
+}
+
+// ─── SLA por Setor ────────────────────────────────────────────────────────
+const sectorSlaMap = ref<Record<string, number>>({})
+
+function getSetorIdForBlock(block: any): string {
+  if (!block) return ''
+  if (typeof block === 'string') return getId(block)
+  if (block.id && MAP_BLOCK_TO_NOME[block.id]) {
+    return getId(MAP_BLOCK_TO_NOME[block.id])
+  }
+  return getId(block.label || block.id)
+}
+
+function getSlaForBlock(block: any): number {
+  const sId = getSetorIdForBlock(block)
+  return sectorSlaMap.value[sId] ?? 120
+}
+
+function setSlaForBlock(block: any, value: number) {
+  const sId = getSetorIdForBlock(block)
+  if (sId) {
+    sectorSlaMap.value[sId] = Number(value) || 120
+  }
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -346,268 +391,107 @@ async function salvarRota() {
 
   // 1. Conferência Inicial (Almoxarifado, Navalha, Telas) em paralelo
   const confOrdem = currentOrdem
-  rotaSalvar.push({
-    setorId: 'ecb2d21d-51db-41a7-8261-17e8a5f03fed', // Almoxarifado
-    ordem: confOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'PARALELO',
-    bipagemApenasSaida: false
-  })
-  rotaSalvar.push({
-    setorId: 'd40e4883-4f99-45cf-9c5c-c9da2ff53c26', // Navalha
-    ordem: confOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'PARALELO',
-    bipagemApenasSaida: false
-  })
-  rotaSalvar.push({
-    setorId: '8686f071-1a7c-4df5-861b-e3316d4ec01c', // Telas
-    ordem: confOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'PARALELO',
-    bipagemApenasSaida: false
-  })
+  rotaSalvar.push({ setorId: getId('Almoxarifado da Modelagem'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  rotaSalvar.push({ setorId: getId('Navalha'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  rotaSalvar.push({ setorId: getId('Telas'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   currentOrdem++
 
   // 2. Corte Automático (Corte Recebimento, Corte Separação, Corte Dublagem)
-  rotaSalvar.push({
-    setorId: '9ab65b01-cc61-4ab7-9ede-50ac10aed941', // Corte Recebimento
-    ordem: currentOrdem++,
-    obrigatorio: true,
-    tipoExecucao: 'SEQUENCIAL',
-    bipagemApenasSaida: false
-  })
-  rotaSalvar.push({
-    setorId: 'add9f0c2-02d6-4aba-ac97-cc5c4d038bd9', // Corte Separação
-    ordem: currentOrdem++,
-    obrigatorio: true,
-    tipoExecucao: 'SEQUENCIAL',
-    bipagemApenasSaida: false
-  })
-  rotaSalvar.push({
-    setorId: '02474f80-6dd0-4190-8019-67b8d33af26e', // Corte Dublagem
-    ordem: currentOrdem++,
-    obrigatorio: true,
-    tipoExecucao: 'SEQUENCIAL',
-    bipagemApenasSaida: false
-  })
+  rotaSalvar.push({ setorId: getId('Corte Recebimento'), ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
+  rotaSalvar.push({ setorId: getId('Corte Separação'), ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
+  rotaSalvar.push({ setorId: getId('Corte Dublagem'), ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   
   // Subsetores Corte (Ponte, Lectra, Atom fixos, CN, Couro e Laser opcionais)
   const subsetoresOrdem = currentOrdem
-  rotaSalvar.push({
-    setorId: '2fa35a1d-1509-454c-9c77-9afda28a47dd', // Corte Ponte
-    ordem: subsetoresOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'PARALELO',
-    bipagemApenasSaida: false
-  })
-  rotaSalvar.push({
-    setorId: '397ea00b-c4bd-465d-bd47-66e17d5e2a07', // Corte Lectra
-    ordem: subsetoresOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'PARALELO',
-    bipagemApenasSaida: false
-  })
-  rotaSalvar.push({
-    setorId: 'c729d21b-cc5c-4492-a130-a7d4a3cb04ee', // Corte Atom
-    ordem: subsetoresOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'PARALELO',
-    bipagemApenasSaida: false
-  })
+  rotaSalvar.push({ setorId: getId('Corte Ponte'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  rotaSalvar.push({ setorId: getId('Corte Lectra'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  rotaSalvar.push({ setorId: getId('Corte Atom'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
 
-  // CN, Couro e Laser dinâmicos baseados no modelista
-  if (toggleCorteCN.value) {
-    rotaSalvar.push({
-      setorId: '1ee99690-f3b5-4c07-b644-197488e84d1b', // Corte CN
-      ordem: subsetoresOrdem,
-      obrigatorio: true,
-      tipoExecucao: 'PARALELO',
-      bipagemApenasSaida: false
-    })
-  }
-  if (toggleCorteCouro.value) {
-    rotaSalvar.push({
-      setorId: 'c85a4c3c-0018-4a24-8a64-d030a5e69e2f', // Corte Couro
-      ordem: subsetoresOrdem,
-      obrigatorio: true,
-      tipoExecucao: 'PARALELO',
-      bipagemApenasSaida: false
-    })
-  }
-  if (toggleCorteLaser.value) {
-    rotaSalvar.push({
-      setorId: 'c980a1bf-7979-4d67-b426-2c5246890f98', // Corte Laser
-      ordem: subsetoresOrdem,
-      obrigatorio: true,
-      tipoExecucao: 'PARALELO',
-      bipagemApenasSaida: false
-    })
-  }
+  if (toggleCorteCN.value)    rotaSalvar.push({ setorId: getId('Corte CN'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (toggleCorteCouro.value) rotaSalvar.push({ setorId: getId('Corte Couro'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (toggleCorteLaser.value) rotaSalvar.push({ setorId: getId('Corte Laser'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   currentOrdem++
 
   // 3. Serigrafia
   if (toggleSerigrafia.value) {
-    rotaSalvar.push({
-      setorId: 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8',
-      ordem: currentOrdem++,
-      obrigatorio: false,
-      tipoExecucao: 'SEQUENCIAL',
-      bipagemApenasSaida: false
-    })
+    rotaSalvar.push({ setorId: getId('Serigrafia'), ordem: currentOrdem++, obrigatorio: false, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   }
 
   // 4. Antes do Apoio
   for (const block of zoneAntesApoio.value) {
-    const sId = MAP_SETORES_REAL[block.id]
-    if (sId) {
-      rotaSalvar.push({
-        setorId: sId,
-        ordem: currentOrdem++,
-        obrigatorio: true,
-        tipoExecucao: 'SEQUENCIAL',
-        bipagemApenasSaida: false
-      })
-    }
+    const sId = getId(MAP_BLOCK_TO_NOME[block.id])
+    if (sId) rotaSalvar.push({ setorId: sId, ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   }
 
   // 5. Apoio
   const apoioOrdem = currentOrdem
-  rotaSalvar.push({
-    setorId: 'c6a2909a-1d09-48e0-8949-aaa5a99e854c', // Apoio
-    ordem: apoioOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'SEQUENCIAL',
-    bipagemApenasSaida: true
-  })
+  rotaSalvar.push({ setorId: getId('Apoio'), ordem: apoioOrdem, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: true })
   for (const block of zoneJuntoApoio.value) {
-    const sId = MAP_SETORES_REAL[block.id]
-    if (sId) {
-      rotaSalvar.push({
-        setorId: sId,
-        ordem: apoioOrdem,
-        obrigatorio: true,
-        tipoExecucao: 'PARALELO',
-        bipagemApenasSaida: false
-      })
-    }
+    const sId = getId(MAP_BLOCK_TO_NOME[block.id])
+    if (sId) rotaSalvar.push({ setorId: sId, ordem: apoioOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   }
   currentOrdem++
 
   // 6. Entre Apoio e Costura
   for (const block of zoneEntreApoioCostura.value) {
-    const sId = MAP_SETORES_REAL[block.id]
-    if (sId) {
-      rotaSalvar.push({
-        setorId: sId,
-        ordem: currentOrdem++,
-        obrigatorio: true,
-        tipoExecucao: 'SEQUENCIAL',
-        bipagemApenasSaida: false
-      })
-    }
+    const sId = getId(MAP_BLOCK_TO_NOME[block.id])
+    if (sId) rotaSalvar.push({ setorId: sId, ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   }
 
   // 7. Costura
   const costuraOrdem = currentOrdem
-  rotaSalvar.push({
-    setorId: '682ba50a-0f31-4ed9-aa5f-d2565c04f2f8', // Costura
-    ordem: costuraOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'SEQUENCIAL',
-    bipagemApenasSaida: false
-  })
+  rotaSalvar.push({ setorId: getId('Costura'), ordem: costuraOrdem, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   for (const block of zoneJuntoCostura.value) {
-    const sId = MAP_SETORES_REAL[block.id]
-    if (sId) {
-      rotaSalvar.push({
-        setorId: sId,
-        ordem: costuraOrdem,
-        obrigatorio: true,
-        tipoExecucao: 'PARALELO',
-        bipagemApenasSaida: false
-      })
-    }
+    const sId = getId(MAP_BLOCK_TO_NOME[block.id])
+    if (sId) rotaSalvar.push({ setorId: sId, ordem: costuraOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   }
   currentOrdem++
 
   // 8. Entre Costura e Montagem
   for (const block of zoneEntreCosturaMontagem.value) {
-    const sId = MAP_SETORES_REAL[block.id]
-    if (sId) {
-      rotaSalvar.push({
-        setorId: sId,
-        ordem: currentOrdem++,
-        obrigatorio: true,
-        tipoExecucao: 'SEQUENCIAL',
-        bipagemApenasSaida: false
-      })
-    }
+    const sId = getId(MAP_BLOCK_TO_NOME[block.id])
+    if (sId) rotaSalvar.push({ setorId: sId, ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   }
 
   // 9. Montagem
   const montagemOrdem = currentOrdem
-  rotaSalvar.push({
-    setorId: '368c6f80-0e87-40b1-8e08-dc8b811da29b', // Montagem
-    ordem: montagemOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'SEQUENCIAL',
-    bipagemApenasSaida: false
-  })
+  rotaSalvar.push({ setorId: getId('Montagem'), ordem: montagemOrdem, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   for (const block of zoneJuntoMontagem.value) {
-    const sId = MAP_SETORES_REAL[block.id]
-    if (sId) {
-      rotaSalvar.push({
-        setorId: sId,
-        ordem: montagemOrdem,
-        obrigatorio: true,
-        tipoExecucao: 'PARALELO',
-        bipagemApenasSaida: false
-      })
-    }
+    const sId = getId(MAP_BLOCK_TO_NOME[block.id])
+    if (sId) rotaSalvar.push({ setorId: sId, ordem: montagemOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   }
   if (toggleVulcanizado.value) {
-    rotaSalvar.push({
-      setorId: '2e2475db-56a3-4673-91a9-dbb0b42fa57b', // Vulcanizado
-      ordem: montagemOrdem,
-      obrigatorio: false,
-      tipoExecucao: 'PARALELO',
-      bipagemApenasSaida: false
-    })
+    rotaSalvar.push({ setorId: getId('Vulcanizado'), ordem: montagemOrdem, obrigatorio: false, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   }
   currentOrdem++
 
   // 10. Após a Montagem
   for (const block of zonePosMontagem.value) {
-    const sId = MAP_SETORES_REAL[block.id]
-    if (sId) {
-      rotaSalvar.push({
-        setorId: sId,
-        ordem: currentOrdem++,
-        obrigatorio: true,
-        tipoExecucao: 'SEQUENCIAL',
-        bipagemApenasSaida: false
-      })
-    }
+    const sId = getId(MAP_BLOCK_TO_NOME[block.id])
+    if (sId) rotaSalvar.push({ setorId: sId, ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   }
 
   // 11. Laboratório
-  rotaSalvar.push({
-    setorId: '566aae2e-7645-411a-9542-3554bfd33f25', // Laboratório
-    ordem: currentOrdem,
-    obrigatorio: true,
-    tipoExecucao: 'SEQUENCIAL',
-    bipagemApenasSaida: false
-  })
+  rotaSalvar.push({ setorId: getId('Laboratório'), ordem: currentOrdem, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
+
+  const rotaFiltrada = rotaSalvar.filter(r => r.setorId !== '')
+
+  const slasPorSetor: Record<string, number> = {}
+  for (const r of rotaFiltrada) {
+    if (r.setorId) {
+      slasPorSetor[r.setorId] = sectorSlaMap.value[r.setorId] ?? 120
+    }
+  }
 
   try {
     const response = await api.put(`/rotas/${modelId}`, {
-      rota: rotaSalvar
+      rota: rotaFiltrada,
+      slasPorSetor
     })
     if (response.status === 200) {
       showToast('Rota de produção salva com sucesso.', 'success')
       saveSuccess.value = true
-      emit('rota-salva')
+      emit('rota-salva', slasPorSetor)
       setTimeout(() => { saveSuccess.value = false }, 3000)
     } else {
       showToast('Falha ao salvar a rota de produção.', 'error')
@@ -668,31 +552,33 @@ async function carregarRotaDoModelo(modeloId: string) {
     if (rotaData.length === 0) return // Não tem rota, usa inicial
 
     // Encontra ordens de referência para os flutuantes
-    const apoioItem = rotaData.find((r: any) => r.setorId === 'c6a2909a-1d09-48e0-8949-aaa5a99e854c')
-    const costuraItem = rotaData.find((r: any) => r.setorId === '682ba50a-0f31-4ed9-aa5f-d2565c04f2f8')
-    const montagemItem = rotaData.find((r: any) => r.setorId === '368c6f80-0e87-40b1-8e08-dc8b811da29b')
+    const apoioItem = rotaData.find((r: any) => r.setorId === getId('Apoio'))
+    const costuraItem = rotaData.find((r: any) => r.setorId === getId('Costura'))
+    const montagemItem = rotaData.find((r: any) => r.setorId === getId('Montagem'))
 
     const apoioOrdem = apoioItem ? apoioItem.ordem : 99
     const costuraOrdem = costuraItem ? costuraItem.ordem : 99
     const montagemOrdem = montagemItem ? montagemItem.ordem : 99
 
     // Condicionais
-    if (rotaData.some((r: any) => r.setorId === 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8')) toggleSerigrafia.value = true
-    if (rotaData.some((r: any) => r.setorId === '2e2475db-56a3-4673-91a9-dbb0b42fa57b')) toggleVulcanizado.value = true
+    if (rotaData.some((r: any) => r.setorId === getId('Serigrafia'))) toggleSerigrafia.value = true
+    if (rotaData.some((r: any) => r.setorId === getId('Vulcanizado'))) toggleVulcanizado.value = true
     
     // Máquinas Corte
-    if (rotaData.some((r: any) => r.setorId === '1ee99690-f3b5-4c07-b644-197488e84d1b')) toggleCorteCN.value = true
-    if (rotaData.some((r: any) => r.setorId === 'c85a4c3c-0018-4a24-8a64-d030a5e69e2f')) toggleCorteCouro.value = true
-    if (rotaData.some((r: any) => r.setorId === 'c980a1bf-7979-4d67-b426-2c5246890f98')) toggleCorteLaser.value = true
+    if (rotaData.some((r: any) => r.setorId === getId('Corte CN'))) toggleCorteCN.value = true
+    if (rotaData.some((r: any) => r.setorId === getId('Corte Couro'))) toggleCorteCouro.value = true
+    if (rotaData.some((r: any) => r.setorId === getId('Corte Laser'))) toggleCorteLaser.value = true
 
     // Distribui flutuantes nas zonas correspondentes
     const flutuantesMapeados = [
-      { id: 'costura-programada', sId: 'b30cfd86-c496-476b-90b9-49db72a3a736', label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
-      { id: 'bordado',            sId: 'e80c2b61-6b00-4657-9b1a-2b51688fce01', label: 'Bordado',            tipo: 'flutuante', icon: Zap,          color: '#b45309', description: 'Posicione entre Apoio e Montagem' },
-      { id: 'pre-fabricado',      sId: 'fd774810-8f85-4fcb-bffe-3b70d323f798', label: 'Pré-Fabricado',      tipo: 'flutuante', icon: Package,      color: '#0369a1', description: 'Antes, junto ou depois de Montagem' },
+      { id: 'costura-programada', sId: getId('Costura Programada'), label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
+      { id: 'bordado',            sId: getId('Bordado'),            label: 'Bordado',            tipo: 'flutuante', icon: Zap,          color: '#b45309', description: 'Posicione entre Apoio e Montagem' },
+      { id: 'pre-fabricado',      sId: getId('Pré-Fabricado'),      label: 'Pré-Fabricado',      tipo: 'flutuante', icon: Package,      color: '#0369a1', description: 'Antes, junto ou depois de Montagem' },
     ]
 
     for (const flut of flutuantesMapeados) {
+      if (!flut.sId) continue
+
       const dbItem = rotaData.find((r: any) => r.setorId === flut.sId)
       if (!dbItem) continue
 
@@ -712,16 +598,16 @@ async function carregarRotaDoModelo(modeloId: string) {
       } else if (dbItem.ordem === montagemOrdem && dbItem.tipoExecucao === 'PARALELO') {
         zoneJuntoMontagem.value.push(block)
       } else if (dbItem.ordem < apoioOrdem) {
-        if (dbItem.setorId !== 'a12a1bbd-4d35-49bd-95a8-cd263a8a8aa8' && 
-            dbItem.setorId !== '9ab65b01-cc61-4ab7-9ede-50ac10aed941' &&
-            dbItem.setorId !== 'ecb2d21d-51db-41a7-8261-17e8a5f03fed') {
+        if (dbItem.setorId !== getId('Serigrafia') && 
+            dbItem.setorId !== getId('Corte Recebimento') &&
+            dbItem.setorId !== getId('Almoxarifado da Modelagem')) {
           zoneAntesApoio.value.push(block)
         }
       } else if (dbItem.ordem > apoioOrdem && dbItem.ordem < costuraOrdem) {
         zoneEntreApoioCostura.value.push(block)
       } else if (dbItem.ordem > costuraOrdem && dbItem.ordem < montagemOrdem) {
         zoneEntreCosturaMontagem.value.push(block)
-      } else if (dbItem.ordem > montagemOrdem && dbItem.setorId !== '566aae2e-7645-411a-9542-3554bfd33f25') {
+      } else if (dbItem.ordem > montagemOrdem && dbItem.setorId !== getId('Laboratório')) {
         zonePosMontagem.value.push(block)
       }
 
@@ -733,7 +619,8 @@ async function carregarRotaDoModelo(modeloId: string) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await carregarSetores()
   carregarModelos()
   if (props.modeloId) {
     carregarRotaDoModelo(props.modeloId)
@@ -745,6 +632,14 @@ watch(() => props.modeloId, (newId) => {
     carregarRotaDoModelo(newId)
   }
 })
+
+watch(() => props.autoEnableMaquinas, (val) => {
+  if (val) {
+    if (val.cn !== undefined) toggleCorteCN.value = val.cn
+    if (val.couro !== undefined) toggleCorteCouro.value = val.couro
+    if (val.laser !== undefined) toggleCorteLaser.value = val.laser
+  }
+}, { immediate: true, deep: true })
 
 watch(selectedModeloId, (newId) => {
   if (newId) {
@@ -1071,7 +966,19 @@ defineExpose({
                   <span class="tl-block-sub">{{ fixedStart.description }}</span>
                 </div>
               </div>
-              <div class="tl-block-right">
+              <div class="tl-block-right flex-row-layout">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <Clock :size="11" class="text-slate-500 shrink-0" />
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    :value="getSlaForBlock(fixedStart)"
+                    @input="setSlaForBlock(fixedStart, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                  />
+                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                </div>
                 <span class="badge badge--fixo">
                   <Lock :size="10" aria-hidden="true" />
                   Fixo
@@ -1101,7 +1008,19 @@ defineExpose({
                   </div>
                 </div>
               </div>
-              <div class="tl-block-right">
+              <div class="tl-block-right flex-row-layout">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <Clock :size="11" class="text-slate-500 shrink-0" />
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    :value="getSlaForBlock('Corte Recebimento')"
+                    @input="setSlaForBlock('Corte Recebimento', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                  />
+                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                </div>
                 <span class="badge badge--fixo">
                   <Lock :size="10" aria-hidden="true" />
                   Fixo
@@ -1124,7 +1043,19 @@ defineExpose({
                     <span class="tl-block-sub">Após Corte Automático</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Serigrafia')"
+                      @input="setSlaForBlock('Serigrafia', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--condicional">Condicional</span>
                 </div>
               </div>
@@ -1166,6 +1097,18 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="5"
+                          step="5"
+                          :value="getSlaForBlock(element)"
+                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                      </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1196,7 +1139,19 @@ defineExpose({
                     <span class="tl-block-sub">Etapas de suporte ao corte</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Apoio')"
+                      @input="setSlaForBlock('Apoio', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
                     Fixo
@@ -1312,7 +1267,19 @@ defineExpose({
                     <span class="tl-block-sub">Costura Principal</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Costura')"
+                      @input="setSlaForBlock('Costura', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
                     Fixo
@@ -1428,7 +1395,19 @@ defineExpose({
                     <span class="tl-block-sub">Montagem Final do Produto</span>
                   </div>
                 </div>
-                <div class="tl-block-right">
+                <div class="tl-block-right flex-row-layout">
+                  <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                    <Clock :size="11" class="text-slate-500 shrink-0" />
+                    <input
+                      type="number"
+                      min="5"
+                      step="5"
+                      :value="getSlaForBlock('Montagem')"
+                      @input="setSlaForBlock('Montagem', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                      class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                    />
+                    <span class="text-[10px] font-semibold text-slate-500">min</span>
+                  </div>
                   <span class="badge badge--fixo">
                     <Lock :size="10" aria-hidden="true" />
                     Fixo
@@ -1468,6 +1447,18 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="5"
+                          step="5"
+                          :value="getSlaForBlock(element)"
+                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                      </div>
                       <span class="badge badge--parallel">Paralelo</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1489,7 +1480,19 @@ defineExpose({
                       <span class="tl-block-sub">Paralelo com Montagem</span>
                     </div>
                   </div>
-                  <div class="tl-block-right">
+                  <div class="tl-block-right flex-row-layout">
+                    <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                      <Clock :size="11" class="text-slate-500 shrink-0" />
+                      <input
+                        type="number"
+                        min="5"
+                        step="5"
+                        :value="getSlaForBlock('Vulcanizado')"
+                        @input="setSlaForBlock('Vulcanizado', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                        class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                      />
+                      <span class="text-[10px] font-semibold text-slate-500">min</span>
+                    </div>
                     <span class="badge badge--parallel">Paralelo</span>
                   </div>
                 </div>
@@ -1532,6 +1535,18 @@ defineExpose({
                       </div>
                     </div>
                     <div class="tl-block-right flex-row-layout">
+                      <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                        <Clock :size="11" class="text-slate-500 shrink-0" />
+                        <input
+                          type="number"
+                          min="5"
+                          step="5"
+                          :value="getSlaForBlock(element)"
+                          @input="setSlaForBlock(element, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                          class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                        />
+                        <span class="text-[10px] font-semibold text-slate-500">min</span>
+                      </div>
                       <span class="badge badge--flutuante">Flutuante</span>
                       <button class="btn-remove-sector" @click="removerSetor(element)" type="button" title="Remover">
                         <Trash2 :size="14" aria-hidden="true" />
@@ -1561,7 +1576,19 @@ defineExpose({
                   <span class="tl-block-sub">{{ fixedEnd.description }}</span>
                 </div>
               </div>
-              <div class="tl-block-right">
+              <div class="tl-block-right flex-row-layout">
+                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual em minutos">
+                  <Clock :size="11" class="text-slate-500 shrink-0" />
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    :value="getSlaForBlock(fixedEnd)"
+                    @input="setSlaForBlock(fixedEnd, ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
+                    class="w-14 text-xs font-mono font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-300 focus:outline-none"
+                  />
+                  <span class="text-[10px] font-semibold text-slate-500">min</span>
+                </div>
                 <span class="badge badge--fixo badge--end">
                   <Lock :size="10" aria-hidden="true" />
                   Fixo · Final

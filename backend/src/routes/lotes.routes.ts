@@ -168,5 +168,6 @@ router.post('/', lotesController.createLote);
  *         description: Erro interno do servidor
  */
 router.put('/:id', lotesController.updateLote);
+router.put('/:id/manutencao', lotesController.updateManutencao);
 
 export default router;

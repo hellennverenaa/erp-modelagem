@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import {
   Layers,
   Plus,
@@ -14,6 +14,10 @@ import {
   XCircle,
   Tag,
   Calendar,
+  ArrowRight,
+  ArrowLeft,
+  Scissors,
+  Trash2
 } from '@lucide/vue'
 import api from '../api/axios'
 
@@ -23,15 +27,23 @@ interface Marca {
   nome: string
 }
 
+interface PecaInfo {
+  id: string
+  nome: string
+  setorCorteOpcaoId?: string
+}
+
 interface Modelo {
   id: string
   nome: string
   codigoProduto: string
   temporada: string | null
+  dataCorte: string | null
   status: string
   ativo: boolean
   marca: Marca | null
   marcaId: string
+  pecas?: PecaInfo[]
   createdAt: string
 }
 
@@ -41,6 +53,27 @@ interface Toast {
   message: string
 }
 
+interface CatalogoItem {
+  id: string
+  numero: string
+  nome: string
+  codigoOriginal: string | null
+}
+
+interface MaquinaOpcao {
+  id: string
+  label: string
+  valor: string
+}
+
+interface PecaSelecionada {
+  id: string
+  numero: string
+  nome: string
+  codigoOriginal: string | null
+  setorCorteOpcaoId: string
+}
+
 // ─── Estado ──────────────────────────────────────────────────────────────────
 const modelos = ref<Modelo[]>([])
 const marcas  = ref<Marca[]>([])
@@ -48,25 +81,41 @@ const marcas  = ref<Marca[]>([])
 const loading       = ref(true)
 const loadingCreate = ref(false)
 const showModal     = ref(false)
+const modalStep     = ref(1) // 1: Modelo, 2: Peças
 const searchQuery   = ref('')
 const toasts        = ref<Toast[]>([])
 let toastCounter    = 0
 
-// ─── Formulário ──────────────────────────────────────────────────────────────
+// ─── Formulário do Modelo ───────────────────────────────────────────────────
 const form = ref({
   marcaId:       '',
   codigoProduto: '',
   nome:          '',
   temporada:     '',
+  dataCorte:     '',
 })
 const formErrors = ref<Record<string, string>>({})
 
+// ─── Peças do Modelo (Passo 2) ───────────────────────────────────────────────
+const pecasSelecionadas = ref<PecaSelecionada[]>([])
+const catalogoPecas = ref<CatalogoItem[]>([])
+const maquinasCorte = ref<MaquinaOpcao[]>([])
+const searchPecaText = ref('')
+const showAutocomplete = ref(false)
+const autocompleteRef = ref<HTMLElement | null>(null)
+
+function handleClickOutside(e: MouseEvent) {
+  if (autocompleteRef.value && !autocompleteRef.value.contains(e.target as Node)) {
+    showAutocomplete.value = false
+  }
+}
+
 // ─── Config de Status ────────────────────────────────────────────────────────
 const statusConfig: Record<string, { label: string; cls: string }> = {
-  CADASTRADO:    { label: 'Cadastrado',     cls: 'badge--slate'  },
-  EM_TESTE:      { label: 'Em Teste',       cls: 'badge--blue'   },
-  LIBERADO:      { label: 'Liberado',       cls: 'badge--green'  },
-  NAO_LIBERADO:  { label: 'Nao Liberado',  cls: 'badge--red'    },
+  CADASTRADO:    { label: 'Cadastrado',    cls: 'badge--slate' },
+  EM_TESTE:      { label: 'Em Teste',      cls: 'badge--blue'  },
+  LIBERADO:      { label: 'Liberado',      cls: 'badge--green' },
+  NAO_LIBERADO:  { label: 'Não Liberado', cls: 'badge--red'   },
 }
 
 function getStatusBadge(s: string) {
@@ -93,6 +142,16 @@ const stats = computed(() => ({
   cadastrados: modelos.value.filter((m) => m.status === 'CADASTRADO').length,
 }))
 
+const filteredCatalogo = computed(() => {
+  const q = searchPecaText.value.trim().toLowerCase()
+  if (!q) return catalogoPecas.value.slice(0, 12)
+  return catalogoPecas.value.filter(item =>
+    item.numero.toLowerCase().includes(q) ||
+    item.nome.toLowerCase().includes(q) ||
+    (item.codigoOriginal && item.codigoOriginal.toLowerCase().includes(q))
+  ).slice(0, 15)
+})
+
 // ─── Toast ───────────────────────────────────────────────────────────────────
 function addToast(type: 'success' | 'error', message: string) {
   const id = ++toastCounter
@@ -107,7 +166,7 @@ async function fetchModelos() {
     const { data } = await api.get<Modelo[]>('/admin/modelos/catalogo')
     modelos.value = data
   } catch {
-    addToast('error', 'Erro ao carregar catalogo de modelos.')
+    addToast('error', 'Erro ao carregar catálogo de modelos.')
   } finally {
     loading.value = false
   }
@@ -122,14 +181,72 @@ async function fetchMarcas() {
   }
 }
 
+async function fetchStep2Options() {
+  try {
+    const [catRes, maqRes] = await Promise.all([
+      api.get<CatalogoItem[]>('/catalogo-pecas'),
+      api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
+        api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
+      )
+    ])
+    catalogoPecas.value = catRes.data || []
+    maquinasCorte.value = (maqRes.data || []).map((m: any) => ({
+      id: m.id,
+      label: m.label || m.valor,
+      valor: m.valor
+    }))
+  } catch (err) {
+    console.error('[GestaoModelosView] Erro ao buscar catálogo/máquinas:', err)
+  }
+}
+
+function advanceToStep2() {
+  formErrors.value = {}
+
+  if (!form.value.marcaId.trim())       formErrors.value.marcaId = 'Selecione uma marca.'
+  if (!form.value.codigoProduto.trim()) formErrors.value.codigoProduto = 'Código do produto é obrigatório.'
+  if (!form.value.nome.trim())          formErrors.value.nome = 'Nome do modelo é obrigatório.'
+
+  if (Object.keys(formErrors.value).length > 0) return
+  modalStep.value = 2
+}
+
+function addPecaFromCatalogo(item: CatalogoItem) {
+  const jaExiste = pecasSelecionadas.value.some(p => p.id === item.id)
+  if (jaExiste) {
+    addToast('error', `A peça ${item.numero} - ${item.nome} já foi adicionada.`)
+    return
+  }
+
+  const defaultMaquinaId = maquinasCorte.value[0]?.id || ''
+
+  pecasSelecionadas.value.push({
+    id: item.id,
+    numero: item.numero,
+    nome: item.nome,
+    codigoOriginal: item.codigoOriginal,
+    setorCorteOpcaoId: defaultMaquinaId
+  })
+
+  searchPecaText.value = ''
+  showAutocomplete.value = false
+}
+
+function removePeca(index: number) {
+  pecasSelecionadas.value.splice(index, 1)
+}
+
 async function handleCreateModelo() {
   formErrors.value = {}
 
   if (!form.value.marcaId.trim())       formErrors.value.marcaId = 'Selecione uma marca.'
-  if (!form.value.codigoProduto.trim()) formErrors.value.codigoProduto = 'Codigo do produto e obrigatorio.'
-  if (!form.value.nome.trim())          formErrors.value.nome = 'Nome do modelo e obrigatorio.'
+  if (!form.value.codigoProduto.trim()) formErrors.value.codigoProduto = 'Código do produto é obrigatório.'
+  if (!form.value.nome.trim())          formErrors.value.nome = 'Nome do modelo é obrigatório.'
 
-  if (Object.keys(formErrors.value).length > 0) return
+  if (Object.keys(formErrors.value).length > 0) {
+    modalStep.value = 1
+    return
+  }
 
   loadingCreate.value = true
   try {
@@ -138,6 +255,8 @@ async function handleCreateModelo() {
       codigoProduto: form.value.codigoProduto.trim(),
       nome:          form.value.nome.trim(),
       temporada:     form.value.temporada.trim() || null,
+      dataCorte:     form.value.dataCorte ? form.value.dataCorte : null,
+      pecas:         pecasSelecionadas.value
     })
     addToast('success', `Modelo "${form.value.nome}" cadastrado com sucesso.`)
     await fetchModelos()
@@ -147,7 +266,8 @@ async function handleCreateModelo() {
     const serverMsg = err?.response?.data?.error
 
     if (code === 'MODELO_DUPLICATE_CODE') {
-      formErrors.value.codigoProduto = 'Este codigo de produto ja esta em uso.'
+      modalStep.value = 1
+      formErrors.value.codigoProduto = 'Este código de produto já está em uso.'
     } else {
       addToast('error', typeof serverMsg === 'string' ? serverMsg : 'Erro ao cadastrar modelo.')
     }
@@ -158,9 +278,12 @@ async function handleCreateModelo() {
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
 function openModal() {
-  form.value = { marcaId: '', codigoProduto: '', nome: '', temporada: '' }
+  modalStep.value = 1
+  form.value = { marcaId: '', codigoProduto: '', nome: '', temporada: '', dataCorte: '' }
+  pecasSelecionadas.value = []
   formErrors.value = {}
   showModal.value = true
+  fetchStep2Options()
 }
 
 function closeModal() {
@@ -175,7 +298,12 @@ function formatDate(iso: string) {
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(async () => {
+  document.addEventListener('click', handleClickOutside)
   await Promise.all([fetchModelos(), fetchMarcas()])
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
 })
 </script>
 
@@ -208,8 +336,8 @@ onMounted(async () => {
           <Layers :size="20" />
         </div>
         <div>
-          <h1 class="gm-title">Catalogo de Modelos</h1>
-          <p class="gm-subtitle">Cadastre e gerencie os modelos de calcado que serao submetidos a testes de producao.</p>
+          <h1 class="gm-title">Catálogo de Modelos</h1>
+          <p class="gm-subtitle">Cadastre e gerencie os modelos de calçado que serão submetidos a testes de produção.</p>
         </div>
       </div>
       <div class="gm-header-actions">
@@ -236,7 +364,7 @@ onMounted(async () => {
     </header>
 
     <!-- KPI Strip -->
-    <section class="kpi-strip" aria-label="Estatisticas do catalogo">
+    <section class="kpi-strip" aria-label="Estatísticas do catálogo">
       <div class="kpi-card">
         <Layers :size="18" class="kpi-icon" aria-hidden="true" />
         <div class="kpi-data">
@@ -276,7 +404,7 @@ onMounted(async () => {
           v-model="searchQuery"
           type="search"
           class="search-input"
-          placeholder="Buscar por nome, codigo, marca ou temporada..."
+          placeholder="Buscar por nome, código, marca ou temporada..."
           aria-label="Buscar modelos"
         />
       </div>
@@ -303,14 +431,16 @@ onMounted(async () => {
       </div>
 
       <!-- Data table -->
-      <div v-else class="table-outer" role="region" aria-label="Tabela de modelos de calcado">
+      <div v-else class="table-outer" role="region" aria-label="Tabela de modelos de calçado">
         <table class="gm-table">
           <thead>
             <tr>
-              <th scope="col">Codigo</th>
+              <th scope="col">Código</th>
               <th scope="col">Nome do Modelo</th>
               <th scope="col">Marca</th>
               <th scope="col" class="text-center">Temporada</th>
+              <th scope="col" class="text-center">Data de Corte</th>
+              <th scope="col" class="text-center">Peças</th>
               <th scope="col" class="text-center">Status</th>
               <th scope="col">Cadastrado em</th>
             </tr>
@@ -334,6 +464,19 @@ onMounted(async () => {
                 <span v-else class="empty-dash">—</span>
               </td>
               <td class="text-center">
+                <span v-if="modelo.dataCorte" class="date-pill">
+                  <Calendar :size="11" aria-hidden="true" />
+                  {{ formatDate(modelo.dataCorte) }}
+                </span>
+                <span v-else class="empty-dash">—</span>
+              </td>
+              <td class="text-center">
+                <span v-if="modelo.pecas && modelo.pecas.length > 0" class="pecas-pill">
+                  {{ modelo.pecas.length }} peça{{ modelo.pecas.length !== 1 ? 's' : '' }}
+                </span>
+                <span v-else class="empty-dash">—</span>
+              </td>
+              <td class="text-center">
                 <span class="badge" :class="getStatusBadge(modelo.status).cls">
                   {{ getStatusBadge(modelo.status).label }}
                 </span>
@@ -346,11 +489,11 @@ onMounted(async () => {
 
       <!-- Footer -->
       <div v-if="!loading && filteredModelos.length > 0" class="table-footer">
-        <span>{{ filteredModelos.length }} modelo{{ filteredModelos.length !== 1 ? 's' : '' }} no catalogo</span>
+        <span>{{ filteredModelos.length }} modelo{{ filteredModelos.length !== 1 ? 's' : '' }} no catálogo</span>
       </div>
     </div>
 
-    <!-- Modal — Novo Modelo -->
+    <!-- Modal — Wizard de Cadastro de Modelo (2 Passos) -->
     <Teleport to="body">
       <Transition name="modal">
         <div
@@ -361,14 +504,19 @@ onMounted(async () => {
           aria-labelledby="modal-title-modelos"
           @click.self="closeModal"
         >
-          <div class="modal-panel">
-            <!-- Header -->
+          <div class="modal-panel modal-panel--wide">
+            <!-- Header com Indicador de Passos -->
             <div class="modal-header">
               <div class="modal-header-left">
                 <div class="modal-icon-wrap" aria-hidden="true">
-                  <Plus :size="18" />
+                  <Layers :size="18" />
                 </div>
-                <h2 id="modal-title-modelos" class="modal-title">Novo Modelo de Calcado</h2>
+                <div>
+                  <h2 id="modal-title-modelos" class="modal-title">Novo Modelo de Calçado</h2>
+                  <div class="modal-step-badge">
+                    <span>Passo {{ modalStep }} de 2</span> — {{ modalStep === 1 ? 'Dados Gerais' : 'Vinculação de Peças' }}
+                  </div>
+                </div>
               </div>
               <button
                 id="btn-close-modal-modelos"
@@ -381,10 +529,10 @@ onMounted(async () => {
               </button>
             </div>
 
-            <!-- Body -->
-            <div class="modal-body">
+            <!-- Body PASSO 1: Dados do Modelo -->
+            <div v-if="modalStep === 1" class="modal-body">
               <p class="modal-description">
-                Informe os dados do modelo de calcado. Apos o cadastro, ele ficara disponivel para receber uma Ordem de Teste de Producao.
+                Passo 1: Informe a marca, código, nome, temporada e a previsão da data de corte do modelo.
               </p>
 
               <!-- Marca -->
@@ -410,27 +558,44 @@ onMounted(async () => {
                 </span>
               </div>
 
-              <!-- Codigo do Produto -->
-              <div class="form-field">
-                <label for="inp-codigo" class="form-label">
-                  Codigo do Produto <span class="required-star" aria-hidden="true">*</span>
-                </label>
-                <input
-                  id="inp-codigo"
-                  v-model="form.codigoProduto"
-                  type="text"
-                  class="form-input"
-                  :class="{ 'form-input--error': formErrors.codigoProduto }"
-                  placeholder="Ex: 2056985"
-                  maxlength="50"
-                />
-                <span v-if="formErrors.codigoProduto" class="form-error" role="alert">
-                  <AlertCircle :size="12" aria-hidden="true" />
-                  {{ formErrors.codigoProduto }}
-                </span>
+              <div class="form-row-2">
+                <!-- Código do Produto -->
+                <div class="form-field">
+                  <label for="inp-codigo" class="form-label">
+                    Código do Produto <span class="required-star" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="inp-codigo"
+                    v-model="form.codigoProduto"
+                    type="text"
+                    class="form-input"
+                    :class="{ 'form-input--error': formErrors.codigoProduto }"
+                    placeholder="Ex: 502698"
+                    maxlength="50"
+                  />
+                  <span v-if="formErrors.codigoProduto" class="form-error" role="alert">
+                    <AlertCircle :size="12" aria-hidden="true" />
+                    {{ formErrors.codigoProduto }}
+                  </span>
+                </div>
+
+                <!-- Temporada -->
+                <div class="form-field">
+                  <label for="inp-temporada" class="form-label">
+                    Temporada <span class="optional-tag">opcional</span>
+                  </label>
+                  <input
+                    id="inp-temporada"
+                    v-model="form.temporada"
+                    type="text"
+                    class="form-input"
+                    placeholder="Ex: SS26"
+                    maxlength="50"
+                  />
+                </div>
               </div>
 
-              <!-- Nome -->
+              <!-- Nome do Modelo -->
               <div class="form-field">
                 <label for="inp-nome" class="form-label">
                   Nome do Modelo <span class="required-star" aria-hidden="true">*</span>
@@ -441,7 +606,7 @@ onMounted(async () => {
                   type="text"
                   class="form-input"
                   :class="{ 'form-input--error': formErrors.nome }"
-                  placeholder="Ex: KR LITE"
+                  placeholder="Ex: AIR MAX EXCELLENCE"
                   maxlength="150"
                 />
                 <span v-if="formErrors.nome" class="form-error" role="alert">
@@ -450,31 +615,111 @@ onMounted(async () => {
                 </span>
               </div>
 
-              <!-- Temporada (opcional) -->
+              <!-- Data de Corte (Previsão) -->
               <div class="form-field">
-                <label for="inp-temporada" class="form-label">
-                  Temporada <span class="optional-tag">opcional</span>
+                <label for="inp-datacorte" class="form-label">
+                  Data de Corte (Previsão) <span class="optional-tag">opcional</span>
                 </label>
                 <input
-                  id="inp-temporada"
-                  v-model="form.temporada"
-                  type="text"
+                  id="inp-datacorte"
+                  v-model="form.dataCorte"
+                  type="date"
                   class="form-input"
-                  placeholder="Ex: SS26, FW26"
-                  maxlength="50"
                 />
-              </div>
-
-              <!-- Info tip -->
-              <div class="info-tip" role="note">
-                <AlertCircle :size="14" class="tip-icon" aria-hidden="true" />
-                <span>Cada modelo admite apenas <strong>uma Ordem de Teste</strong> antes de ser liberado para producao em massa (regra 1:1).</span>
+                <span class="field-hint">Previsão da data de corte para programação da OP.</span>
               </div>
             </div>
 
-            <!-- Footer -->
+            <!-- Body PASSO 2: Vinculação de Peças -->
+            <div v-else-if="modalStep === 2" class="modal-body">
+              <p class="modal-description">
+                Passo 2: Adicione as peças técnicas do catálogo a este modelo e selecione a máquina de corte.
+              </p>
+
+              <!-- Autocomplete do Catálogo -->
+              <div class="pecas-ac-container" ref="autocompleteRef">
+                <label class="form-label">Pesquisar Peça no Catálogo Global</label>
+                <div class="ac-input-wrap">
+                  <Search :size="15" class="ac-icon" />
+                  <input
+                    type="text"
+                    v-model="searchPecaText"
+                    @focus="showAutocomplete = true"
+                    placeholder="Buscar por número (ex: 026) ou nome (ex: GÁSPEA)..."
+                    class="ac-input"
+                  />
+                </div>
+
+                <!-- Dropdown de resultados -->
+                <div v-if="showAutocomplete && filteredCatalogo.length > 0" class="ac-dropdown">
+                  <div
+                    v-for="item in filteredCatalogo"
+                    :key="item.id"
+                    class="ac-item"
+                    @mousedown.prevent="addPecaFromCatalogo(item)"
+                  >
+                    <span class="ac-badge">{{ item.numero }}</span>
+                    <span class="ac-name">{{ item.nome }}</span>
+                    <span v-if="item.codigoOriginal" class="ac-ref">Ref: {{ item.codigoOriginal }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Lista de Peças Selecionadas -->
+              <div class="pecas-list-block">
+                <div class="pecas-list-title">Peças Atribuídas ao Modelo ({{ pecasSelecionadas.length }})</div>
+                
+                <div v-if="pecasSelecionadas.length === 0" class="pecas-empty">
+                  <Scissors :size="28" class="text-slate-400" />
+                  <span>Nenhuma peça vinculada ainda. Utilize o campo de busca acima.</span>
+                </div>
+
+                <div v-else class="pecas-table-wrap">
+                  <table class="pecas-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 70px; text-align: center;">Nº</th>
+                        <th>Nome da Peça</th>
+                        <th>Máquina de Corte</th>
+                        <th style="width: 50px; text-align: center;">Remover</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(p, idx) in pecasSelecionadas" :key="p.id" class="peca-row">
+                        <td style="text-align: center;">
+                          <span class="peca-badge">{{ p.numero }}</span>
+                        </td>
+                        <td>
+                          <strong>{{ p.nome }}</strong>
+                        </td>
+                        <td>
+                          <select v-model="p.setorCorteOpcaoId" class="maquina-select">
+                            <option v-for="m in maquinasCorte" :key="m.id" :value="m.id">
+                              {{ m.label }}
+                            </option>
+                          </select>
+                        </td>
+                        <td style="text-align: center;">
+                          <button
+                            type="button"
+                            class="btn-del-peca"
+                            @click="removePeca(idx)"
+                            title="Remover peça"
+                          >
+                            <Trash2 :size="14" />
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footer com Ações de Navegação -->
             <div class="modal-footer">
               <button
+                v-if="modalStep === 1"
                 id="btn-cancel-modelo"
                 type="button"
                 class="btn-outline"
@@ -484,6 +729,27 @@ onMounted(async () => {
                 Cancelar
               </button>
               <button
+                v-if="modalStep === 2"
+                type="button"
+                class="btn-outline"
+                @click="modalStep = 1"
+                :disabled="loadingCreate"
+              >
+                <ArrowLeft :size="15" aria-hidden="true" />
+                <span>Voltar aos Dados</span>
+              </button>
+
+              <button
+                v-if="modalStep === 1"
+                type="button"
+                class="btn-primary"
+                @click="advanceToStep2"
+              >
+                <span>Avançar para Peças</span>
+                <ArrowRight :size="15" aria-hidden="true" />
+              </button>
+              <button
+                v-if="modalStep === 2"
                 id="btn-confirm-modelo"
                 type="button"
                 class="btn-primary"
@@ -492,7 +758,7 @@ onMounted(async () => {
               >
                 <Loader2 v-if="loadingCreate" :size="15" class="spin-anim" aria-hidden="true" />
                 <Plus v-else :size="15" aria-hidden="true" />
-                <span>{{ loadingCreate ? 'Cadastrando...' : 'Cadastrar Modelo' }}</span>
+                <span>{{ loadingCreate ? 'Cadastrando...' : 'Salvar Modelo' }}</span>
               </button>
             </div>
           </div>
@@ -505,9 +771,9 @@ onMounted(async () => {
 
 <style scoped>
 /* ══════════════════════════════════════════════════════
-   DESIGN SYSTEM — CATALOGO DE MODELOS
-   Estetica: Industrial Utilitarian · Light Mode
-   Paleta: slate-50 base · slate-900 texto · indigo accent
+   DESIGN SYSTEM — CATALOGO DE MODELOS (MONOCROMÁTICO)
+   Estética: Industrial Utilitarian · Monochrome
+   Paleta: slate-50 base · slate-900 texto · zinc accents
 ══════════════════════════════════════════════════════ */
 
 .gm-root {
@@ -534,14 +800,14 @@ onMounted(async () => {
 .page-icon-wrap {
   width: 2.5rem;
   height: 2.5rem;
-  background: linear-gradient(135deg, #312e81, #4338ca);
+  background: #0f172a;
   border-radius: 0.625rem;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(67,56,202,0.3);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
 }
 .gm-title {
   font-size: 1.25rem;
@@ -584,7 +850,7 @@ onMounted(async () => {
 .btn-primary:hover:not(:disabled) { background: #1e293b; transform: translateY(-1px); }
 .btn-primary:active:not(:disabled) { transform: translateY(0); }
 .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
-.btn-primary:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+.btn-primary:focus-visible { outline: 2px solid #0f172a; outline-offset: 2px; }
 
 .btn-outline {
   display: inline-flex;
@@ -603,7 +869,6 @@ onMounted(async () => {
 }
 .btn-outline:hover:not(:disabled) { background: #f8fafc; border-color: #cbd5e1; }
 .btn-outline:disabled { opacity: 0.55; cursor: not-allowed; }
-.btn-outline:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
 
 .btn-ghost {
   display: inline-flex;
@@ -640,9 +905,9 @@ onMounted(async () => {
   gap: 0.875rem;
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
-.kpi-icon         { color: #94a3b8; flex-shrink: 0; }
-.kpi-icon--blue   { color: #2563eb; }
-.kpi-icon--green  { color: #16a34a; }
+.kpi-icon         { color: #475569; flex-shrink: 0; }
+.kpi-icon--blue   { color: #0f172a; }
+.kpi-icon--green  { color: #0f172a; }
 .kpi-icon--slate  { color: #64748b; }
 .kpi-data  { display: flex; flex-direction: column; }
 .kpi-val   { font-size: 1.5rem; font-weight: 800; color: #0f172a; line-height: 1; }
@@ -665,7 +930,7 @@ onMounted(async () => {
   transition: border-color 0.15s, box-shadow 0.15s;
   box-sizing: border-box;
 }
-.search-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+.search-input:focus { border-color: #0f172a; box-shadow: 0 0 0 3px rgba(15,23,42,0.1); }
 .search-input::placeholder { color: #94a3b8; }
 
 /* ─── Table Card ───────────────────────────────────── */
@@ -720,7 +985,7 @@ onMounted(async () => {
 .text-center { text-align: center !important; }
 
 .code-cell {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: monospace;
   font-size: 0.8125rem;
   font-weight: 700;
   background: #f1f5f9;
@@ -734,7 +999,7 @@ onMounted(async () => {
 .date-cell  { font-size: 0.8125rem; color: #64748b; white-space: nowrap; }
 .empty-dash { color: #cbd5e1; }
 
-.temporada-pill {
+.temporada-pill, .date-pill, .pecas-pill {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
@@ -744,18 +1009,23 @@ onMounted(async () => {
   border-radius: 9999px;
   font-size: 0.7rem;
   font-weight: 700;
-  color: #475569;
+  color: #334155;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
+.pecas-pill {
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+}
 
 /* Badges */
 .badge { display: inline-block; padding: 0.2rem 0.625rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
-.badge--green { background: #dcfce7; color: #15803d; }
-.badge--red   { background: #fee2e2; color: #b91c1c; }
-.badge--blue  { background: #dbeafe; color: #1d4ed8; }
-.badge--slate { background: #f1f5f9; color: #475569; }
+.badge--green { background: #f1f5f9; color: #0f172a; border: 1px solid #cbd5e1; }
+.badge--red   { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+.badge--blue  { background: #0f172a; color: #ffffff; }
+.badge--slate { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
 
 /* Footer */
 .table-footer { padding: 0.75rem 1rem; border-top: 1px solid #f1f5f9; font-size: 0.75rem; color: #94a3b8; font-weight: 500; text-align: right; }
@@ -764,8 +1034,8 @@ onMounted(async () => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15,23,42,0.55);
-  backdrop-filter: blur(6px);
+  background: rgba(15,23,42,0.6);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -775,14 +1045,18 @@ onMounted(async () => {
 .modal-panel {
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 1rem;
+  border-radius: 0.875rem;
   width: 100%;
-  max-width: 29rem;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
+  max-width: 32rem;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.15);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+.modal-panel--wide {
+  max-width: 38rem;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -795,7 +1069,7 @@ onMounted(async () => {
 .modal-icon-wrap {
   width: 2.25rem;
   height: 2.25rem;
-  background: linear-gradient(135deg, #312e81, #4338ca);
+  background: #0f172a;
   border-radius: 0.5rem;
   display: flex;
   align-items: center;
@@ -804,6 +1078,16 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .modal-title { font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0; letter-spacing: -0.02em; }
+.modal-step-badge {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 600;
+  margin-top: 0.1rem;
+}
+.modal-step-badge span {
+  font-weight: 800;
+  color: #0f172a;
+}
 .modal-close {
   width: 2rem; height: 2rem;
   background: transparent;
@@ -815,16 +1099,21 @@ onMounted(async () => {
   transition: background 0.15s, color 0.15s;
 }
 .modal-close:hover { background: #f1f5f9; color: #0f172a; }
-.modal-close:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
 
-.modal-body { padding: 1.5rem; display: flex; flex-direction: column; gap: 1.125rem; overflow-y: auto; }
-.modal-description { font-size: 0.8125rem; color: #64748b; line-height: 1.6; margin: 0; }
+.modal-body { padding: 1.5rem; display: flex; flex-direction: column; gap: 1.125rem; max-height: 75vh; overflow-y: auto; }
+.modal-description { font-size: 0.8125rem; color: #64748b; line-height: 1.5; margin: 0; }
 
 /* Form */
+.form-row-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
 .form-field { display: flex; flex-direction: column; gap: 0.375rem; }
 .form-label { font-size: 0.8125rem; font-weight: 700; color: #334155; display: flex; align-items: center; gap: 0.25rem; }
-.required-star { color: #dc2626; }
+.required-star { color: #0f172a; font-weight: 900; }
 .optional-tag { font-size: 0.7rem; font-weight: 500; color: #94a3b8; background: #f1f5f9; padding: 0.05rem 0.4rem; border-radius: 0.25rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.field-hint { font-size: 0.75rem; color: #64748b; margin-top: 0.15rem; }
 
 .select-wrap { position: relative; }
 .form-select, .form-input {
@@ -841,43 +1130,148 @@ onMounted(async () => {
   box-sizing: border-box;
 }
 .form-select { padding-right: 2.25rem; appearance: none; cursor: pointer; }
-.form-select:focus, .form-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
-.form-select--error, .form-input--error { border-color: #dc2626; }
-.form-select--error:focus, .form-input--error:focus { box-shadow: 0 0 0 3px rgba(220,38,38,0.12); }
+.form-select:focus, .form-input:focus { border-color: #0f172a; box-shadow: 0 0 0 3px rgba(15,23,42,0.1); }
+.form-select--error, .form-input--error { border-color: #0f172a; }
 .form-input::placeholder { color: #94a3b8; }
 
 .select-chevron { position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); color: #94a3b8; pointer-events: none; }
 
-.form-error { display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; font-weight: 600; color: #dc2626; }
+.form-error { display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; font-weight: 600; color: #0f172a; }
 
-.info-tip {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  background: #eef2ff;
-  border: 1px solid #c7d2fe;
+/* Passo 2 Peças Autocomplete */
+.pecas-ac-container { position: relative; }
+.ac-input-wrap { position: relative; }
+.ac-icon { position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: #94a3b8; }
+.ac-input {
+  width: 100%;
+  padding: 0.5625rem 0.875rem 0.5625rem 2.25rem;
+  font-size: 0.875rem;
+  border: 1px solid #e2e8f0;
   border-radius: 0.5rem;
-  padding: 0.625rem 0.875rem;
-  font-size: 0.8125rem;
-  color: #4338ca;
-  line-height: 1.5;
+  outline: none;
 }
-.tip-icon { flex-shrink: 0; margin-top: 0.05rem; }
+.ac-input:focus { border-color: #0f172a; box-shadow: 0 0 0 3px rgba(15,23,42,0.1); }
+
+.ac-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+  max-height: 14rem;
+  overflow-y: auto;
+  z-index: 30;
+  margin-top: 0.25rem;
+}
+.ac-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.875rem;
+}
+.ac-item:hover { background: #f8fafc; }
+.ac-badge {
+  padding: 0.15rem 0.4rem;
+  background: #0f172a;
+  color: #ffffff;
+  font-weight: 800;
+  font-family: monospace;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+}
+.ac-name { font-weight: 700; color: #0f172a; }
+.ac-ref { margin-left: auto; font-size: 0.75rem; color: #64748b; font-family: monospace; }
+
+.pecas-list-block {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+.pecas-list-title {
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #475569;
+  margin-bottom: 0.625rem;
+}
+.pecas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 1.5rem;
+  color: #64748b;
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.pecas-table-wrap {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  overflow: hidden;
+}
+.pecas-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.pecas-table th {
+  background: #f1f5f9;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+.peca-row td { padding: 0.5rem 0.625rem; border-bottom: 1px solid #f1f5f9; }
+.peca-badge {
+  padding: 0.15rem 0.4rem;
+  background: #0f172a;
+  color: #ffffff;
+  font-weight: 800;
+  font-family: monospace;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+}
+.maquina-select {
+  width: 100%;
+  padding: 0.25rem 0.375rem;
+  font-size: 0.8125rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  color: #0f172a;
+}
+.btn-del-peca {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+}
+.btn-del-peca:hover { color: #0f172a; background: #e2e8f0; }
 
 .modal-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 0.625rem;
   padding: 1.125rem 1.5rem;
   border-top: 1px solid #f1f5f9;
   flex-shrink: 0;
+  background: #f8fafc;
 }
 
 /* ─── Toast ────────────────────────────────────────── */
 .toast-stack { position: fixed; bottom: 1.5rem; right: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 99999; pointer-events: none; }
 .toast { display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.125rem; border-radius: 0.625rem; font-size: 0.875rem; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,0.15); max-width: 24rem; pointer-events: auto; }
-.toast--success { background: #0f172a; color: #dcfce7; }
-.toast--error   { background: #7f1d1d; color: #fee2e2; }
+.toast--success { background: #0f172a; color: #ffffff; }
+.toast--error   { background: #0f172a; color: #ffffff; border: 1px solid #334155; }
 .toast-icon     { flex-shrink: 0; }
 .toast-msg      { line-height: 1.4; }
 

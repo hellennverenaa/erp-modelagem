@@ -13,7 +13,8 @@ import {
   Barcode,
   ClipboardList,
   Layers,
-  PlusCircle
+  PlusCircle,
+  MonitorPlay
 } from '@lucide/vue'
 
 const router = useRouter()
@@ -23,12 +24,15 @@ const user = computed(() => authStore.user.value)
 const sidebarOpen = ref(true)
 
 const navItems = [
-  { to: '/dashboard/gerencial', label: 'Torre de Controle',     icon: LayoutDashboard },
-  { to: '/dashboard/modelos',   label: 'Catálogo de Modelos',   icon: Layers },
-  { to: '/dashboard/ordens',    label: 'Gestão de Ordens',     icon: ClipboardList },
-  { to: '/dashboard/rotas',     label: 'Construtor de Rota',   icon: ListOrdered },
-  { to: '/dashboard/bipagem',   label: 'Bipagem Operacional',  icon: Barcode },
-  { to: '/dashboard/rbac',      label: 'Permissões RBAC',      icon: ShieldCheck },
+  { to: '/dashboard/gerencial',      label: 'Torre de Controle',     icon: LayoutDashboard },
+  { to: '/dashboard/modelos',        label: 'Catálogo de Modelos',   icon: Layers },
+  { to: '/dashboard/catalogo-pecas', label: 'Catálogo de Peças',     icon: Layers },
+  { to: '/dashboard/ordens',         label: 'Gestão de Ordens',     icon: ClipboardList },
+  { to: '/dashboard/rotas',          label: 'Construtor de Rota',   icon: ListOrdered },
+  { to: '/dashboard/bipagem',        label: 'Bipagem Operacional',  icon: Barcode },
+  { to: '/dashboard/inspecao',       label: 'Inspeção de Qualidade', icon: ShieldCheck },
+  { to: '/dashboard/rastreamento',   label: 'TV Rastreamento',    icon: MonitorPlay },
+  { to: '/dashboard/rbac',           label: 'Permissões RBAC',      icon: ShieldCheck },
 ]
 
 const visibleNavItems = computed(() => {
@@ -51,14 +55,16 @@ const visibleNavItems = computed(() => {
 })
 
 const activeLabel = computed(() => {
-  if (route.path.endsWith('/gerencial'))  return 'Torre de Controle'
-  if (route.path.endsWith('/novo-teste')) return 'Iniciar Novo Teste'
-  if (route.path.endsWith('/modelos'))    return 'Catálogo de Modelos'
-  if (route.path.endsWith('/ordens'))     return 'Gestão de Ordens'
-  if (route.path.endsWith('/rotas'))      return 'Construtor de Rota'
-  if (route.path.endsWith('/bipagem'))    return 'Bipagem Operacional'
-  if (route.path.endsWith('/rbac'))       return 'Permissões RBAC'
-  if (route.path.includes('/rastreamento/')) return 'Rastreamento Dual'
+  if (route.path.endsWith('/gerencial'))      return 'Torre de Controle'
+  if (route.path.endsWith('/novo-teste'))     return 'Iniciar Novo Teste'
+  if (route.path.endsWith('/modelos'))        return 'Catálogo de Modelos'
+  if (route.path.endsWith('/catalogo-pecas')) return 'Catálogo de Peças'
+  if (route.path.endsWith('/ordens'))         return 'Gestão de Ordens'
+  if (route.path.endsWith('/rotas'))          return 'Construtor de Rota'
+  if (route.path.endsWith('/bipagem'))        return 'Bipagem Operacional'
+  if (route.path.endsWith('/inspecao'))       return 'Inspeção de Qualidade'
+  if (route.path.endsWith('/rbac'))           return 'Permissões RBAC'
+  if (route.path.includes('/rastreamento'))   return 'Rastreamento Dual'
   return 'Dashboard'
 })
 

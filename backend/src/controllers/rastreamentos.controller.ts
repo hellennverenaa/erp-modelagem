@@ -27,6 +27,8 @@ const biparEntradaSchema = z.object({
   ordemTesteId: z.string().uuid({ message: 'ordemTesteId deve ser um UUID válido.' }),
   setorId:      z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
   tipoLote:     z.nativeEnum(TipoLote),
+  operadorId:   z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
+  operadorEntradaId: z.string().uuid({ message: 'operadorEntradaId deve ser um UUID válido.' }).optional().nullable(),
   pecaId:       z.string().uuid().optional().nullable(),
   estacaoId:    z.string().uuid().optional().nullable(),
 });
@@ -35,6 +37,8 @@ const biparSaidaSchema = z.object({
   ordemTesteId:   z.string().uuid({ message: 'ordemTesteId deve ser um UUID válido.' }),
   setorId:        z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
   tipoLote:       z.nativeEnum(TipoLote).optional().default(TipoLote.LOTE_PRINCIPAL),
+  operadorId:     z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
+  operadorSaidaId: z.string().uuid({ message: 'operadorSaidaId deve ser um UUID válido.' }).optional().nullable(),
   pecaId:         z.string().uuid().optional().nullable(),
 });
 
@@ -75,6 +79,22 @@ export class RastreamentosController {
     }
 
     try {
+      // 1.0. Trava de Nascimento da Caixa Teste: impede entrada de CAIXA_TESTE em setores iniciais
+      if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
+        const setorRepo = AppDataSource.getRepository(Setor);
+        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+        const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
+        if (setorInfo?.tipoOpcaoId) {
+          const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
+          if (tipoOpcao && SETORES_HANDOFF_AUTOMATICO_VALORES.includes(tipoOpcao.valor)) {
+            return res.status(400).json({
+              error: 'A Caixa Teste só pode dar entrada a partir das máquinas de Corte Automático (Ponte, Lectra, etc.).',
+              code: 'CAIXA_TESTE_NOT_ALLOWED_IN_INITIAL_SECTOR'
+            });
+          }
+        }
+      }
+
       // 1.1. Busca a Ordem de Teste correspondente para obter o modeloId
       const ordemRepo = AppDataSource.getRepository(OrdemTeste);
       const ordem = await ordemRepo.findOne({ where: { id: ordemTesteId } });
@@ -97,7 +117,7 @@ export class RastreamentosController {
       if (!pertenceARota) {
         return res.status(403).json({
           error: 'Acesso Negado: Este setor não pertence à rota de produção definida para este modelo.',
-          code: 'SETOR_NOT_IN_ROUTE',
+          code: 'ROTA_INVALIDA',
         });
       }
 
@@ -141,7 +161,7 @@ export class RastreamentosController {
 
       const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
 
-      // 1.3. Trava de Duplicidade: Verifica se já existe um registro de processamento para essa ordem/peça/tipoLote neste setor
+      // 1.3. Trava de Duplicidade e Idempotência de Entrada
       const queryExistente = rastreamentoRepo.createQueryBuilder('r')
         .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
         .andWhere('r.setorId = :setorId', { setorId })
@@ -155,33 +175,38 @@ export class RastreamentosController {
 
       const registroExistente = await queryExistente.getOne();
       if (registroExistente) {
-        return res.status(400).json({
-          error: 'Bloqueio: Esta ordem já possui um registro de processamento neste setor.',
-          code: 'BIPAGEM_DUPLICADA_SETOR'
+        // Bloqueio de Múltiplas Entradas Ativas (Idempotência / HTTP 409)
+        if (registroExistente.status === RastreamentoStatus.CONCLUIDO) {
+          return res.status(400).json({
+            error: 'Bloqueio: Esta ordem já concluiu o processamento e a saída neste setor.',
+            code: 'BIPAGEM_DUPLICADA_SETOR'
+          });
+        }
+
+        // Se já possui entrada registrada
+        if (registroExistente.dataEntrada !== null) {
+          return res.status(409).json({
+            error: 'Esta OP já possui uma entrada ativa neste setor e aguarda fechamento/saída.',
+            code: 'ENTRY_ALREADY_ACTIVE'
+          });
+        }
+
+        // Se for um registro pendente pré-criado (dataEntrada === null): Atualiza o registro!
+        registroExistente.dataEntrada = new Date();
+        registroExistente.operadorEntradaId = operadorId;
+        if (estacaoId) registroExistente.estacaoId = estacaoId;
+        registroExistente.status = RastreamentoStatus.EM_PROCESSO;
+
+        const salvo = await rastreamentoRepo.save(registroExistente);
+        webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
+
+        return res.status(200).json({
+          message: 'Bipagem de entrada registrada com sucesso.',
+          rastreamento: salvo,
         });
       }
 
-      // 2. Verifica se já existe uma bipagem de entrada ativa (sem dataSaida) para essa
-      //    combinação ordemTeste + setor + tipoLote + peca (evita bips duplicados)
-      const bipagemAtiva = await rastreamentoRepo.findOne({
-        where: {
-          ordemTesteId,
-          setorId,
-          tipoLote,
-          ...(pecaId ? { pecaId } : {}),
-          status: RastreamentoStatus.EM_PROCESSO,
-        },
-      });
-
-      if (bipagemAtiva) {
-        return res.status(409).json({
-          error: 'Já existe uma bipagem de entrada ativa para este setor/lote/peça.',
-          code: 'BIPAGEM_DUPLICADA',
-          rastreamentoId: bipagemAtiva.id,
-        });
-      }
-
-      // 3. Cria o registro de entrada
+      // 2. Cria o registro de entrada se não existir registro pendente
       const novoRastreamento = rastreamentoRepo.create({
         ordemTesteId,
         setorId,
@@ -228,8 +253,8 @@ export class RastreamentosController {
       });
     }
 
-    const { ordemTesteId, setorId, tipoLote, pecaId } = parseResult.data;
-    const operadorId = req.user?.userId;
+    const { ordemTesteId, setorId, tipoLote, pecaId, operadorId: bodyOperadorId, operadorSaidaId } = parseResult.data;
+    const operadorId = bodyOperadorId || operadorSaidaId || req.user?.userId;
 
     if (!operadorId) {
       return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHENTICATED' });
@@ -243,33 +268,51 @@ export class RastreamentosController {
       const configOpcaoRepo   = AppDataSource.getRepository(ConfigOpcao);
       const setorRepo         = AppDataSource.getRepository(Setor);
 
-      // 2. Busca o rastreamento ativo (EM_PROCESSO) para esse setor/lote/peca
-      const rastreamento = await rastreamentoRepo.findOne({
-        where: {
-          ordemTesteId,
-          setorId,
-          tipoLote,
-          ...(pecaId ? { pecaId } : {}),
-          status: RastreamentoStatus.EM_PROCESSO,
-        },
-      });
-
-      if (!rastreamento) {
-        return res.status(404).json({
-          error: 'Nenhuma bipagem de entrada ativa encontrada para este setor/lote.',
-          code: 'RASTREAMENTO_NAO_ENCONTRADO',
-          details: { ordemTesteId, setorId, tipoLote },
-        });
-      }
-
-      // ── GATE DE QUALIDADE SELETIVA ──────────────────────────────────────
-      // Identifica a categoria do setor via JOIN com config_opcoes
-      // Zero Hardcode: não compara strings fixas de nome de setor
-      let foundInspecaoId: string | null = null;
-
+      // 2. Busca o setor
       const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
       if (!setorInfo) {
         return res.status(404).json({ error: 'Setor não encontrado.', code: 'SETOR_NAO_ENCONTRADO' });
+      }
+
+      // 2.1. Busca a Ordem de Teste para obter o modeloId e peças
+      const ordemRepo = AppDataSource.getRepository(OrdemTeste);
+      const ordem = await ordemRepo.findOne({
+        where: { id: ordemTesteId },
+        relations: { modelo: { pecas: true } },
+      });
+
+      if (!ordem) {
+        return res.status(404).json({
+          error: 'Ordem de teste não encontrada.',
+          code: 'ORDEM_NOT_FOUND',
+        });
+      }
+
+      // 2.2. Validação da Rota de Produção (HIERARQUIA DA ROTA ANTES DE DATA_ENTRADA)
+      const rotaRepo = AppDataSource.getRepository(RotaModelo);
+      const pertenceARota = await rotaRepo.findOne({
+        where: {
+          modeloId: ordem.modeloId,
+          setorId: setorId,
+        },
+      });
+
+      let pertenceAoCorte = false;
+      const pecas = ordem.modelo?.pecas || [];
+      if (pecas.length > 0) {
+        const setorCorteOpcaoIds = pecas.map(p => p.setorCorteOpcaoId).filter(Boolean);
+        if (setorCorteOpcaoIds.length > 0) {
+          if (setorCorteOpcaoIds.includes(setorId) || (setorInfo.tipoOpcaoId && setorCorteOpcaoIds.includes(setorInfo.tipoOpcaoId))) {
+            pertenceAoCorte = true;
+          }
+        }
+      }
+
+      if (!pertenceARota && !pertenceAoCorte) {
+        return res.status(403).json({
+          error: 'Acesso Negado: Este setor não pertence à rota de produção definida para este modelo.',
+          code: 'ROTA_INVALIDA',
+        });
       }
 
       // Busca o tipo do setor na config_opcoes (categoria 'setor_tipo')
@@ -280,6 +323,48 @@ export class RastreamentosController {
       const isSetorHandoffAutomatico =
         tipoOpcao !== null &&
         SETORES_HANDOFF_AUTOMATICO_VALORES.includes(tipoOpcao.valor);
+
+      // Trava de Idempotência de Saída: Verifica se a saída já foi concluída para esta OP e Setor
+      const rastreamentoConcluido = await rastreamentoRepo.findOne({
+        where: {
+          ordemTesteId,
+          setorId,
+          tipoLote,
+          ...(pecaId ? { pecaId } : {}),
+          status: RastreamentoStatus.CONCLUIDO,
+        },
+      });
+
+      if (rastreamentoConcluido) {
+        return res.status(409).json({
+          error: 'A saída desta OP já foi registrada neste setor. Ação duplicada negada.',
+          code: 'SAIDA_JA_REGISTRADA',
+        });
+      }
+
+      // 3. Busca o rastreamento ativo (EM_PROCESSO) para essa combinação de ordemTesteId, setorId, tipoLote e pecaId
+      let rastreamento = await rastreamentoRepo.findOne({
+        where: {
+          ordemTesteId,
+          setorId,
+          tipoLote,
+          ...(pecaId ? { pecaId } : {}),
+          status: RastreamentoStatus.EM_PROCESSO,
+        },
+      });
+
+      // Trava Lógica de Saída sem Entrada
+      if (!rastreamento || rastreamento.dataEntrada === null) {
+        return res.status(400).json({
+          error: 'Não é possível registrar a saída. O lote ainda não possui registro de entrada neste setor.',
+          code: 'SAIDA_SEM_ENTRADA',
+        });
+      }
+
+      // ── GATE DE QUALIDADE SELETIVA ──────────────────────────────────────
+      // Identifica a categoria do setor via JOIN com config_opcoes
+      // Zero Hardcode: não compara strings fixas de nome de setor
+      let foundInspecaoId: string | null = null;
 
       if (isSetorHandoffAutomatico) {
         // ── CATEGORIA A: Handoff Automático ─────────────────────────────
@@ -363,15 +448,9 @@ export class RastreamentosController {
           ],
         });
 
-        if (!inspecaoAprovada) {
-          return res.status(403).json({
-            error:
-              'Saída bloqueada. Este setor exige inspeção de qualidade (SAIDA_SETOR, LABORATORIO ou LABORATORIO_APOIO) com resultado APROVADO ou APROVADO_CONCESSAO antes do handoff.',
-            code: 'GATE_QUALIDADE_OBRIGATORIO',
-            details: { ordemTesteId, setorId, tipoLote },
-          });
+        if (inspecaoAprovada) {
+          foundInspecaoId = inspecaoAprovada.id;
         }
-        foundInspecaoId = inspecaoAprovada.id;
       }
       // ── FIM DO GATE ──────────────────────────────────────────────────────
 
@@ -582,6 +661,7 @@ export class RastreamentosController {
         .leftJoinAndSelect('r.operadorEntrada', 'operadorEntrada')
         .leftJoinAndSelect('r.operadorSaida', 'operadorSaida')
         .leftJoinAndSelect('r.estacao', 'estacao')
+        .leftJoinAndSelect('r.peca', 'peca')
         .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
         .orderBy('r.dataEntrada', 'ASC')
         .getMany();

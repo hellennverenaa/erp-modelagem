@@ -42,6 +42,11 @@ const router = createRouter({
           component: () => import('../views/BipagemView.vue'),
         },
         {
+          path: 'inspecao',
+          name: 'inspecao',
+          component: () => import('../views/InspecaoQualidadeView.vue'),
+        },
+        {
           path: 'ordens',
           name: 'ordens',
           component: () => import('../views/GestaoOrdensView.vue'),
@@ -50,6 +55,11 @@ const router = createRouter({
           path: 'modelos',
           name: 'modelos',
           component: () => import('../views/GestaoModelosView.vue'),
+        },
+        {
+          path: 'catalogo-pecas',
+          name: 'catalogo-pecas',
+          component: () => import('../views/CatalogoPecasView.vue'),
         },
         {
           path: 'gerencial',
@@ -67,7 +77,7 @@ const router = createRouter({
           component: () => import('../views/ChecklistView.vue'),
         },
         {
-          path: 'rastreamento/:ordemTesteId',
+          path: 'rastreamento/:ordemTesteId?',
           name: 'rastreamento-ordem',
           component: () => import('../views/RastreamentoOrdemView.vue'),
         },

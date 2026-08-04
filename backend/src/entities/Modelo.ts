@@ -48,6 +48,9 @@ export class Modelo {
   @Column({ type: 'varchar', length: 50, nullable: true })
   temporada: string | null;
 
+  @Column({ name: 'data_corte', type: 'timestamp', nullable: true })
+  dataCorte: Date | null;
+
   @Column({ type: 'enum', enum: ModeloStatus, default: ModeloStatus.CADASTRADO })
   status: ModeloStatus;
 

@@ -9,6 +9,8 @@ import { Modelo } from '../entities/Modelo';
 import { Planta } from '../entities/Planta';
 import { Marca } from '../entities/Marca';
 import { IsNull } from 'typeorm';
+import { ConfigOpcao } from '../entities/ConfigOpcao';
+import { Peca } from '../entities/Peca';
 
 // ─── Schema de validação para criação de Modelo ─────────────────────────────
 const createModeloSchema = z.object({
@@ -16,8 +18,19 @@ const createModeloSchema = z.object({
   codigoProduto: z.string().min(1).max(50),
   nome:          z.string().min(1).max(150),
   temporada:     z.string().max(50).optional().nullable(),
+  dataCorte:     z.string().optional().nullable(),
   mfmReferenciaUrl: z.string().url().optional().nullable(),
   fichaTecnicaUrl:  z.string().url().optional().nullable(),
+  pecas: z.array(
+    z.object({
+      id: z.string().optional(),
+      numero: z.string().optional(),
+      nome: z.string(),
+      codigoOriginal: z.string().optional().nullable(),
+      setorCorteOpcaoId: z.string().optional().nullable(),
+      descricao: z.string().optional().nullable(),
+    })
+  ).optional(),
 });
 
 export class AdminController {
@@ -39,17 +52,64 @@ export class AdminController {
 
   /**
    * Lista todos os setores cadastrados no sistema.
+   * Inclui tipoOpcaoValor (config_opcoes.valor) para o frontend realizar
+   * análise dinâmica do tipo do setor sem UUIDs hardcoded.
    */
   public async getSetores(_req: Request, res: Response): Promise<Response> {
     try {
       const setorRepo = AppDataSource.getRepository(Setor);
+      const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+
       const setores = await setorRepo.find({
         order: { ordemFluxo: 'ASC' }
       });
-      return res.json(setores);
+
+      // Enriquece cada setor com o valor da config_opcao (ex: 'ALMOXARIFADO')
+      const setoresEnriquecidos = await Promise.all(
+        setores.map(async (s) => {
+          const opcao = await configOpcaoRepo.findOne({ where: { id: s.tipoOpcaoId } });
+          return {
+            ...s,
+            tipoOpcaoValor: opcao?.valor ?? null,  // 'ALMOXARIFADO', 'NAVALHA', etc.
+            tipoOpcaoLabel: opcao?.label ?? null,
+          };
+        })
+      );
+
+      return res.json(setoresEnriquecidos);
     } catch (error) {
       console.error('[AdminController] Erro ao listar setores:', error);
       return res.status(500).json({ error: 'Erro ao listar setores' });
+    }
+  }
+
+  /**
+   * Lista todas as config_opcoes, filtradas opcionalmente por categoria.
+   * Ex: GET /api/admin/config-opcoes?categoria=setor_tipo
+   */
+  public async getConfigOpcoes(req: Request, res: Response): Promise<Response> {
+    try {
+      const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+      const { categoria } = req.query as { categoria?: string };
+
+      let opcoes: ConfigOpcao[];
+      if (categoria) {
+        // Busca por join com ConfigCategoria via categoria.valor
+        opcoes = await configOpcaoRepo
+          .createQueryBuilder('co')
+          .leftJoin('co.categoria', 'cat')
+          .where('cat.valor = :categoria', { categoria })
+          .andWhere('co.ativo = true')
+          .orderBy('co.ordem', 'ASC')
+          .getMany();
+      } else {
+        opcoes = await configOpcaoRepo.find({ where: { ativo: true }, order: { ordem: 'ASC' } });
+      }
+
+      return res.json(opcoes);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar config_opcoes:', error);
+      return res.status(500).json({ error: 'Erro ao listar opções de configuração' });
     }
   }
 
@@ -90,6 +150,7 @@ export class AdminController {
       const modelos = await modeloRepo
         .createQueryBuilder('m')
         .leftJoinAndSelect('m.marca', 'marca')
+        .leftJoinAndSelect('m.pecas', 'pecas')
         .orderBy('m.nome', 'ASC')
         .getMany();
       return res.json(modelos);
@@ -114,7 +175,7 @@ export class AdminController {
         });
       }
 
-      const { marcaId, codigoProduto, nome, temporada, mfmReferenciaUrl, fichaTecnicaUrl } = parse.data;
+      const { marcaId, codigoProduto, nome, temporada, dataCorte, mfmReferenciaUrl, fichaTecnicaUrl, pecas } = parse.data;
 
       const modeloRepo = AppDataSource.getRepository(Modelo);
       const marcaRepo  = AppDataSource.getRepository(Marca);
@@ -139,12 +200,25 @@ export class AdminController {
         codigoProduto,
         nome,
         temporada:        temporada        || null,
+        dataCorte:        dataCorte        ? new Date(dataCorte) : null,
         mfmReferenciaUrl: mfmReferenciaUrl || null,
         fichaTecnicaUrl:  fichaTecnicaUrl  || null,
         ativo: true,
       });
 
       const saved = await modeloRepo.save(modelo);
+
+      // Se houver lista de peças enviadas no payload unificado, salva na tabela `pecas`
+      if (pecas && Array.isArray(pecas) && pecas.length > 0) {
+        const pecaRepo = AppDataSource.getRepository(Peca);
+        const novasPecas = pecas.map((p: any) => pecaRepo.create({
+          modeloId: saved.id,
+          nome: p.nome || `${p.numero} - ${p.nome}`,
+          setorCorteOpcaoId: p.setorCorteOpcaoId || null,
+          descricao: p.descricao || p.codigoOriginal || null
+        }));
+        await pecaRepo.save(novasPecas);
+      }
 
       return res.status(201).json({
         message: 'Modelo criado com sucesso.',

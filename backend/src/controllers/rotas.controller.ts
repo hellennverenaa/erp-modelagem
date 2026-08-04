@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { RotaModelo, TipoExecucao } from '../entities/RotaModelo';
 import { Modelo } from '../entities/Modelo';
+import { Setor } from '../entities/Setor';
+import { In } from 'typeorm';
 
 const itemRotaSchema = z.object({
   setorId: z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
@@ -46,6 +48,23 @@ export class RotasController {
         return res.status(404).json({ error: 'Modelo não encontrado.', code: 'MODELO_NOT_FOUND' });
       }
 
+      // Validação de existência dos setores (Prevenção de FK Constraint Error)
+      const setorIdsPayload = Array.from(new Set(rota.map(r => r.setorId)));
+      const setorRepo = AppDataSource.getRepository(Setor);
+      const setoresExistentes = await setorRepo.find({
+        where: { id: In(setorIdsPayload) }
+      });
+      const idsExistentes = setoresExistentes.map(s => s.id);
+      
+      const setoresFaltantes = setorIdsPayload.filter(id => !idsExistentes.includes(id));
+      if (setoresFaltantes.length > 0) {
+        return res.status(400).json({
+          error: 'Um ou mais Setores fornecidos não existem no banco de dados. Foreign Key constraint validation failed.',
+          code: 'SETORES_NOT_FOUND',
+          invalidIds: setoresFaltantes
+        });
+      }
+
       // Executa tudo dentro de uma transação
       await AppDataSource.transaction(async (transactionalEntityManager) => {
         const rotaRepo = transactionalEntityManager.getRepository(RotaModelo);
@@ -74,9 +93,9 @@ export class RotasController {
       });
 
     } catch (error: any) {
-      console.error('[RotasController.salvarRota] Erro:', error);
+      console.error('[RotasController.salvarRota] Erro interno:', error.message || error);
       return res.status(500).json({
-        error: 'Erro interno ao salvar a rota de produção.',
+        error: 'Erro interno ao salvar a rota de produção. ' + (error.message || ''),
         code: 'INTERNAL_ERROR'
       });
     }
@@ -107,7 +126,7 @@ export class RotasController {
       });
 
     } catch (error: any) {
-      console.error('[RotasController.getRota] Erro:', error);
+      console.error('[RotasController.getRota] Erro interno:', error.message || error);
       return res.status(500).json({
         error: 'Erro interno ao buscar rota de produção.',
         code: 'INTERNAL_ERROR'

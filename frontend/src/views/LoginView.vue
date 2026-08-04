@@ -73,7 +73,7 @@ async function handleLogin() {
         <div class="card-inner">
           <div class="card-heading">
             <h2 class="card-title">Acesso ao Sistema</h2>
-            <p class="card-desc">Insira suas credenciais de rede DASS</p>
+            <p class="card-desc">Insira suas credenciais do PORTAL UNIX</p>
           </div>
 
           <!-- Error -->

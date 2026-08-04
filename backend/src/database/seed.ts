@@ -1,308 +1,160 @@
-import 'reflect-metadata';
-import { IsNull, In } from 'typeorm';
 import { AppDataSource } from '../config/database';
+import { Marca } from '../entities/Marca';
 import { Planta } from '../entities/Planta';
+import { Modelo, ModeloStatus } from '../entities/Modelo';
 import { ConfigCategoria } from '../entities/ConfigCategoria';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
-import { Setor } from '../entities/Setor';
-import { Perfil } from '../entities/Perfil';
-import { PerfilPermissao, AcaoSetor } from '../entities/PerfilPermissao';
-import { Usuario } from '../entities/Usuario';
+import { seedCatalogoPecas } from './seeds/seedCatalogoPecas';
+import { seedCatalogoChecklist } from './seeds/seedCatalogoChecklist';
 
-async function seed() {
-  console.log('🌱 Iniciando o Seed do Banco de Dados...');
-
-  // Inicializa a conexão se não estiver inicializada
-  if (!AppDataSource.isInitialized) {
-    await AppDataSource.initialize();
-  }
-
-  const plantaRepo = AppDataSource.getRepository(Planta);
-  const configCategoriaRepo = AppDataSource.getRepository(ConfigCategoria);
-  const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
-  const setorRepo = AppDataSource.getRepository(Setor);
-  const perfilRepo = AppDataSource.getRepository(Perfil);
-  const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
-  const usuarioRepo = AppDataSource.getRepository(Usuario);
-
-  // 1. Planta
-  let planta = await plantaRepo.findOne({ where: { ativo: true } });
-  if (!planta) {
-    planta = plantaRepo.create({
-      nome: 'Planta Padrão',
-      endereco: 'Avenida Principal, 1000',
-      cidade: 'Parobé',
-      estado: 'RS',
-      ativo: true
-    });
-    planta = await plantaRepo.save(planta);
-    console.log(`✅ Planta criada: ${planta.nome}`);
-  } else {
-    console.log(`ℹ️ Planta existente utilizada: ${planta.nome}`);
-  }
-
-  // 2. Config Categories
-  let catSetorTipo = await configCategoriaRepo.findOne({ where: { slug: 'setor_tipo' } });
-  if (!catSetorTipo) {
-    catSetorTipo = configCategoriaRepo.create({
-      slug: 'setor_tipo',
-      nomeExibicao: 'Tipo de Setor',
-      descricao: 'Tipagem dinâmica para controle de regras dos setores',
-      ativo: true
-    });
-    catSetorTipo = await configCategoriaRepo.save(catSetorTipo);
-    console.log(`✅ Categoria 'setor_tipo' criada.`);
-  }
-
-  let catSubsetorCorte = await configCategoriaRepo.findOne({ where: { slug: 'subsetor_corte' } });
-  if (!catSubsetorCorte) {
-    catSubsetorCorte = configCategoriaRepo.create({
-      slug: 'subsetor_corte',
-      nomeExibicao: 'Subsetor de Corte',
-      descricao: 'Tipos de máquina ou sub-processos do Corte Automático',
-      ativo: true
-    });
-    catSubsetorCorte = await configCategoriaRepo.save(catSubsetorCorte);
-    console.log(`✅ Categoria 'subsetor_corte' criada.`);
-  }
-
-  // 3. Config Options for setor_tipo
-  const setorTipoOptions = [
-    { valor: 'ALMOXARIFADO', label: 'Almoxarifado da Modelagem', ordem: 1 },
-    { valor: 'NAVALHA', label: 'Navalha', ordem: 2 },
-    { valor: 'TELAS', label: 'Telas', ordem: 3 },
-    { valor: 'RECEBIMENTO_CORTE', label: 'Corte Recebimento', ordem: 4 },
-    { valor: 'SEPARACAO_CORTE', label: 'Corte Separação', ordem: 5 },
-    { valor: 'DUBLAGEM_CORTE', label: 'Corte Dublagem', ordem: 6 },
-    { valor: 'CORTE_PONTE', label: 'Corte Ponte', ordem: 7 },
-    { valor: 'CORTE_LECTRA', label: 'Corte Lectra', ordem: 8 },
-    { valor: 'CORTE_ATOM', label: 'Corte Atom', ordem: 9 },
-    { valor: 'CORTE_CN', label: 'Corte CN', ordem: 10 },
-    { valor: 'CORTE_COURO', label: 'Corte Couro', ordem: 11 },
-    { valor: 'CORTE_LASER', label: 'Corte Laser', ordem: 12 },
-    { valor: 'SERIGRAFIA', label: 'Serigrafia', ordem: 13 },
-    { valor: 'APOIO', label: 'Apoio', ordem: 14 },
-    { valor: 'BORDADO', label: 'Bordado', ordem: 15 },
-    { valor: 'COSTURA_PROGRAMADA', label: 'Costura Programada', ordem: 16 },
-    { valor: 'COSTURA', label: 'Costura', ordem: 17 },
-    { valor: 'PRE_FABRICADO', label: 'Pré-Fabricado', ordem: 18 },
-    { valor: 'MONTAGEM', label: 'Montagem', ordem: 19 },
-    { valor: 'VULCANIZADO', label: 'Vulcanizado', ordem: 20 },
-    { valor: 'LABORATORIO', label: 'Laboratório', ordem: 21 },
-  ];
-
-  for (const opt of setorTipoOptions) {
-    const existing = await configOpcaoRepo.findOne({
-      where: { categoriaId: catSetorTipo.id, valor: opt.valor }
-    });
-    if (!existing) {
-      const newOpt = configOpcaoRepo.create({
-        categoriaId: catSetorTipo.id,
-        valor: opt.valor,
-        label: opt.label,
-        ordem: opt.ordem,
-        ativo: true
-      });
-      await configOpcaoRepo.save(newOpt);
-    }
-  }
-  console.log(`✅ Opções de 'setor_tipo' semeadas.`);
-
-  // Config Options for subsetor_corte
-  const subsetorCorteOptions = [
-    { valor: 'CORTE_PONTE', label: 'Corte Ponte', ordem: 1 },
-    { valor: 'CORTE_LECTRA', label: 'Corte Lectra', ordem: 2 },
-    { valor: 'CORTE_ATOM', label: 'Corte Atom', ordem: 3 },
-    { valor: 'CORTE_CN', label: 'Corte CN', ordem: 4 },
-    { valor: 'CORTE_COURO', label: 'Corte Couro', ordem: 5 },
-    { valor: 'CORTE_LASER', label: 'Corte Laser', ordem: 6 },
-  ];
-
-  for (const opt of subsetorCorteOptions) {
-    const existing = await configOpcaoRepo.findOne({
-      where: { categoriaId: catSubsetorCorte.id, valor: opt.valor }
-    });
-    if (!existing) {
-      const newOpt = configOpcaoRepo.create({
-        categoriaId: catSubsetorCorte.id,
-        valor: opt.valor,
-        label: opt.label,
-        ordem: opt.ordem,
-        ativo: true
-      });
-      await configOpcaoRepo.save(newOpt);
-    }
-  }
-  console.log(`✅ Opções de 'subsetor_corte' semeadas.`);
-
-  // 4. Sectors
-  const sectorsToSeed = [
-    { nome: 'Almoxarifado da Modelagem', tipoValor: 'ALMOXARIFADO', ordemFluxo: 1, isCondicional: false },
-    { nome: 'Navalha', tipoValor: 'NAVALHA', ordemFluxo: 2, isCondicional: false },
-    { nome: 'Telas', tipoValor: 'TELAS', ordemFluxo: 3, isCondicional: false },
-    { nome: 'Corte Recebimento', tipoValor: 'RECEBIMENTO_CORTE', ordemFluxo: 4, isCondicional: false },
-    { nome: 'Corte Separação', tipoValor: 'SEPARACAO_CORTE', ordemFluxo: 5, isCondicional: false },
-    { nome: 'Corte Dublagem', tipoValor: 'DUBLAGEM_CORTE', ordemFluxo: 6, isCondicional: false },
-    { nome: 'Corte Ponte', tipoValor: 'CORTE_PONTE', ordemFluxo: 7, isCondicional: false },
-    { nome: 'Corte Lectra', tipoValor: 'CORTE_LECTRA', ordemFluxo: 8, isCondicional: false },
-    { nome: 'Corte Atom', tipoValor: 'CORTE_ATOM', ordemFluxo: 9, isCondicional: false },
-    { nome: 'Corte CN', tipoValor: 'CORTE_CN', ordemFluxo: 10, isCondicional: false },
-    { nome: 'Corte Couro', tipoValor: 'CORTE_COURO', ordemFluxo: 11, isCondicional: false },
-    { nome: 'Corte Laser', tipoValor: 'CORTE_LASER', ordemFluxo: 12, isCondicional: false },
-    { nome: 'Serigrafia', tipoValor: 'SERIGRAFIA', ordemFluxo: 13, isCondicional: true },
-    { nome: 'Apoio', tipoValor: 'APOIO', ordemFluxo: 14, isCondicional: false },
-    { nome: 'Bordado', tipoValor: 'BORDADO', ordemFluxo: 15, isCondicional: true },
-    { nome: 'Costura Programada', tipoValor: 'COSTURA_PROGRAMADA', ordemFluxo: 16, isCondicional: false },
-    { nome: 'Costura', tipoValor: 'COSTURA', ordemFluxo: 17, isCondicional: false },
-    { nome: 'Pré-Fabricado', tipoValor: 'PRE_FABRICADO', ordemFluxo: 18, isCondicional: false },
-    { nome: 'Montagem', tipoValor: 'MONTAGEM', ordemFluxo: 19, isCondicional: false },
-    { nome: 'Vulcanizado', tipoValor: 'VULCANIZADO', ordemFluxo: 20, isCondicional: true },
-    { nome: 'Laboratório', tipoValor: 'LABORATORIO', ordemFluxo: 21, isCondicional: false },
-  ];
-
-  for (const s of sectorsToSeed) {
-    const existingSector = await setorRepo.findOne({ where: { nome: s.nome } });
-    if (!existingSector) {
-      const tipoOpcao = await configOpcaoRepo.findOne({
-        where: { categoriaId: catSetorTipo.id, valor: s.tipoValor }
-      });
-      if (!tipoOpcao) {
-        throw new Error(`ConfigOpcao para ${s.tipoValor} não encontrada.`);
-      }
-      const newSector = setorRepo.create({
-        plantaId: planta.id,
-        nome: s.nome,
-        tipoOpcaoId: tipoOpcao.id,
-        ordemFluxo: s.ordemFluxo,
-        isCondicional: s.isCondicional,
-        ativo: true
-      });
-      await setorRepo.save(newSector);
-    }
-  }
-  console.log(`✅ Setores semeados.`);
-
-  // 5. Profiles (perfis)
-  const profileNames = [
-    { nome: 'ADMIN', descricao: 'Administrador do Sistema' },
-    { nome: 'GERENTE_MODELAGEM', descricao: 'Gerente da Modelagem' },
-    { nome: 'COORDENADOR_SETOR', descricao: 'Coordenador de Setor' },
-    { nome: 'REVISORA', descricao: 'Revisora de Máquinas de Corte' },
-    { nome: 'INSPETOR_QUALIDADE', descricao: 'Inspetor de Qualidade' },
-    { nome: 'MODELISTA', descricao: 'Modelista de Calçados' },
-    { nome: 'OPERADOR', descricao: 'Operador de Fábrica Padrão' }
-  ];
-
-  const profilesMap: Record<string, Perfil> = {};
-  for (const p of profileNames) {
-    let profile = await perfilRepo.findOne({ where: { nome: p.nome } });
-    if (!profile) {
-      profile = perfilRepo.create({
-        nome: p.nome,
-        descricao: p.descricao,
-        permissoes: {},
-        ativo: true
-      });
-      profile = await perfilRepo.save(profile);
-    }
-    profilesMap[p.nome] = profile;
-  }
-  console.log(`✅ Perfis criados/verificados.`);
-
-  // Helper function to insert permissions cleanly without duplicates
-  async function grantPermission(perfilId: string, acao: string, permitido: boolean, setorId: string | null = null) {
-    const existing = await perfilPermissaoRepo.findOne({
-      where: {
-        perfilId,
-        acao,
-        setorId: setorId === null ? IsNull() : setorId
-      }
-    });
-
-    if (!existing) {
-      const newPerm = perfilPermissaoRepo.create({
-        perfilId,
-        acao,
-        setorId,
-        permitido
-      });
-      await perfilPermissaoRepo.save(newPerm);
-    } else if (existing.permitido !== permitido) {
-      existing.permitido = permitido;
-      await perfilPermissaoRepo.save(existing);
-    }
-  }
-
-  // 6. Seed perfil_permissoes (Permissions Matrix)
+async function runSeed() {
+  console.log('==================================================');
+  console.log('       INICIANDO DATABASE SEEDING GERAL           ');
+  console.log('==================================================');
   
-  // A. ADMIN gets all permissions globally
-  for (const acao of Object.values(AcaoSetor)) {
-    await grantPermission(profilesMap['ADMIN'].id, acao, true, null);
-  }
-  console.log(`✅ Permissões de ADMIN concedidas (Global).`);
+  await AppDataSource.initialize();
+  console.log('[OK] Conexão com o banco de dados estabelecida.\n');
 
-  // B. MODELISTA gets EDITAR_ROTA and general bipagem globally
-  await grantPermission(profilesMap['MODELISTA'].id, AcaoSetor.EDITAR_ROTA, true, null);
-  await grantPermission(profilesMap['MODELISTA'].id, AcaoSetor.BIPAR_ENTRADA, true, null);
-  await grantPermission(profilesMap['MODELISTA'].id, AcaoSetor.BIPAR_SAIDA, true, null);
-
-  // C. GERENTE_MODELAGEM gets REGISTRAR_VEREDICTO_FINAL and general bipagem globally
-  await grantPermission(profilesMap['GERENTE_MODELAGEM'].id, AcaoSetor.REGISTRAR_VEREDICTO_FINAL, true, null);
-  await grantPermission(profilesMap['GERENTE_MODELAGEM'].id, AcaoSetor.BIPAR_ENTRADA, true, null);
-  await grantPermission(profilesMap['GERENTE_MODELAGEM'].id, AcaoSetor.BIPAR_SAIDA, true, null);
-
-  // D. INSPETOR_QUALIDADE gets INSPECIONAR_SETOR and general bipagem globally
-  await grantPermission(profilesMap['INSPETOR_QUALIDADE'].id, AcaoSetor.INSPECIONAR_SETOR, true, null);
-  await grantPermission(profilesMap['INSPETOR_QUALIDADE'].id, AcaoSetor.BIPAR_ENTRADA, true, null);
-  await grantPermission(profilesMap['INSPETOR_QUALIDADE'].id, AcaoSetor.BIPAR_SAIDA, true, null);
-
-  // E. OPERADOR gets general bipagem and preencher checklist globally
-  await grantPermission(profilesMap['OPERADOR'].id, AcaoSetor.BIPAR_ENTRADA, true, null);
-  await grantPermission(profilesMap['OPERADOR'].id, AcaoSetor.BIPAR_SAIDA, true, null);
-  await grantPermission(profilesMap['OPERADOR'].id, AcaoSetor.PREENCHER_CHECKLIST, true, null);
-
-  // F. REVISORA gets REVISAO_MAQUINA on specific machine cutting sectors, plus general bipagem globally
-  await grantPermission(profilesMap['REVISORA'].id, AcaoSetor.BIPAR_ENTRADA, true, null);
-  await grantPermission(profilesMap['REVISORA'].id, AcaoSetor.BIPAR_SAIDA, true, null);
-  
-  const targetCorteSectors = await setorRepo.find({
-    where: {
-      nome: In(['Corte Ponte', 'Corte Lectra', 'Corte Atom', 'Corte CN', 'Corte Couro', 'Corte Laser'])
+  try {
+    // 1. Inserir Planta Principal
+    console.log('--- [PASSO 1/6] Seeding Planta Principal ---');
+    const plantaRepo = AppDataSource.getRepository(Planta);
+    let plantaPrincipal = await plantaRepo.findOne({ where: { nome: 'Planta Principal' } });
+    if (!plantaPrincipal) {
+      plantaPrincipal = plantaRepo.create({
+        nome: 'Planta Principal',
+        cidade: 'Matriz',
+        ativo: true
+      });
+      await plantaRepo.save(plantaPrincipal);
+      console.log('[OK] Planta Principal inserida.');
+    } else {
+      console.log('[OK] Planta Principal já existe.');
     }
-  });
 
-  for (const sec of targetCorteSectors) {
-    await grantPermission(profilesMap['REVISORA'].id, AcaoSetor.REVISAO_MAQUINA, true, sec.id);
+    // 2. Inserir Marcas
+    console.log('\n--- [PASSO 2/6] Seeding Marcas ---');
+    const marcaRepo = AppDataSource.getRepository(Marca);
+    const marcasNomes = ['Nike', 'Fila', 'Osklen'];
+    const marcasCriadas: Record<string, Marca> = {};
+    for (const nome of marcasNomes) {
+      let marca = await marcaRepo.findOne({ where: { nome } });
+      if (!marca) {
+        marca = marcaRepo.create({ nome, ativo: true });
+        await marcaRepo.save(marca);
+        console.log(`[OK] Marca '${nome}' inserida.`);
+      } else {
+        console.log(`[OK] Marca '${nome}' já existe.`);
+      }
+      marcasCriadas[nome] = marca;
+    }
+
+    // 3. Inserir ConfigCategoria e ConfigOpcoes
+    console.log('\n--- [PASSO 3/6] Seeding Categorias e Opções de Configuração ---');
+    const categoriaRepo = AppDataSource.getRepository(ConfigCategoria);
+    const opcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+
+    const categoriasData = [
+      {
+        slug: 'setor_tipo',
+        nomeExibicao: 'Tipo de Setor',
+        descricao: 'Categorização principal dos setores na fábrica',
+        opcoes: ['Almoxarifado', 'Navalha', 'Telas', 'Corte', 'Apoio', 'Costura', 'Pré-Fabricado', 'Montagem', 'Acabamento']
+      },
+      {
+        slug: 'subsetor_corte',
+        nomeExibicao: 'Subtipo de Corte',
+        descricao: 'Máquinas e tipos específicos de corte',
+        opcoes: ['Lectra', 'Atom', 'Ponte', 'Laser', 'Balancim']
+      }
+    ];
+
+    for (const catData of categoriasData) {
+      let categoria = await categoriaRepo.findOne({ where: { slug: catData.slug } });
+      if (!categoria) {
+        categoria = categoriaRepo.create({
+          slug: catData.slug,
+          nomeExibicao: catData.nomeExibicao,
+          descricao: catData.descricao,
+          ativo: true
+        });
+        await categoriaRepo.save(categoria);
+        console.log(`[OK] Categoria '${catData.slug}' inserida.`);
+      } else {
+        console.log(`[OK] Categoria '${catData.slug}' já existe.`);
+      }
+
+      for (let i = 0; i < catData.opcoes.length; i++) {
+        const valorOpcao = catData.opcoes[i];
+        let opcao = await opcaoRepo.findOne({ where: { categoriaId: categoria.id, valor: valorOpcao } });
+        if (!opcao) {
+          opcao = opcaoRepo.create({
+            categoria,
+            valor: valorOpcao,
+            label: valorOpcao,
+            ordem: i + 1,
+            ativo: true
+          });
+          await opcaoRepo.save(opcao);
+          console.log(`  └─ [OK] Opção '${valorOpcao}' inserida em '${catData.slug}'.`);
+        } else {
+          console.log(`  └─ [OK] Opção '${valorOpcao}' já existe em '${catData.slug}'.`);
+        }
+      }
+    }
+
+    // 4. Inserir Modelos
+    console.log('\n--- [PASSO 4/6] Seeding Modelos Iniciais ---');
+    const modeloRepo = AppDataSource.getRepository(Modelo);
+    const modelosData = [
+      { nome: 'Air Max 90', codigoProduto: 'NK-AM90', marcaNome: 'Nike' },
+      { nome: 'Disruptor', codigoProduto: 'FL-DISR', marcaNome: 'Fila' },
+      { nome: 'Riva', codigoProduto: 'OS-RIVA', marcaNome: 'Osklen' }
+    ];
+
+    for (const modData of modelosData) {
+      const marca = marcasCriadas[modData.marcaNome];
+      if (!marca) continue;
+
+      let modelo = await modeloRepo.findOne({ where: { codigoProduto: modData.codigoProduto } });
+      if (!modelo) {
+        modelo = modeloRepo.create({
+          nome: modData.nome,
+          codigoProduto: modData.codigoProduto,
+          marca,
+          status: ModeloStatus.CADASTRADO,
+          ativo: true
+        });
+        await modeloRepo.save(modelo);
+        console.log(`[OK] Modelo '${modData.nome}' inserido.`);
+      } else {
+        console.log(`[OK] Modelo '${modData.nome}' já existe.`);
+      }
+    }
+
+    // 5. Inserir Catálogo de Peças (Dados.csv)
+    console.log('\n==================================================');
+    console.log('--- [PASSO 5/6] EXECUTANDO SEEDER DE PEÇAS (Dados.csv) ---');
+    console.log('==================================================');
+    const totalPecas = await seedCatalogoPecas(AppDataSource);
+    console.log(`[SUCESSO] Passo 5 concluído: ${totalPecas} peças salvas.\n`);
+
+    // 6. Inserir Catálogo de Itens de Checklist (Checklist-Modelagem.csv)
+    console.log('==================================================');
+    console.log('--- [PASSO 6/6] EXECUTANDO SEEDER DE CHECKLIST ---');
+    console.log('==================================================');
+    const totalChecklist = await seedCatalogoChecklist(AppDataSource);
+    console.log(`[SUCESSO] Passo 6 concluído: ${totalChecklist} itens de checklist salvos.\n`);
+
+    console.log('==================================================');
+    console.log('    DATABASE SEEDING CONCLUÍDO COM SUCESSO!       ');
+    console.log('==================================================');
+  } catch (error) {
+    console.error('ERRO CRÍTICO DURANTE O SEEDING:', error);
+  } finally {
+    await AppDataSource.destroy();
+    console.log('[OK] Conexão com o banco encerrada.');
   }
-
-  // G. COORDENADOR_SETOR gets FECHAMENTO_LOTE on machine cutting sectors, plus general bipagem globally
-  await grantPermission(profilesMap['COORDENADOR_SETOR'].id, AcaoSetor.BIPAR_ENTRADA, true, null);
-  await grantPermission(profilesMap['COORDENADOR_SETOR'].id, AcaoSetor.BIPAR_SAIDA, true, null);
-  await grantPermission(profilesMap['COORDENADOR_SETOR'].id, AcaoSetor.PREENCHER_CHECKLIST, true, null);
-
-  for (const sec of targetCorteSectors) {
-    await grantPermission(profilesMap['COORDENADOR_SETOR'].id, AcaoSetor.FECHAMENTO_LOTE, true, sec.id);
-  }
-  console.log(`✅ Permissões dos demais perfis (MODELISTA, GERENTE, INSPETOR, OPERADOR, REVISORA, COORDENADOR) semeadas.`);
-
-  // 7. Promotion of HELLEN.MAGALHAES to ADMIN
-  const userHellen = await usuarioRepo.findOne({ where: { usuario: 'HELLEN.MAGALHAES' } });
-  if (userHellen) {
-    userHellen.perfilId = profilesMap['ADMIN'].id;
-    await usuarioRepo.save(userHellen);
-    console.log(`⭐ Promoção: Usuário 'HELLEN.MAGALHAES' promovido a ADMIN com sucesso.`);
-  } else {
-    console.warn(`⚠️ Promoção: Usuário 'HELLEN.MAGALHAES' não encontrado no banco de dados.`);
-  }
-
-  console.log('✨ Seed finalizado com sucesso!');
 }
 
-seed()
-  .then(() => {
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('❌ Erro durante a execução do seed:', error);
-    process.exit(1);
-  });
+runSeed();

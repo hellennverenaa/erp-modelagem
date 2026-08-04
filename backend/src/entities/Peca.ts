@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { Modelo } from './Modelo';
 import { Rastreamento } from './Rastreamento';
+import { ConfigOpcao } from './ConfigOpcao';
 
 @Entity({ name: 'pecas' })
 export class Peca {
@@ -37,6 +38,10 @@ export class Peca {
   // Determina para qual subsetor de máquina a peça vai na etapa de distribuição do corte.
   @Column({ name: 'setor_corte_opcao_id', type: 'uuid' })
   setorCorteOpcaoId: string;
+
+  @ManyToOne(() => ConfigOpcao, { nullable: true })
+  @JoinColumn({ name: 'setor_corte_opcao_id' })
+  setorCorteOpcao: ConfigOpcao;
 
   // Rastreamentos associados às bipagens individuais desta peça
   @OneToMany(() => Rastreamento, (rastreamento) => rastreamento.peca)

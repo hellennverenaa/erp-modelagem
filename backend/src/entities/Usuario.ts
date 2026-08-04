@@ -61,8 +61,37 @@ export class Usuario {
   @Column({ type: 'varchar', length: 100 })
   cargo: string;
 
+  // Código do crachá para autenticação por aproximação no Modo Quiosque
+  // Suporta leitura agnóstica de hardware (Leitores RFID e Leitores de Código de Barras)
+  @Column({ name: 'codigo_crachao', type: 'varchar', length: 50, unique: true, nullable: true })
+  codigoCrachao: string | null;
+
+  @Column({ name: 'codigo_cracha', type: 'varchar', length: 50, unique: true, nullable: true })
+  codigoCracha: string | null;
+
+  // Chip RFID de aproximação (ex: 2629318421)
+  @Column({ name: 'rfid', type: 'varchar', length: 50, unique: true, nullable: true })
+  rfid: string | null;
+
+  // Código de barras impresso no crachá (ex: 48192892882045)
+  @Column({ name: 'codigo_barras_cracha', type: 'varchar', length: 50, unique: true, nullable: true })
+  codigoBarrasCracha: string | null;
+
   @Column({ type: 'varchar', length: 200, nullable: true })
   email: string | null;
+
+  /**
+   * Função estática para normalização agnóstica de crachás (RFID / Código de Barras).
+   * Elimina espaços, caracteres de controle de leitores de código de barras e padroniza caixa alta.
+   */
+  static normalizarCodigoCrachao(input: string | null | undefined): string {
+    if (!input) return '';
+    // Remove caracteres nulos/controle comuns em scanners USB (ex: \r, \n, \t) e espaços
+    let limpo = input.replace(/[\r\n\t\f\v]/g, '').trim();
+    // Converter para maiúsculas para manter consistência entre RFID hex/dec e Barcodes
+    limpo = limpo.toUpperCase();
+    return limpo;
+  }
 
   @Column({ type: 'boolean', default: true })
   ativo: boolean;
