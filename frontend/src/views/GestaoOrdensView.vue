@@ -48,12 +48,24 @@ interface MarcaInfo {
   nome: string
 }
 
+interface RotaModeloItem {
+  id: string
+  ordem: number
+  obrigatorio: boolean
+  setor: {
+    id: string
+    nome: string
+  }
+}
+
 interface Modelo {
   id: string
   nome: string
   codigoProduto: string
   pecas?: PecaInfo[]
   marca?: MarcaInfo
+  rotas?: RotaModeloItem[]
+  slasPorSetor?: Record<string, number> | null
 }
 
 interface OrdemTeste {
@@ -684,39 +696,59 @@ async function abrirManutencao(ordem: OrdemTeste) {
   // Fonte primaria: SLAs proprios da ordem
   const ordemSlaMap: Record<string, number> = ordem.slasPorSetor || {}
 
-  // Fonte secundaria: herda do modelo (rota ou modelo.slasPorSetor)
-  const modeloSlaMap: Record<string, number> =
-    (ordem as any).modelo?.rota?.slasPorSetor ||
-    (ordem as any).modelo?.slasPorSetor ||
-    {}
+  // Fonte secundaria: herda do modelo (slasPorSetor do modelo)
+  const modeloSlaMap: Record<string, number> = (ordem.modelo as any)?.slasPorSetor || {}
 
-  // Setores industriais reais do chao de fabrica (sem 'default')
-  const standardSectors = [
-    'Conferencia Inicial',
-    'Corte Recebimento',
-    'Serigrafia',
-    'Apoio',
-    'Costura',
-    'Montagem',
-    'Vulcanizado',
-    'Laboratorio'
-  ]
+  // Fonte de setores: rota cadastrada no banco para o modelo desta ordem
+  // Se a rota ainda nao estiver carregada na ordem, busca via API
+  let rotaSetores: Array<{ id: string; nome: string; ordem: number }> = []
 
-  // Coleta chaves reais: da ordem + do modelo, excluindo 'default'
-  const sectorKeys = new Set<string>(standardSectors)
-  Object.keys(ordemSlaMap).forEach(k => { if (k !== 'default') sectorKeys.add(k) })
-  Object.keys(modeloSlaMap).forEach(k => { if (k !== 'default') sectorKeys.add(k) })
+  if (Array.isArray(ordem.modelo?.rotas) && ordem.modelo!.rotas!.length > 0) {
+    // Usa a rota ja carregada (TypeORM relation eager/explicit)
+    rotaSetores = ordem.modelo!.rotas!
+      .sort((a, b) => a.ordem - b.ordem)
+      .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem }))
+  } else if (ordem.modeloId) {
+    // Fallback: busca a rota via API caso nao tenha vindo na listagem principal
+    try {
+      const resModelo = await api.get(`/admin/modelos/${ordem.modeloId}`)
+      const modeloData = resModelo.data.modelo || resModelo.data
+      if (Array.isArray(modeloData?.rotas) && modeloData.rotas.length > 0) {
+        rotaSetores = (modeloData.rotas as RotaModeloItem[])
+          .sort((a, b) => a.ordem - b.ordem)
+          .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem }))
+        // Atualiza a ordem em cache para proximas aberturas
+        if (ordem.modelo) {
+          ;(ordem.modelo as any).rotas = modeloData.rotas
+        }
+      }
+      // Captura tambem o slasPorSetor do modelo se disponivel
+      if (modeloData?.slasPorSetor && typeof modeloData.slasPorSetor === 'object') {
+        Object.assign(modeloSlaMap, modeloData.slasPorSetor)
+      }
+    } catch (err) {
+      console.warn('[abrirManutencao] Erro ao buscar rota do modelo:', err)
+    }
+  }
 
-  const slasItems: SlaSetorFormItem[] = []
-  sectorKeys.forEach(key => {
-    // Prioridade 1: SLA proprio da ordem; Prioridade 2: herda do modelo; Prioridade 3: zero
-    const rawMin = ordemSlaMap[key] ?? modeloSlaMap[key]
-
+  // Monta a lista de SLA a partir dos setores reais da rota
+  // Prioridade 1: SLA proprio da ordem; Prioridade 2: herda modelo; Prioridade 3: 0 min
+  const slasItems: SlaSetorFormItem[] = rotaSetores.map(setor => {
+    const rawMin = ordemSlaMap[setor.nome] ?? ordemSlaMap[setor.id] ?? modeloSlaMap[setor.nome] ?? modeloSlaMap[setor.id]
     if (rawMin !== undefined && rawMin !== null) {
       const { valor, unidade } = hydratateReverseSla(rawMin)
-      slasItems.push({ setorKey: key, setorNome: key, valor, unidade })
-    } else {
-      slasItems.push({ setorKey: key, setorNome: key, valor: 0, unidade: 'min' })
+      return { setorKey: setor.id, setorNome: setor.nome, valor, unidade }
+    }
+    return { setorKey: setor.id, setorNome: setor.nome, valor: 0, unidade: 'min' as const }
+  })
+
+  // Inclui chaves da ordem que nao pertencem a nenhum setor da rota (ex: SLAs customizados)
+  const rotaIds = new Set(rotaSetores.map(s => s.id))
+  const rotaNomes = new Set(rotaSetores.map(s => s.nome))
+  Object.keys(ordemSlaMap).forEach(k => {
+    if (k !== 'default' && !rotaIds.has(k) && !rotaNomes.has(k)) {
+      const { valor, unidade } = hydratateReverseSla(ordemSlaMap[k])
+      slasItems.push({ setorKey: k, setorNome: k, valor, unidade })
     }
   })
 
@@ -1623,7 +1655,7 @@ onMounted(async () => {
             <div class="modal-header">
               <div class="modal-header-left">
                 <div class="modal-icon-wrap" aria-hidden="true">
-                  <Settings :size="20" class="text-indigo-600" />
+                  <Settings :size="20" />
                 </div>
                 <div>
                   <h2 id="modal-title-manutencao" class="modal-title">Manutenção da Ordem {{ manutencaoOrdem?.codigoBarras }}</h2>
@@ -1697,19 +1729,19 @@ onMounted(async () => {
                 <!-- Cabecalho SLA -->
                 <div class="flex items-center justify-between gap-3 flex-wrap">
                   <div class="flex items-center gap-2">
-                    <Clock :size="14" class="text-zinc-400 shrink-0" />
-                    <span class="text-xs font-black text-zinc-100 uppercase tracking-widest">Prazos de SLA por Setor</span>
+                    <Clock :size="14" class="text-slate-500 shrink-0" />
+                    <span class="text-xs font-black text-slate-800 uppercase tracking-widest">Prazos de SLA por Setor</span>
                   </div>
                   <span
                     v-if="!canEditSla"
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-800 border border-white/10 text-zinc-400 text-xs font-bold"
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-xs font-bold"
                   >
                     <Lock :size="11" />
                     Somente leitura
                   </span>
                   <span
                     v-else
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-700/40 text-emerald-300 text-xs font-bold"
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold"
                   >
                     <ShieldCheck :size="11" />
                     Edicao liberada
@@ -1721,8 +1753,8 @@ onMounted(async () => {
                   <div
                     v-for="s in formManutencao.slas"
                     :key="s.setorKey"
-                    class="bg-zinc-900/30 backdrop-blur-xl border border-white/10 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors"
-                    :class="canEditSla ? 'hover:border-white/20' : 'opacity-70'"
+                    class="bg-slate-50/70 backdrop-blur-md border border-slate-200/80 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_4px_20px_rgba(0,0,0,0.02)] text-slate-800 transition-colors"
+                    :class="canEditSla ? 'hover:border-emerald-500/40' : 'opacity-80'"
                   >
                     <!-- Nome do setor -->
                     <div class="flex items-center justify-between min-w-0">
@@ -1730,18 +1762,17 @@ onMounted(async () => {
                         <Clock
                           :size="13"
                           class="shrink-0"
-                          :class="canEditSla ? 'text-emerald-400' : 'text-zinc-500'"
+                          :class="canEditSla ? 'text-emerald-600' : 'text-slate-400'"
                         />
                         <span
-                          class="text-sm font-semibold truncate"
-                          :class="canEditSla ? 'text-zinc-100' : 'text-zinc-400'"
+                          class="text-sm font-bold truncate text-slate-800"
                         >{{ s.setorNome }}</span>
                       </div>
-                      <Lock v-if="!canEditSla" :size="12" class="text-amber-400 shrink-0 ml-2" />
+                      <Lock v-if="!canEditSla" :size="12" class="text-amber-500 shrink-0 ml-2" />
                     </div>
 
                     <!-- Divisor -->
-                    <div class="h-px bg-white/8"></div>
+                    <div class="h-px bg-slate-200/60"></div>
 
                     <!-- Controles: valor + unidade -->
                     <div class="flex items-center gap-2">
@@ -1750,12 +1781,12 @@ onMounted(async () => {
                         min="0"
                         v-model.number="s.valor"
                         :disabled="!canEditSla"
-                        class="w-20 px-2 h-9 text-sm font-black font-mono text-white bg-black/50 border border-slate-700/60 rounded-lg outline-none focus:border-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="w-20 px-3 py-2 text-sm font-bold font-mono text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
                       />
                       <select
                         v-model="s.unidade"
                         :disabled="!canEditSla"
-                        class="flex-1 min-w-[100px] h-9 px-3 py-2 text-xs font-bold text-white bg-black/50 border border-slate-700/60 rounded-lg outline-none focus:border-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="flex-1 min-w-[100px] px-3 py-2 text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
                       >
                         <option value="min">Minutos</option>
                         <option value="h">Horas</option>
@@ -1764,7 +1795,7 @@ onMounted(async () => {
                     </div>
 
                     <!-- Equivalencia em minutos -->
-                    <p class="text-xs font-semibold text-zinc-500 text-right tabular-nums">
+                    <p class="text-xs font-semibold text-slate-500 text-right tabular-nums">
                       = {{ s.unidade === 'd' ? s.valor * 1440 : s.unidade === 'h' ? s.valor * 60 : s.valor }} min
                     </p>
                   </div>
@@ -2292,55 +2323,55 @@ onMounted(async () => {
   overflow: hidden;
 }
 
-/* Variante do modal de manutencao: glassmorphism escuro + largura expandida */
+/* Variante do modal de manutencao: glassmorphism claro + largura expandida */
 .modal-panel--manutencao {
   max-width: 48rem;
-  background: rgba(9, 9, 11, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.80);
+  border: 1px solid rgba(203, 213, 225, 0.60);
+  border-radius: 1.5rem;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  box-shadow: 0 32px 80px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.04);
 }
 
-/* ─── Overrides do modal de manutencao (tema escuro) ─── */
 .modal-panel--manutencao .modal-header {
-  border-bottom-color: rgba(255, 255, 255, 0.06);
+  border-bottom-color: rgba(226, 232, 240, 0.80);
   background: transparent;
 }
 .modal-panel--manutencao .modal-title {
-  color: #f4f4f5;
+  color: #0f172a;
 }
 .modal-panel--manutencao .modal-description {
-  color: #a1a1aa;
+  color: #64748b;
 }
 .modal-panel--manutencao .modal-icon-wrap {
-  background: linear-gradient(135deg, #064e3b, #065f46);
+  background: linear-gradient(135deg, #0f172a, #1e293b);
 }
 .modal-panel--manutencao .modal-close {
-  border-color: rgba(255, 255, 255, 0.12);
-  color: #71717a;
+  border-color: #e2e8f0;
+  color: #94a3b8;
 }
 .modal-panel--manutencao .modal-close:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #f4f4f5;
+  background: #f1f5f9;
+  color: #0f172a;
 }
 .modal-panel--manutencao .modal-footer {
-  border-top-color: rgba(255, 255, 255, 0.06);
+  border-top-color: #f1f5f9;
   background: transparent;
 }
 .modal-panel--manutencao .form-label {
-  color: #d4d4d8;
+  color: #334155;
 }
 .modal-panel--manutencao .form-input {
-  background: rgba(0, 0, 0, 0.4);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: #f4f4f5;
-  color-scheme: dark;
+  background: #ffffff;
+  border-color: #e2e8f0;
+  color: #0f172a;
 }
 .modal-panel--manutencao .form-input:focus {
-  border-color: #34d399;
-  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15);
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
 }
+
 
 .modal-header {
   display: flex;

@@ -42,7 +42,7 @@ export class LotesController {
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const lotes = await loteRepo.find({
         relations: {
-          modelo: { pecas: { setorCorteOpcao: true }, marca: true },
+          modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
           planta: true,
           criadoPor: true
         },
@@ -70,7 +70,7 @@ export class LotesController {
       const lote = await loteRepo.findOne({
         where: { id },
         relations: {
-          modelo: { pecas: { setorCorteOpcao: true }, marca: true },
+          modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
           planta: true,
           criadoPor: true
         }
