@@ -82,6 +82,11 @@ const router = createRouter({
           component: () => import('../views/RastreamentoOrdemView.vue'),
         },
         {
+          path: 'tv-rastreamento',
+          name: 'tv-rastreamento',
+          component: () => import('../views/TVRastreamentoView.vue'),
+        },
+        {
           path: 'acesso-negado',
           name: 'acesso-negado',
           component: {

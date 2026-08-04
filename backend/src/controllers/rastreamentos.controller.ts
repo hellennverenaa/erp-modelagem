@@ -199,6 +199,7 @@ export class RastreamentosController {
 
         const salvo = await rastreamentoRepo.save(registroExistente);
         webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
+        webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvo });
 
         return res.status(200).json({
           message: 'Bipagem de entrada registrada com sucesso.',
@@ -222,6 +223,7 @@ export class RastreamentosController {
 
       // Emitir avanço via WebSocket
       webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
+      webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvo });
 
       return res.status(201).json({
         message: 'Bipagem de entrada registrada com sucesso.',
@@ -492,6 +494,7 @@ export class RastreamentosController {
 
       // Emitir avanço via WebSocket
       webSocketService.emit('peca:avanco', { action: 'saida', data: atualizado });
+      webSocketService.emit('rastreamento:atualizado', { action: 'saida', data: atualizado });
 
       // 5. Handoff Automático (se aplicável)
       // Se for um setor de Handoff Automático (Categoria A), transfere automaticamente para o próximo setor lógico da rota
@@ -602,6 +605,7 @@ export class RastreamentosController {
                     });
                     const salvoHandoff = await rastreamentoRepo.save(proximoRastreamento);
                     webSocketService.emit('peca:avanco', { action: 'handoff', data: salvoHandoff });
+                    webSocketService.emit('rastreamento:atualizado', { action: 'handoff', data: salvoHandoff });
                     console.log(`[Handoff Automático] Peça transferida automaticamente de ${setorId} para ${proxima.setorId}`);
                   } else {
                     console.log(`[Handoff Automático] Evitada duplicidade. Entrada para o setor ${proxima.setorId} já existe.`);

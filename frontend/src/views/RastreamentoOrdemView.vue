@@ -178,11 +178,13 @@ async function fetchOrdemDetails() {
 
 function initWebSocket() {
   const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api')
-  const socketUrl = apiUrl.replace('/api', '')
+  const socketUrl = apiUrl.replace(/\/api\/?$/, '')
 
   socket = io(socketUrl, {
-    transports: ['websocket'],
+    transports: ['websocket', 'polling'],
     reconnection: true,
+    reconnectionDelay: 1000,
+    withCredentials: true,
   })
 
   socket.on('connect', () => {
@@ -194,7 +196,13 @@ function initWebSocket() {
   })
 
   socket.on('peca:avanco', (data: any) => {
-    if (data.ordemTesteId === ordemId.value) {
+    if (!data?.ordemTesteId || data.ordemTesteId === ordemId.value || data?.data?.ordemTesteId === ordemId.value) {
+      fetchOrdemDetails()
+    }
+  })
+
+  socket.on('rastreamento:atualizado', (data: any) => {
+    if (!data?.ordemTesteId || data.ordemTesteId === ordemId.value || data?.data?.ordemTesteId === ordemId.value) {
       fetchOrdemDetails()
     }
   })
