@@ -179,12 +179,14 @@ async function fetchOrdemDetails() {
 function initWebSocket() {
   const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api')
   const socketUrl = apiUrl.replace(/\/api\/?$/, '')
+  const token = localStorage.getItem('erp_token') || localStorage.getItem('token') || ''
 
   socket = io(socketUrl, {
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,
     withCredentials: true,
+    auth: { token }
   })
 
   socket.on('connect', () => {
