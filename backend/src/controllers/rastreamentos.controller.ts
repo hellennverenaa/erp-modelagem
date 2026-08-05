@@ -465,22 +465,29 @@ export class RastreamentosController {
       const tempoTotalMs  = agora.getTime() - dataEntrada.getTime();
       const tempoTotalMin = Math.floor(tempoTotalMs / 60_000);
 
-      // Soma o tempo das ocorrências que interrompem SLA (com resolução registrada)
+      // Soma o tempo das ocorrências que interrompem SLA (por rastreamentoId ou por OP e setor)
       const ocorrencias = await ocorrenciaRepo
         .createQueryBuilder('oc')
-        .where('oc.rastreamentoId = :rastreamentoId', { rastreamentoId: rastreamento.id })
+        .where('(oc.rastreamentoId = :rastreamentoId OR (oc.ordemTesteId = :ordemTesteId AND oc.setorId = :setorId))', {
+          rastreamentoId: rastreamento.id,
+          ordemTesteId: rastreamento.ordemTesteId,
+          setorId: rastreamento.setorId
+        })
         .andWhere('oc.interrompeSla = true')
         .andWhere('oc.dataResolucao IS NOT NULL')
         .getMany();
 
       let tempoPausadoMs = 0;
       for (const oc of ocorrencias) {
-        if (oc.dataResolucao) {
-          tempoPausadoMs +=
-            oc.dataResolucao.getTime() - oc.dataOcorrencia.getTime();
+        if (oc.dataResolucao && oc.dataOcorrencia) {
+          const startMs = new Date(oc.dataOcorrencia).getTime();
+          const endMs = new Date(oc.dataResolucao).getTime();
+          if (endMs > startMs) {
+            tempoPausadoMs += (endMs - startMs);
+          }
         }
       }
-      const tempoPausadoMin   = Math.floor(tempoPausadoMs / 60_000);
+      const tempoPausadoMin = Math.floor(tempoPausadoMs / 60_000);
       const tempoPermanenciaMin = Math.max(0, tempoTotalMin - tempoPausadoMin);
 
       // 4. Atualiza o rastreamento com dados de saída

@@ -1,183 +1,437 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { io } from 'socket.io-client'
+import { io, Socket } from 'socket.io-client'
 import api from '../api/axios'
-import { ArrowLeft, RotateCcw, Tag, Layers, Maximize, X } from '@lucide/vue'
 import { gsap } from 'gsap'
+import {
+  ArrowLeft,
+  RotateCcw,
+  Layers,
+  Maximize,
+  X,
+  Wifi,
+  WifiOff,
+  Box,
+  PackageCheck,
+  Clock,
+  Activity,
+  CheckCircle2,
+  Check,
+  AlertTriangle,
+  Eye,
+  User,
+  Cpu,
+  Image as ImageIcon
+} from 'lucide-vue-next'
+
+interface RastreamentoItem {
+  id: string
+  setorId: string
+  setor?: { id: string; nome: string; tipoSetor?: string }
+  estacao?: { id: string; nome: string; codigo?: string }
+  operadorEntrada?: { id: string; nome: string; email?: string }
+  operadorSaida?: { id: string; nome: string; email?: string }
+  tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL'
+  status: string
+  dataEntrada: string
+  dataSaida?: string | null
+  tempoPermanenciaMin?: number | null
+  ocorrencias?: Array<{
+    id: string
+    titulo: string
+    descricao?: string | null
+    dataOcorrencia: string
+    interrompeSla: boolean
+    resolvido?: boolean
+    anexos?: Array<{ id: string; url: string; nomeArquivo: string }>
+  }>
+}
+
+interface NodeTrackItem {
+  key: string
+  setorId: string
+  nome: string
+  dataEntrada: string
+  dataSaida?: string | null
+  status: string
+  ordem: number
+  tempoPermanenciaMin?: number | null
+  slaAlvoMin?: number | null
+  operadorEntradaNome?: string | null
+  operadorSaidaNome?: string | null
+  estacaoNome?: string | null
+  ocorrencias?: Array<{
+    id: string
+    titulo: string
+    descricao?: string | null
+    dataOcorrencia: string
+    interrompeSla: boolean
+    resolvido?: boolean
+    anexos?: Array<{ id: string; url: string; nomeArquivo: string }>
+  }>
+}
+
+interface OrdemOP {
+  id: string
+  codigoBarras: string
+  status: string
+  possuiCaixaTeste: boolean
+  slasPorSetor?: Record<string, number> | null
+  modelo?: {
+    id: string
+    nome: string
+    referencia?: string
+    rotas?: Array<{ setorId?: string; setor?: { id: string }; ordem: number }>
+  }
+  historico: RastreamentoItem[]
+  nodesCx: NodeTrackItem[]
+  nodesLp: NodeTrackItem[]
+  svgPathCx: string
+  svgPathLp: string
+}
 
 const route = useRoute()
 const router = useRouter()
 
 const loading = ref(true)
-const ordemId = ref(route.params.ordemTesteId as string)
-
-const ordens = ref<any[]>([])
-const ordem = ref<any>(null)
-const rota = ref<any[]>([])
-const historico = ref<any[]>([])
 const liveStatus = ref<'CONNECTED' | 'DISCONNECTED'>('DISCONNECTED')
-let socket: any = null
-
-// Estados da Linha SVG Animada
-const containerRef = ref<HTMLElement | null>(null)
-const activeLineRef = ref<SVGPathElement | null>(null)
-const guidePathD = ref('')
-const activePathD = ref('')
-const cardRefs = ref<any[]>([])
-
-// Controle do Modo TV e Relógio
+const ordens = ref<OrdemOP[]>([])
+const selectedOrdemId = ref<string>((route.params.ordemTesteId as string) || '')
 const isTvMode = ref(false)
 const now = ref(new Date())
+
+const selectedAuditNode = ref<{
+  node: NodeTrackItem
+  opCodigo: string
+  modeloNome: string
+} | null>(null)
+
+let socket: Socket | null = null
 let timerInterval: any = null
 
-function startTimer() {
-  timerInterval = setInterval(() => {
-    now.value = new Date()
-  }, 1000)
-}
+const nodeRefs = ref<Record<string, HTMLElement>>({})
+const svgLineRefs = ref<Record<string, SVGPathElement>>({})
 
-function stopTimer() {
-  if (timerInterval) {
-    clearInterval(timerInterval)
-  }
-}
-
-function setCardRef(el: any, idx: number) {
+function setNodeRef(el: any, key: string) {
   if (el) {
-    cardRefs.value[idx] = el
+    nodeRefs.value[key] = el as HTMLElement
   }
 }
 
-function updatePaths() {
-  if (!containerRef.value || cardRefs.value.length === 0 || rota.value.length === 0) return
-  const containerRect = containerRef.value.getBoundingClientRect()
-  
-  const points: { x: number; y: number }[] = []
-  for (let i = 0; i < rota.value.length; i++) {
-    const el = cardRefs.value[i]
-    if (el) {
-      const rect = el.getBoundingClientRect()
-      // Coordenadas relativas ao container pai
-      const x = rect.left - containerRect.left + rect.width / 2
-      const y = rect.top - containerRect.top + rect.height / 2
-      points.push({ x, y })
-    }
+function setSvgLineRef(el: any, key: string) {
+  if (el) {
+    svgLineRefs.value[key] = el as SVGPathElement
   }
-  
-  if (points.length === 0) return
-  
-  // Função para criar curva Bézier suave entre dois pontos
-  const createCurve = (p1: {x: number, y: number}, p2: {x: number, y: number}) => {
-    const dx = Math.abs(p2.x - p1.x)
-    const dy = Math.abs(p2.y - p1.y)
-    // Ajusta os pontos de controle para serem orgânicos, dependendo se o fluxo quebrou linha
-    const cx1 = (p1.x + p2.x) / 2
-    const cy1 = p1.y + (dy > dx ? (p2.y - p1.y) * 0.2 : 0)
-    const cx2 = cx1
-    const cy2 = p2.y - (dy > dx ? (p2.y - p1.y) * 0.2 : 0)
-    return ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${p2.x} ${p2.y}`
+}
+
+function openAuditDrawer(node: NodeTrackItem, opCodigo: string, modeloNome: string) {
+  selectedAuditNode.value = { node, opCodigo, modeloNome }
+}
+
+function closeAuditDrawer() {
+  selectedAuditNode.value = null
+}
+
+// --------------------------------------------------
+// Algoritmo de Ordenação Estrita pela Rota do Modelo
+// --------------------------------------------------
+function sortNodesByRoute(nodes: NodeTrackItem[], rotasModelo: Array<{ setorId?: string; ordem: number }>): NodeTrackItem[] {
+  const rotasOrderMap: Record<string, number> = {}
+  if (Array.isArray(rotasModelo)) {
+    rotasModelo.forEach(r => {
+      const sId = r.setorId || (r as any).setor?.id
+      if (sId) {
+        rotasOrderMap[sId] = r.ordem || 1
+      }
+    })
   }
 
-  // Constrói o caminho guia (pontilhado de fundo)
-  let gPath = `M ${points[0].x} ${points[0].y}`
-  for (let i = 1; i < points.length; i++) {
-    gPath += createCurve(points[i-1], points[i])
-  }
-  guidePathD.value = gPath
-  
-  // Localiza o setor ativo
-  const activeIdx = rota.value.findIndex(item => isSectorActive(item.setorId))
-  
-  if (activeIdx !== -1) {
-    let aPath = `M ${points[0].x} ${points[0].y}`
-    for (let i = 1; i <= activeIdx; i++) {
-      aPath += createCurve(points[i-1], points[i])
+  return [...nodes].sort((a, b) => {
+    const orderA = a.setorId === 'init' ? 0 : (rotasOrderMap[a.setorId] ?? 999)
+    const orderB = b.setorId === 'init' ? 0 : (rotasOrderMap[b.setorId] ?? 999)
+
+    if (orderA !== orderB) {
+      return orderA - orderB
     }
-    activePathD.value = aPath
+
+    const dateA = new Date(a.dataEntrada).getTime()
+    const dateB = new Date(b.dataEntrada).getTime()
+    return dateA - dateB
+  })
+}
+
+// --------------------------------------------------
+// Formatação de Horários e SLAs
+// --------------------------------------------------
+function formatDataEntradaCompleta(isoDate: string): string {
+  if (!isoDate) return 'Entrada: --/-- às --:--'
+  try {
+    const d = new Date(isoDate)
+    const dia = d.getDate().toString().padStart(2, '0')
+    const mes = (d.getMonth() + 1).toString().padStart(2, '0')
+    const hora = d.getHours().toString().padStart(2, '0')
+    const min = d.getMinutes().toString().padStart(2, '0')
+    return `Entrada: ${dia}/${mes} às ${hora}:${min}`
+  } catch {
+    return 'Entrada: --/-- às --:--'
+  }
+}
+
+function formatPermanencia(minutos: number | null | undefined): string {
+  if (minutos === null || minutos === undefined) return 'Duração N/A'
+  if (minutos < 60) return `Duração: ${minutos} min`
+  const h = Math.floor(minutos / 60)
+  const m = minutos % 60
+  return `Duração: ${h}h ${m}min`
+}
+
+function getElapsedTimeInfo(node: NodeTrackItem) {
+  if (!node.dataEntrada) return { text: '0m 0s', isOverdue: false, totalMins: 0 }
+
+  const entryDate = new Date(node.dataEntrada).getTime()
+  const diffMs = now.value.getTime() - entryDate
+  if (diffMs <= 0) return { text: '0m 0s', isOverdue: false, totalMins: 0 }
+
+  const totalSecs = Math.floor(diffMs / 1000)
+  const totalMins = Math.floor(totalSecs / 60)
+  const hours = Math.floor(totalMins / 60)
+  const mins = totalMins % 60
+  const secs = totalSecs % 60
+
+  let text = ''
+  if (hours > 0) {
+    text = `${hours}h ${mins}min ${secs}s`
   } else {
-    // Se não há ativo, desenha até o fim se concluído
-    const allCompleted = rota.value.every(item => 
-      isSectorCompletedForLot(item.setorId, 'CAIXA_TESTE') || 
-      isSectorCompletedForLot(item.setorId, 'LOTE_PRINCIPAL')
-    )
-    if (allCompleted) {
-      activePathD.value = gPath
-    } else {
-      activePathD.value = ''
-    }
+    text = `${mins}min ${secs}s`
   }
-  
-  // Executa animação com GSAP (física fluida)
-  nextTick(() => {
-    animateActiveLine()
-  })
+
+  const isOverdue = Boolean(node.slaAlvoMin && totalMins > node.slaAlvoMin)
+  return { text, isOverdue, totalMins }
 }
 
-function animateActiveLine() {
-  const lineEl = activeLineRef.value
-  if (!lineEl) return
-  
-  const length = lineEl.getTotalLength()
-  gsap.killTweensOf(lineEl)
-  
-  gsap.set(lineEl, {
-    strokeDasharray: length,
-    strokeDashoffset: length
-  })
-  
-  gsap.to(lineEl, {
-    strokeDashoffset: 0,
-    duration: 2.5,
-    ease: 'power4.out'
-  })
-}
-
-async function triggerPathUpdate() {
-  await nextTick()
-  setTimeout(() => {
-    updatePaths()
-  }, 250) // leve atraso para os cards deitarem
-}
-
-async function fetchOrdens() {
+// --------------------------------------------------
+// Fetch Único Unificado (Payload Síncrono)
+// --------------------------------------------------
+async function fetchOrdensEPosicoes() {
   try {
     const res = await api.get('/lotes')
-    ordens.value = res.data
-    if (!ordemId.value && ordens.value.length > 0) {
-      ordemId.value = ordens.value[0].id
-      fetchOrdemDetails()
-    }
-  } catch (error) {
-    console.error('Erro ao buscar ordens de teste:', error)
-  }
-}
+    const lotesBrutos: any[] = res.data || []
 
-async function fetchOrdemDetails() {
-  if (!ordemId.value) return
-  loading.value = true
-  try {
-    const [ordemRes, histRes] = await Promise.all([
-      api.get(`/lotes/${ordemId.value}`),
-      api.get(`/rastreamentos/historico/${ordemId.value}`)
-    ])
-    ordem.value = ordemRes.data
-    historico.value = histRes.data.historico
+    const statusFinais = ['APROVADO', 'REPROVADO', 'LIBERADO_PRODUCAO', 'CANCELADO']
+    const ordensAtivas = lotesBrutos.filter(o => !statusFinais.includes(o.status))
 
-    if (ordem.value?.modeloId) {
-      const rotaRes = await api.get(`/rotas/${ordem.value.modeloId}`)
-      rota.value = rotaRes.data.rota || []
+    const ordensProcessadas: OrdemOP[] = ordensAtivas.map((ordem) => {
+      const hist: RastreamentoItem[] = ordem.rastreamentos || []
+      const slasMap: Record<string, number> = ordem.slasPorSetor || {}
+      const rotasModelo = (ordem.modelo as any)?.rotas || (ordem.modelo as any)?.rota_modelo || []
+
+      const temCaixaTeste =
+        (ordem.modelo as any)?.possuiCaixaTeste ||
+        hist.some(h => h.tipoLote === 'CAIXA_TESTE') ||
+        ordem.possuiCaixaTeste
+
+      const histCx = hist.filter(h => h.tipoLote === 'CAIXA_TESTE')
+      const histLp = hist.filter(h => h.tipoLote === 'LOTE_PRINCIPAL')
+
+      const rawNodesCx: NodeTrackItem[] = histCx.map((h) => ({
+        key: `cx-${ordem.id}-${h.setorId}-${h.id}`,
+        setorId: h.setorId,
+        nome: h.setor?.nome || 'Setor',
+        dataEntrada: h.dataEntrada,
+        dataSaida: h.dataSaida,
+        status: h.status,
+        ordem: 1,
+        tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
+        slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
+        operadorEntradaNome: h.operadorEntrada?.nome || null,
+        operadorSaidaNome: h.operadorSaida?.nome || null,
+        estacaoNome: h.estacao?.nome || (h.estacao as any)?.codigo || null,
+        ocorrencias: h.ocorrencias || []
+      }))
+
+      const rawNodesLp: NodeTrackItem[] = histLp.map((h) => ({
+        key: `lp-${ordem.id}-${h.setorId}-${h.id}`,
+        setorId: h.setorId,
+        nome: h.setor?.nome || 'Setor',
+        dataEntrada: h.dataEntrada,
+        dataSaida: h.dataSaida,
+        status: h.status,
+        ordem: 1,
+        tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
+        slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
+        operadorEntradaNome: h.operadorEntrada?.nome || null,
+        operadorSaidaNome: h.operadorSaida?.nome || null,
+        estacaoNome: h.estacao?.nome || (h.estacao as any)?.codigo || null,
+        ocorrencias: h.ocorrencias || []
+      }))
+
+      if (rawNodesCx.length === 0 && temCaixaTeste) {
+        rawNodesCx.push({
+          key: `cx-${ordem.id}-init`,
+          setorId: 'init',
+          nome: 'Conferência Inicial',
+          dataEntrada: new Date().toISOString(),
+          status: 'EM_PROCESSO',
+          ordem: 1,
+          tempoPermanenciaMin: null,
+          slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
+          operadorEntradaNome: 'Operador PCP / Entrada',
+          operadorSaidaNome: null,
+          estacaoNome: 'Bancada Inicial',
+          ocorrencias: []
+        })
+      }
+
+      if (rawNodesLp.length === 0) {
+        rawNodesLp.push({
+          key: `lp-${ordem.id}-init`,
+          setorId: 'init',
+          nome: 'Conferência Inicial',
+          dataEntrada: new Date().toISOString(),
+          status: 'EM_PROCESSO',
+          ordem: 1,
+          tempoPermanenciaMin: null,
+          slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
+          operadorEntradaNome: 'Operador PCP / Entrada',
+          operadorSaidaNome: null,
+          estacaoNome: 'Bancada Inicial',
+          ocorrencias: []
+        })
+      }
+
+      const nodesCx = sortNodesByRoute(rawNodesCx, rotasModelo).map((n, i) => ({
+        ...n,
+        ordem: i + 1
+      }))
+
+      const nodesLp = sortNodesByRoute(rawNodesLp, rotasModelo).map((n, i) => ({
+        ...n,
+        ordem: i + 1
+      }))
+
+      return {
+        id: ordem.id,
+        codigoBarras: ordem.codigoBarras,
+        status: ordem.status,
+        possuiCaixaTeste: Boolean(temCaixaTeste),
+        slasPorSetor: ordem.slasPorSetor,
+        modelo: ordem.modelo,
+        historico: hist,
+        nodesCx,
+        nodesLp,
+        svgPathCx: '',
+        svgPathLp: ''
+      }
+    })
+
+    ordens.value = ordensProcessadas
+
+    if (!selectedOrdemId.value && ordens.value.length > 0) {
+      selectedOrdemId.value = ordens.value[0].id
     }
-    triggerPathUpdate()
-  } catch (error) {
-    console.error('Erro ao buscar dados de rastreamento:', error)
+  } catch (err) {
+    console.error('[RastreamentoOrdemView] Erro ao carregar ordens:', err)
   } finally {
     loading.value = false
+    updateConnectorLines()
   }
 }
 
+// --------------------------------------------------
+// Motor de Curvas Bézier SVG (nextTick + requestAnimationFrame)
+// --------------------------------------------------
+const updateConnectorLines = () => {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      for (const o of ordens.value) {
+        o.svgPathCx = calculateTrackPath(o.nodesCx)
+        o.svgPathLp = calculateTrackPath(o.nodesLp)
+      }
+
+      nextTick(() => {
+        animateSvgPathsAndCards()
+      })
+    })
+  })
+}
+
+function calculateTrackPath(nodes: NodeTrackItem[]): string {
+  if (nodes.length < 2) return ''
+  const segments: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
+
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const nodeA = nodes[i]
+    const nodeB = nodes[i + 1]
+    const elA = nodeRefs.value[nodeA.key]
+    const elB = nodeRefs.value[nodeB.key]
+
+    if (elA && elB && elA.offsetParent) {
+      const containerRect = (elA.offsetParent as HTMLElement).getBoundingClientRect()
+      const rectA = elA.getBoundingClientRect()
+      const rectB = elB.getBoundingClientRect()
+
+      const x1 = rectA.right - containerRect.left
+      const y1 = rectA.top - containerRect.top + rectA.height / 2
+
+      const x2 = rectB.left - containerRect.left
+      const y2 = rectB.top - containerRect.top + rectB.height / 2
+
+      segments.push({ x1, y1, x2, y2 })
+    }
+  }
+
+  if (segments.length === 0) return ''
+
+  let path = `M ${segments[0].x1} ${segments[0].y1}`
+  for (const seg of segments) {
+    const dx = Math.abs(seg.x2 - seg.x1)
+    const cx1 = seg.x1 + Math.max(dx * 0.4, 20)
+    const cy1 = seg.y1
+    const cx2 = seg.x2 - Math.max(dx * 0.4, 20)
+    const cy2 = seg.y2
+
+    path += ` C ${cx1} ${cy1}, ${cx2} ${cy2}, ${seg.x2} ${seg.y2}`
+  }
+  return path
+}
+
+function animateSvgPathsAndCards() {
+  Object.values(svgLineRefs.value).forEach(lineEl => {
+    if (!lineEl) return
+    try {
+      const length = lineEl.getTotalLength()
+      if (length <= 0) return
+      gsap.killTweensOf(lineEl)
+      gsap.set(lineEl, { strokeDasharray: length, strokeDashoffset: length })
+      gsap.to(lineEl, {
+        strokeDashoffset: 0,
+        duration: 1.4,
+        ease: 'cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+      })
+    } catch {
+      // Fallback
+    }
+  })
+
+  gsap.fromTo(
+    '.dynamic-node-card',
+    { scale: 0.85, opacity: 0 },
+    {
+      scale: 1,
+      opacity: 1,
+      duration: 0.6,
+      stagger: 0.06,
+      ease: 'cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+    }
+  )
+}
+
+// --------------------------------------------------
+// WebSockets & Listeners
+// --------------------------------------------------
 function initWebSocket() {
-  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api')
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
   const socketUrl = apiUrl.replace(/\/api\/?$/, '')
   const token = localStorage.getItem('erp_token') || localStorage.getItem('token') || ''
 
@@ -185,6 +439,7 @@ function initWebSocket() {
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,
+    reconnectionAttempts: 5,
     withCredentials: true,
     auth: { token }
   })
@@ -209,441 +464,491 @@ function initWebSocket() {
     liveStatus.value = 'DISCONNECTED'
   })
 
-  socket.on('peca:avanco', (data: any) => {
-    if (!data?.ordemTesteId || data.ordemTesteId === ordemId.value || data?.data?.ordemTesteId === ordemId.value) {
-      fetchOrdemDetails()
-    }
+  socket.on('peca:avanco', () => {
+    fetchOrdensEPosicoes()
   })
 
-  socket.on('rastreamento:atualizado', (data: any) => {
-    if (!data?.ordemTesteId || data.ordemTesteId === ordemId.value || data?.data?.ordemTesteId === ordemId.value) {
-      fetchOrdemDetails()
-    }
+  socket.on('rastreamento:atualizado', () => {
+    fetchOrdensEPosicoes()
   })
 }
 
-watch(() => route.params.ordemTesteId, (newId) => {
-  if (newId) {
-    ordemId.value = newId as string
-    fetchOrdemDetails()
-  }
-})
+function handleResize() {
+  updateConnectorLines()
+}
 
-watch(ordemId, (newId) => {
+watch(selectedOrdemId, (newId) => {
   if (newId && newId !== route.params.ordemTesteId) {
     router.push({ name: 'rastreamento-ordem', params: { ordemTesteId: newId } })
   }
 })
 
-watch(isTvMode, () => {
-  cardRefs.value = []
-  triggerPathUpdate()
-  
-  // Se entrar no modo TV, aplica uma animação de entrada pros cards
-  if (isTvMode.value) {
-    nextTick(() => {
-      gsap.from('.tv-card', {
-        y: 40,
-        opacity: 0,
-        stagger: 0.1,
-        duration: 1,
-        ease: 'power3.out'
-      })
-      gsap.from('.tv-header', {
-        y: -40,
-        opacity: 0,
-        duration: 1.2,
-        ease: 'power4.out'
-      })
-    })
-  }
-})
-
 onMounted(() => {
-  fetchOrdens()
-  fetchOrdemDetails()
+  fetchOrdensEPosicoes()
   initWebSocket()
-  startTimer()
-  window.addEventListener('resize', updatePaths)
+  timerInterval = setInterval(() => {
+    now.value = new Date()
+  }, 1000)
+  window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   if (socket) {
     socket.disconnect()
+    socket = null
   }
-  stopTimer()
-  window.removeEventListener('resize', updatePaths)
+  if (timerInterval) {
+    clearInterval(timerInterval)
+  }
+  window.removeEventListener('resize', handleResize)
+  gsap.killTweensOf('*')
 })
-
-// CÁLCULOS
-function isSectorCompletedForLot(setorId: string, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL') {
-  return historico.value.some(r => r.tipoLote === tipoLote && r.setorId === setorId && r.dataSaida !== null)
-}
-
-function isSectorActiveForLot(setorId: string, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL') {
-  return historico.value.some(r => r.tipoLote === tipoLote && r.setorId === setorId && r.dataSaida === null)
-}
-
-function isSectorActive(setorId: string) {
-  return isSectorActiveForLot(setorId, 'CAIXA_TESTE') || isSectorActiveForLot(setorId, 'LOTE_PRINCIPAL')
-}
-
-function getSectorEnteringDate(setorId: string, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL') {
-  const tr = historico.value.find(r => r.tipoLote === tipoLote && r.setorId === setorId)
-  return tr ? new Date(tr.dataEntrada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null
-}
-
-function getLiveTime(setorId: string, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL') {
-  const tr = historico.value.find(r => r.tipoLote === tipoLote && r.setorId === setorId && r.status === 'EM_PROCESSO')
-  if (!tr || !tr.dataEntrada) return null
-  
-  const entryDate = new Date(tr.dataEntrada)
-  const diffMs = now.value.getTime() - entryDate.getTime()
-  if (diffMs < 0) return '00:00:00'
-  
-  const diffSecs = Math.floor(diffMs / 1000)
-  const hours = Math.floor(diffSecs / 3600).toString().padStart(2, '0')
-  const minutes = Math.floor((diffSecs % 3600) / 60).toString().padStart(2, '0')
-  const seconds = (diffSecs % 60).toString().padStart(2, '0')
-  
-  return `${hours}:${minutes}:${seconds}`
-}
 </script>
 
 <template>
-  <div class="w-full min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-600 selection:text-white">
-    <!-- MODO TV (Overlay Fullscreen) -->
-    <div 
-      v-if="isTvMode" 
-      class="fixed inset-0 z-50 bg-slate-50/90 backdrop-blur-3xl flex flex-col w-full min-h-screen overflow-hidden p-8 md:p-16 justify-between" 
-      role="dialog" 
-      aria-modal="true" 
-      aria-label="Modo TV Rastreamento"
+  <div class="w-full min-h-screen bg-zinc-50 text-zinc-900 font-sf-rounded tracking-tight selection:bg-zinc-200 selection:text-zinc-900">
+    <!-- DRAWER DE AUDITORIA E DIVERGÊNCIAS (SLIDE-OVER) -->
+    <div
+      v-if="selectedAuditNode"
+      class="fixed inset-0 z-50 bg-zinc-950/40 backdrop-blur-sm flex justify-end transition-opacity"
+      role="dialog"
+      aria-modal="true"
     >
-      <!-- Tipografia Respirável Extragrande no fundo -->
-      <div class="absolute -top-12 -left-12 opacity-5 pointer-events-none select-none z-0">
-        <h1 class="text-[12rem] font-extrabold tracking-tighter text-slate-900 leading-[0.8] mix-blend-multiply">
-          LIVE<br/>TRACKING
-        </h1>
-      </div>
-
-      <!-- Cabeçalho TV -->
-      <div class="tv-header relative z-10 flex justify-between items-start mb-8">
+      <div class="w-full max-w-md bg-white/95 backdrop-blur-xl h-full shadow-2xl p-6 md:p-8 flex flex-col justify-between overflow-y-auto border-l border-zinc-200">
         <div>
-          <h2 class="text-6xl md:text-[6rem] font-extrabold tracking-tighter text-slate-900 leading-none">
-            {{ ordem?.codigoBarras || 'TV RASTREAMENTO' }}
-          </h2>
-          <div v-if="ordem" class="mt-6 flex flex-wrap items-center gap-4 text-xl text-slate-600 font-medium tracking-tight">
-            <span class="px-5 py-2 rounded-full bg-white/60 backdrop-blur-md border border-white/40 shadow-xs">
-              MODELO: <strong class="text-slate-900">{{ ordem.modelo?.nome || 'N/A' }}</strong>
-            </span>
-            <span class="inline-flex items-center px-5 py-2 font-bold bg-blue-600 text-white rounded-full tracking-widest uppercase shadow-xs">
-              {{ ordem.status }}
-            </span>
-          </div>
-        </div>
-        <button 
-          @click="isTvMode = false" 
-          class="p-4 bg-white/60 backdrop-blur-md border border-white/40 hover:bg-white text-slate-900 transition-all rounded-full cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-blue-600 hover:scale-105 active:scale-95 shadow-xs"
-          type="button" 
-          aria-label="Sair do Modo TV"
-        >
-          <X :size="32" stroke-width="2.5" />
-        </button>
-      </div>
-
-      <!-- Área Central da Timeline -->
-      <div v-if="loading" class="flex-1 flex justify-center items-center relative z-10">
-        <span class="text-slate-400 text-xl font-medium tracking-widest">Carregando Fluxo Orgânico...</span>
-      </div>
-      <div v-else-if="!ordem" class="flex-1 flex justify-center items-center relative z-10">
-        <span class="text-slate-400 text-xl tracking-widest">Ordem Inválida</span>
-      </div>
-      <div v-else class="flex-1 my-auto py-12 overflow-hidden relative z-10">
-        <div ref="containerRef" class="relative w-full h-full min-h-[500px]">
-          <!-- Linhas SVG Animadas com Curvas Bézier -->
-          <svg class="absolute inset-0 pointer-events-none w-full h-full">
-            <!-- Glow da linha ativa para efeito tátil e profundidade -->
-            <path 
-              v-if="activePathD" 
-              :d="activePathD" 
-              fill="none" 
-              class="stroke-blue-400/30" 
-              stroke-width="16" 
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path 
-              v-if="guidePathD" 
-              :d="guidePathD" 
-              fill="none" 
-              stroke="#cbd5e1" 
-              stroke-width="3" 
-              stroke-dasharray="8 8" 
-              stroke-linecap="round"
-            />
-            <path 
-              ref="activeLineRef" 
-              v-if="activePathD" 
-              :d="activePathD" 
-              fill="none" 
-              class="stroke-blue-600" 
-              stroke-width="5" 
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-
-          <!-- Grid dos Setores (Assimetria e Glassmorphism) -->
-          <div class="flex flex-wrap gap-x-12 gap-y-24 justify-center items-center relative pl-8 pr-8">
-            <div 
-              v-for="(item, idx) in rota" 
-              :key="item.id"
-              :ref="el => setCardRef(el, idx)"
-              :class="[
-                'tv-card relative flex flex-col justify-between p-8 w-80 min-h-[220px] transition-all duration-700 ease-out',
-                /* Assimetria: desloca itens pares ligeiramente para baixo para quebrar a grade reta */
-                idx % 2 === 0 ? 'translate-y-8' : '-translate-y-4',
-                isSectorActive(item.setorId) 
-                  ? 'bg-white/80 backdrop-blur-xl border border-white/60 shadow-[0_20px_40px_-15px_rgba(37,99,235,0.2)] scale-105 rounded-[2rem]' 
-                  : 'bg-white/40 backdrop-blur-md border border-white/30 shadow-[0_8px_30px_rgb(0,0,0,0.04)] opacity-80 hover:opacity-100 rounded-[1.5rem]'
-              ]"
+          <!-- Drawer Header -->
+          <div class="flex items-center justify-between pb-4 border-b border-zinc-200 mb-6">
+            <div>
+              <span class="text-xs font-mono font-bold text-emerald-700 uppercase block">
+                AUDITORIA DE ETAPA ISO 9001
+              </span>
+              <h3 class="text-xl font-extrabold tracking-tighter text-zinc-900 uppercase">
+                {{ selectedAuditNode.node.nome }}
+              </h3>
+              <span class="text-xs font-mono text-zinc-500">
+                OP: {{ selectedAuditNode.opCodigo }} — {{ selectedAuditNode.modeloNome }}
+              </span>
+            </div>
+            <button
+              @click="closeAuditDrawer"
+              class="p-2 hover:bg-zinc-100 rounded-xl text-zinc-600 hover:text-zinc-900 cursor-pointer transition-colors"
+              type="button"
             >
-              <!-- Indicadores Flutuantes Orgânicos -->
-              <div class="absolute -top-4 -left-4 flex flex-col gap-2 z-10">
-                <span v-if="isSectorActiveForLot(item.setorId, 'CAIXA_TESTE')" class="px-4 py-1.5 text-xs font-extrabold tracking-widest bg-blue-600 text-white uppercase rounded-full shadow-md transform hover:scale-105 transition-transform">
-                  Caixa Teste
+              <X :size="20" />
+            </button>
+          </div>
+
+          <!-- Seção de Responsáveis e Estação -->
+          <div class="space-y-4 mb-6">
+            <h4 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Rastreabilidade Operacional</h4>
+
+            <div class="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2 text-xs">
+              <div class="flex items-center justify-between">
+                <span class="text-zinc-500 font-medium flex items-center gap-1.5">
+                  <User :size="14" class="text-zinc-600" /> Operador Entrada:
                 </span>
-                <span v-if="isSectorActiveForLot(item.setorId, 'LOTE_PRINCIPAL')" class="px-4 py-1.5 text-xs font-extrabold tracking-widest bg-slate-900 text-white uppercase rounded-full shadow-md transform hover:scale-105 transition-transform">
-                  Lote Principal
+                <span class="font-bold text-zinc-900 font-mono">
+                  {{ selectedAuditNode.node.operadorEntradaNome || 'Operador SSO Padrão' }}
                 </span>
               </div>
 
-              <!-- Informações do Setor -->
-              <div>
-                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
-                  Passo {{ idx + 1 }}
-                </div>
-                <h3 class="font-extrabold text-slate-900 text-3xl leading-none tracking-tight">
-                  {{ item.setor?.nome }}
-                </h3>
+              <div class="flex items-center justify-between">
+                <span class="text-zinc-500 font-medium flex items-center gap-1.5">
+                  <User :size="14" class="text-zinc-600" /> Operador Saída:
+                </span>
+                <span class="font-bold text-zinc-900 font-mono">
+                  {{ selectedAuditNode.node.operadorSaidaNome || 'Em Andamento / Pendente' }}
+                </span>
               </div>
 
-              <!-- Tempos e Horários -->
-              <div class="mt-8 pt-5 border-t border-slate-200/50 flex flex-col gap-4">
-                <div v-if="getLiveTime(item.setorId, 'CAIXA_TESTE')" class="flex justify-between items-center text-sm font-medium">
-                  <span class="text-blue-600 font-bold uppercase tracking-wider">Live CX</span>
-                  <span class="text-blue-800 font-bold bg-blue-100/50 px-3 py-1 rounded-full backdrop-blur-sm">
-                    {{ getLiveTime(item.setorId, 'CAIXA_TESTE') }}
-                  </span>
-                </div>
-                
-                <div v-if="getLiveTime(item.setorId, 'LOTE_PRINCIPAL')" class="flex justify-between items-center text-sm font-medium">
-                  <span class="text-slate-700 font-bold uppercase tracking-wider">Live LP</span>
-                  <span class="text-slate-900 font-bold bg-slate-200/50 px-3 py-1 rounded-full backdrop-blur-sm">
-                    {{ getLiveTime(item.setorId, 'LOTE_PRINCIPAL') }}
-                  </span>
-                </div>
+              <div class="flex items-center justify-between pt-1 border-t border-zinc-200/60">
+                <span class="text-zinc-500 font-medium flex items-center gap-1.5">
+                  <Cpu :size="14" class="text-zinc-600" /> Estação de Trabalho:
+                </span>
+                <span class="font-bold text-zinc-900 font-mono">
+                  {{ selectedAuditNode.node.estacaoNome || 'Bancada Padrão' }}
+                </span>
+              </div>
+            </div>
+          </div>
 
-                <div class="text-xs font-medium text-slate-500 space-y-1.5 mt-2">
-                  <div v-if="getSectorEnteringDate(item.setorId, 'CAIXA_TESTE')" class="flex justify-between">
-                    <span>Entrada (CX)</span>
-                    <span class="text-slate-800 font-bold">{{ getSectorEnteringDate(item.setorId, 'CAIXA_TESTE') }}</span>
-                  </div>
-                  <div v-if="getSectorEnteringDate(item.setorId, 'LOTE_PRINCIPAL')" class="flex justify-between">
-                    <span>Entrada (LP)</span>
-                    <span class="text-slate-800 font-bold">{{ getSectorEnteringDate(item.setorId, 'LOTE_PRINCIPAL') }}</span>
+          <!-- Métricas de Permanência vs. SLA -->
+          <div class="space-y-4 mb-6">
+            <h4 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Métricas de Compliance SLA</h4>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div class="p-3 bg-zinc-50 border border-zinc-200 rounded-xl text-center">
+                <span class="text-[10px] font-mono text-zinc-500 block uppercase">Meta SLA</span>
+                <span class="text-sm font-extrabold text-zinc-900 font-mono">
+                  {{ selectedAuditNode.node.slaAlvoMin ? `${selectedAuditNode.node.slaAlvoMin} min` : 'Sem Meta' }}
+                </span>
+              </div>
+
+              <div class="p-3 bg-zinc-50 border border-zinc-200 rounded-xl text-center">
+                <span class="text-[10px] font-mono text-zinc-500 block uppercase">Tempo Real</span>
+                <span class="text-sm font-extrabold text-zinc-900 font-mono">
+                  {{ formatPermanencia(selectedAuditNode.node.tempoPermanenciaMin) }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Feed de Ocorrências e Divergências -->
+          <div class="space-y-4">
+            <h4 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Feed de Ocorrências e Divergências</h4>
+
+            <div v-if="selectedAuditNode.node.ocorrencias && selectedAuditNode.node.ocorrencias.length > 0" class="space-y-3">
+              <div
+                v-for="oc in selectedAuditNode.node.ocorrencias"
+                :key="oc.id"
+                class="p-4 bg-amber-50/60 border border-amber-300/60 rounded-xl space-y-2"
+              >
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-amber-900">{{ oc.titulo }}</span>
+                  <span v-if="oc.interrompeSla" class="px-2 py-0.5 text-[9px] font-mono font-bold bg-red-100 text-red-700 rounded-full">
+                    Pausa SLA
+                  </span>
+                </div>
+                <p v-if="oc.descricao" class="text-xs text-amber-800 leading-relaxed font-sans">
+                  {{ oc.descricao }}
+                </p>
+
+                <!-- Galeria de Evidências Anexadas -->
+                <div v-if="oc.anexos && oc.anexos.length > 0" class="pt-2 border-t border-amber-200/60">
+                  <span class="text-[10px] font-mono text-amber-700 font-bold block mb-1.5 flex items-center gap-1">
+                    <ImageIcon :size="12" /> Evidências Técnicas:
+                  </span>
+                  <div class="flex flex-wrap gap-2">
+                    <img
+                      v-for="anx in oc.anexos"
+                      :key="anx.id"
+                      :src="anx.url"
+                      :alt="anx.nomeArquivo"
+                      class="w-14 h-14 object-cover rounded-lg border border-amber-300 shadow-xs"
+                    />
                   </div>
                 </div>
               </div>
             </div>
+
+            <div v-else class="p-6 bg-zinc-50 border border-dashed border-zinc-200 rounded-xl text-center">
+              <span class="text-xs text-zinc-500 font-mono">
+                Nenhuma ocorrência ou divergência registrada nesta etapa.
+              </span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Rodapé TV -->
-      <div class="tv-header relative z-10 flex justify-between items-center mt-12 pt-8 border-t border-slate-200/50 text-slate-500 font-medium text-sm tracking-widest">
-        <div class="flex items-center gap-4">
-          <span :class="['w-3 h-3 rounded-full', liveStatus === 'CONNECTED' ? 'bg-blue-600 shadow-[0_0_12px_rgba(37,99,235,0.8)] animate-pulse' : 'bg-slate-300']"></span>
-          <span>{{ liveStatus === 'CONNECTED' ? 'SYNC: LIVE' : 'SYNC: OFFLINE' }}</span>
-        </div>
-        <div>
-          <span class="text-slate-700 font-bold">{{ now.toLocaleDateString() }}</span> &mdash; <span>{{ now.toLocaleTimeString() }}</span>
+        <div class="pt-6 border-t border-zinc-200 mt-6">
+          <button
+            @click="closeAuditDrawer"
+            class="w-full py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
+            type="button"
+          >
+            Fechar Painel de Auditoria
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- MODO PADRÃO (Dashboard) -->
-    <div v-else class="p-8 max-w-7xl mx-auto">
-      <header class="border-b border-slate-200 pb-8 mb-10 flex flex-col md:flex-row md:justify-between md:items-end gap-6">
-        <div class="flex flex-col gap-4">
-          <button @click="router.back()" class="self-start text-slate-500 hover:text-slate-900 transition-transform active:scale-95 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider" type="button">
-            <ArrowLeft :size="16" /> Voltar
-          </button>
-          <div>
-            <h1 class="text-4xl md:text-5xl font-extrabold text-slate-900 tracking-tighter uppercase leading-none">Rastreamento</h1>
-            <p class="text-sm text-slate-500 mt-2 uppercase tracking-widest font-medium">Monitoramento Chão de Fábrica</p>
-          </div>
+    <!-- MODO TV OVERLAY FULLSCREEN (LIGHT MODE) -->
+    <div
+      v-if="isTvMode"
+      class="fixed inset-0 z-40 bg-zinc-50/95 backdrop-blur-2xl flex flex-col w-full min-h-screen overflow-hidden p-6 md:p-10 justify-between border-4 border-zinc-200"
+      role="dialog"
+      aria-modal="true"
+    >
+      <!-- Cabeçalho TV -->
+      <div class="flex justify-between items-center pb-6 border-b border-zinc-200">
+        <div class="text-left">
+          <span class="text-xs font-mono font-black text-emerald-700 tracking-widest uppercase block mb-1">
+            TORRE TV — CHÃO DE FÁBRICA ISO
+          </span>
+          <h1 class="text-2xl md:text-3xl font-extrabold tracking-tighter text-zinc-900 uppercase text-left">
+            MONITORAMENTO MULTIÓRDENS EM TEMPO REAL
+          </h1>
         </div>
 
-        <div class="flex flex-wrap items-center gap-4">
-          <button 
-            @click="isTvMode = true" 
-            class="text-xs flex items-center gap-2 px-5 py-3 bg-blue-600 text-white font-bold uppercase tracking-widest rounded-full hover:bg-blue-700 transition-all hover:scale-105 active:scale-95 shadow-sm focus:outline-hidden focus:ring-2 focus:ring-blue-600 focus:ring-offset-2"
-            type="button"
+        <div class="flex items-center gap-4">
+          <div
+            :class="[
+              'px-4 py-1.5 rounded-full border text-xs font-mono font-bold uppercase tracking-wider flex items-center gap-2 shadow-xs',
+              liveStatus === 'CONNECTED'
+                ? 'bg-emerald-100/80 border-emerald-300 text-emerald-800'
+                : 'bg-zinc-100 border-zinc-300 text-zinc-600'
+            ]"
           >
-            <Maximize :size="16" /> Modo TV
-          </button>
-
-          <div class="border border-slate-200 rounded-full flex items-center gap-3 px-5 py-3 bg-white shadow-xs text-slate-700">
-            <span :class="['w-2.5 h-2.5 rounded-full', liveStatus === 'CONNECTED' ? 'bg-blue-600 animate-pulse' : 'bg-slate-300']"></span>
-            <span class="text-xs font-bold tracking-widest">{{ liveStatus === 'CONNECTED' ? 'ONLINE' : 'OFFLINE' }}</span>
+            <Wifi v-if="liveStatus === 'CONNECTED'" :size="14" class="animate-pulse text-emerald-600" />
+            <WifiOff v-else :size="14" />
+            <span>{{ liveStatus === 'CONNECTED' ? 'SYNC: LIVE' : 'SYNC: OFF' }}</span>
           </div>
 
-          <button @click="fetchOrdemDetails" class="text-xs flex items-center gap-2 px-5 py-3 bg-white border border-slate-200 rounded-full hover:bg-slate-50 text-slate-700 font-bold uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer focus:outline-hidden focus:ring-2 focus:ring-blue-600 focus:ring-offset-2" type="button">
-            <RotateCcw :size="14" /> Sinc.
+          <button
+            @click="isTvMode = false"
+            class="p-2.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-800 rounded-xl cursor-pointer transition-all shadow-xs"
+            type="button"
+            aria-label="Sair do Modo TV"
+          >
+            <X :size="20" />
           </button>
         </div>
-      </header>
-
-      <!-- Seleção de Ordem -->
-      <div class="mb-10 p-6 bg-white border border-slate-200 rounded-3xl shadow-xs flex flex-col sm:flex-row sm:items-center gap-6">
-        <label for="ordem-select-normal" class="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 min-w-max">
-          <Tag :size="16" /> Ordem Ativa:
-        </label>
-        <select id="ordem-select-normal" v-model="ordemId" class="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-slate-900 font-medium focus:outline-hidden focus:ring-2 focus:ring-blue-600 transition-shadow appearance-none cursor-pointer">
-          <option v-for="o in ordens" :key="o.id" :value="o.id">
-            {{ o.codigoBarras }} — {{ o.modelo?.nome || 'Sem Modelo' }} [{{ o.status }}]
-          </option>
-        </select>
       </div>
 
-      <!-- Resumo Ordem -->
-      <div v-if="loading" class="p-16 bg-white border border-slate-200 rounded-3xl flex justify-center items-center shadow-xs">
-        <span class="text-slate-400 text-sm font-medium uppercase tracking-widest">Carregando...</span>
-      </div>
-      <div v-else-if="!ordem" class="p-16 bg-white border border-slate-200 rounded-3xl text-center shadow-xs">
-        <span class="text-slate-400 text-sm font-medium uppercase tracking-widest">Nenhuma Ordem Selecionada</span>
-      </div>
-      <div v-else class="space-y-10">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div class="bg-white border border-slate-200 rounded-3xl p-8 shadow-xs hover:shadow-md transition-shadow">
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-3">Modelo</span>
-            <span class="font-extrabold text-slate-900 block text-2xl tracking-tight leading-none">{{ ordem.modelo?.nome || 'N/A' }}</span>
-            <span class="text-xs text-slate-500 font-medium block mt-2">{{ ordem.modelo?.referencia || 'N/A' }}</span>
-          </div>
-          <div class="bg-white border border-slate-200 rounded-3xl p-8 shadow-xs hover:shadow-md transition-shadow">
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-3">Código Barras</span>
-            <span class="font-extrabold text-slate-900 block text-2xl tracking-tight leading-none">{{ ordem.codigoBarras }}</span>
-          </div>
-          <div class="bg-white border border-slate-200 rounded-3xl p-8 shadow-xs hover:shadow-md transition-shadow">
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-3">Status</span>
-            <span class="inline-block px-4 py-1.5 text-xs font-bold tracking-widest rounded-full bg-slate-900 text-white uppercase mt-1">
-              {{ ordem.status }}
-            </span>
-          </div>
-          <div class="bg-white border border-slate-200 rounded-3xl p-8 shadow-xs hover:shadow-md transition-shadow">
-            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-3">Data Início</span>
-            <span class="text-sm font-bold text-slate-800 block mt-1">
-              {{ new Date(ordem.dataInicio).toLocaleDateString() }}
-            </span>
-            <span class="text-xs text-slate-500 font-medium block mt-1">
-              {{ new Date(ordem.dataInicio).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
-            </span>
-          </div>
+      <!-- Conteúdo Central TV Multiórdens -->
+      <main class="flex-1 my-6 overflow-y-auto space-y-8 pr-2">
+        <div v-if="loading" class="flex flex-col items-center justify-center py-24 gap-4">
+          <div class="w-10 h-10 border-4 border-zinc-200 border-t-emerald-600 rounded-full animate-spin"></div>
+          <p class="text-zinc-500 font-mono text-xs uppercase tracking-widest">
+            Sincronizando fluxo com servidor...
+          </p>
         </div>
 
-        <!-- Rota de Produção Desktop -->
-        <div class="bg-white border border-slate-200 rounded-3xl p-10 shadow-xs">
-          <h2 class="text-sm font-extrabold text-slate-900 uppercase tracking-widest mb-12 flex items-center gap-3">
-            <Layers :size="18" class="text-blue-600" /> Rota de Produção
-          </h2>
+        <!-- Estado Vazio -->
+        <div
+          v-else-if="ordens.length === 0"
+          class="flex flex-col items-center justify-center py-24 text-center border border-dashed border-zinc-300 bg-white/60 backdrop-blur-md rounded-3xl p-8 max-w-xl mx-auto shadow-sm"
+        >
+          <Layers :size="36" class="text-zinc-400 mb-3" />
+          <h3 class="text-base font-bold text-zinc-800 uppercase tracking-tight">Nenhum Teste Ativo no Momento</h3>
+          <p class="text-xs text-zinc-500 mt-2 font-mono leading-relaxed">
+            Nenhum teste ativo no momento. Inicie uma nova Ordem de Teste para visualizar o fluxo em tempo real.
+          </p>
+        </div>
 
-          <div v-if="rota.length === 0" class="text-center py-16 text-slate-400 text-sm font-medium uppercase tracking-widest">
-            Nenhuma rota cadastrada
+        <!-- Swimlanes por OP (Glassmorphism Claro) -->
+        <div
+          v-else
+          v-for="ordem in ordens"
+          :key="ordem.id"
+          class="op-swimlane bg-white/70 backdrop-blur-md border border-zinc-200/60 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow relative"
+        >
+          <!-- Header OP -->
+          <div class="flex flex-wrap items-center justify-between gap-4 pb-4 mb-4 border-b border-zinc-200/80">
+            <div class="text-left">
+              <span class="text-xs font-mono font-bold text-emerald-700 uppercase tracking-wider block">
+                {{ ordem.codigoBarras }}
+              </span>
+              <h2 class="text-2xl md:text-3xl font-extrabold tracking-tighter text-zinc-900 uppercase text-left">
+                {{ ordem.modelo?.nome || 'Modelo sem Nome' }}
+              </h2>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span v-if="ordem.possuiCaixaTeste" class="px-3 py-1 rounded-full bg-amber-100/80 border border-amber-300/60 text-amber-800 text-[10px] font-mono font-bold uppercase shadow-xs">
+                Dual Track (Caixa Teste + Lote)
+              </span>
+              <span class="px-3 py-1 rounded-full bg-zinc-100 border border-zinc-300 text-[10px] font-mono font-bold text-zinc-700 uppercase shadow-xs">
+                {{ ordem.status }}
+              </span>
+            </div>
           </div>
 
-          <div v-else ref="containerRef" class="relative w-full">
-            <svg class="absolute inset-0 pointer-events-none w-full h-full min-h-[300px]">
-              <path 
-                v-if="guidePathD" 
-                :d="guidePathD" 
-                fill="none" 
-                stroke="#e2e8f0" 
-                stroke-width="3" 
-                stroke-dasharray="6 6" 
-                stroke-linecap="round"
-              />
-              <path 
-                ref="activeLineRef" 
-                v-if="activePathD" 
-                :d="activePathD" 
-                fill="none" 
-                class="stroke-blue-600" 
-                stroke-width="4" 
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
+          <!-- Trilhas Horizontais Paralelas -->
+          <div class="space-y-6 relative">
+            <!-- Trilha 1: Caixa Teste (Fast Track) -->
+            <div v-if="ordem.possuiCaixaTeste" class="bg-amber-50/40 border border-amber-300/40 rounded-2xl p-5 relative">
+              <div class="flex items-center gap-2 text-amber-800 text-xs font-mono font-bold uppercase tracking-wider mb-4">
+                <Box :size="14" />
+                <span>Trilha 1 — Caixa Teste (Fast Track)</span>
+              </div>
 
-            <div class="flex flex-wrap gap-x-12 gap-y-16 justify-start items-center relative py-4">
-              <div 
-                v-for="(item, idx) in rota" 
-                :key="item.id"
-                :ref="el => setCardRef(el, idx)"
-                :class="[
-                  'relative flex flex-col justify-between p-7 w-64 min-h-[180px] bg-white transition-all duration-300 ease-out',
-                  idx % 2 !== 0 ? 'translate-y-6' : '',
-                  isSectorActive(item.setorId) 
-                    ? 'border-2 border-blue-600 shadow-lg scale-[1.02] rounded-3xl z-10' 
-                    : 'border border-slate-200 rounded-3xl opacity-90 hover:opacity-100 hover:shadow-md'
-                ]"
-              >
-                <!-- Labels Lote / Caixa Teste Flutuantes -->
-                <div class="absolute -top-3.5 left-6 flex flex-col gap-1.5 z-10">
-                  <span v-if="isSectorActiveForLot(item.setorId, 'CAIXA_TESTE')" class="px-3 py-1 text-[10px] font-extrabold tracking-widest bg-blue-600 text-white uppercase rounded-full shadow-sm">
-                    Caixa Teste
-                  </span>
-                  <span v-if="isSectorActiveForLot(item.setorId, 'LOTE_PRINCIPAL')" class="px-3 py-1 text-[10px] font-extrabold tracking-widest bg-slate-900 text-white uppercase rounded-full shadow-sm">
-                    Lote Principal
-                  </span>
-                </div>
+              <!-- Curva SVG da Trilha CX -->
+              <svg class="absolute inset-0 pointer-events-none w-full h-full">
+                <path
+                  v-if="ordem.svgPathCx"
+                  :ref="el => setSvgLineRef(el, `cx-${ordem.id}`)"
+                  :d="ordem.svgPathCx"
+                  fill="none"
+                  stroke="#fbbf24"
+                  stroke-width="2"
+                  stroke-dasharray="4 4"
+                />
+              </svg>
 
-                <div>
-                  <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
-                    Passo {{ idx + 1 }}
-                  </div>
-                  <h3 class="font-extrabold text-slate-900 text-xl leading-tight tracking-tight">
-                    {{ item.setor?.nome }}
-                  </h3>
-                  <p class="text-xs text-slate-500 mt-2 font-medium uppercase tracking-wide">
-                    {{ item.setor?.tipoSetor || 'N/A' }}
-                  </p>
-                </div>
+              <div class="flex flex-wrap gap-4 items-center relative z-10">
+                <div
+                  v-for="node in ordem.nodesCx"
+                  :key="node.key"
+                  :ref="el => setNodeRef(el, node.key)"
+                  :class="[
+                    'dynamic-node-card min-w-[170px] rounded-xl p-4 transition-all duration-300 relative group',
+                    node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                      ? 'bg-zinc-100/50 border border-zinc-200 text-zinc-500 opacity-80 shadow-xs'
+                      : 'bg-white border border-zinc-300 text-zinc-900 shadow-md ring-2 ring-amber-400/20'
+                  ]"
+                >
+                  <!-- Olhinho Expansível de Auditoria -->
+                  <button
+                    @click="openAuditDrawer(node, ordem.codigoBarras, ordem.modelo?.nome || 'Modelo')"
+                    class="absolute top-2.5 right-2.5 p-1 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer"
+                    title="Ver Detalhes de Auditoria"
+                    type="button"
+                  >
+                    <Eye :size="14" />
+                  </button>
 
-                <div class="mt-6 pt-5 border-t border-slate-100 flex flex-col gap-3">
-                  <div v-if="getLiveTime(item.setorId, 'CAIXA_TESTE')" class="flex justify-between items-center text-xs font-bold">
-                    <span class="text-blue-600 uppercase tracking-wider">Live CX</span>
-                    <span class="text-blue-800 bg-blue-50 px-2.5 py-1 rounded-md">
-                      {{ getLiveTime(item.setorId, 'CAIXA_TESTE') }}
+                  <!-- Header do Nó com Status Visual -->
+                  <div class="flex items-center justify-between gap-2 mb-1.5 pr-5">
+                    <span
+                      :class="[
+                        'text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded-full',
+                        node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                          ? 'bg-zinc-200/80 text-zinc-600'
+                          : 'bg-amber-100 text-amber-800 font-extrabold'
+                      ]"
+                    >
+                      Etapa {{ node.ordem }}
                     </span>
-                  </div>
-                  
-                  <div v-if="getLiveTime(item.setorId, 'LOTE_PRINCIPAL')" class="flex justify-between items-center text-xs font-bold">
-                    <span class="text-slate-700 uppercase tracking-wider">Live LP</span>
-                    <span class="text-slate-900 bg-slate-100 px-2.5 py-1 rounded-md">
-                      {{ getLiveTime(item.setorId, 'LOTE_PRINCIPAL') }}
-                    </span>
-                  </div>
 
-                  <div class="text-[11px] font-medium text-slate-500 space-y-1.5 mt-1">
-                    <div v-if="getSectorEnteringDate(item.setorId, 'CAIXA_TESTE')" class="flex justify-between">
-                      <span>IN (CX)</span>
-                      <span class="text-slate-800 font-bold">{{ getSectorEnteringDate(item.setorId, 'CAIXA_TESTE') }}</span>
+                    <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                     </div>
-                    <div v-if="getSectorEnteringDate(item.setorId, 'LOTE_PRINCIPAL')" class="flex justify-between">
-                      <span>IN (LP)</span>
-                      <span class="text-slate-800 font-bold">{{ getSectorEnteringDate(item.setorId, 'LOTE_PRINCIPAL') }}</span>
+                    <Check v-else :size="14" class="text-emerald-600 font-bold" />
+                  </div>
+
+                  <!-- Nome do Setor -->
+                  <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                    <span>{{ node.nome }}</span>
+                  </h4>
+
+                  <!-- Temporizador SLA / Duração Consolidada -->
+                  <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
+                    <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
+                      {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                    </div>
+
+                    <div v-else class="flex flex-col gap-1">
+                      <div class="flex items-center justify-between gap-1 text-[11px]">
+                        <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                        <div
+                          :class="[
+                            'font-mono font-bold flex items-center gap-1',
+                            getElapsedTimeInfo(node).isOverdue
+                              ? 'text-red-600 font-black animate-pulse'
+                              : 'text-amber-700'
+                          ]"
+                        >
+                          <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
+                          <Clock v-else :size="12" class="text-amber-600" />
+                          <span>{{ getElapsedTimeInfo(node).text }}</span>
+                        </div>
+                      </div>
+
+                      <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
+                        <span>Meta SLA:</span>
+                        <span>{{ node.slaAlvoMin }} min</span>
+                      </div>
+                    </div>
+
+                    <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
+                    <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                      <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Trilha 2: Lote Principal -->
+            <div class="bg-emerald-50/40 border border-emerald-300/40 rounded-2xl p-5 relative">
+              <div class="flex items-center gap-2 text-emerald-800 text-xs font-mono font-bold uppercase tracking-wider mb-4">
+                <PackageCheck :size="14" />
+                <span>Trilha {{ ordem.possuiCaixaTeste ? '2' : '1' }} — Lote Principal</span>
+              </div>
+
+              <!-- Curva SVG da Trilha LP -->
+              <svg class="absolute inset-0 pointer-events-none w-full h-full">
+                <path
+                  v-if="ordem.svgPathLp"
+                  :ref="el => setSvgLineRef(el, `lp-${ordem.id}`)"
+                  :d="ordem.svgPathLp"
+                  fill="none"
+                  stroke="#34d399"
+                  stroke-width="2"
+                  stroke-dasharray="4 4"
+                />
+              </svg>
+
+              <div class="flex flex-wrap gap-4 items-center relative z-10">
+                <div
+                  v-for="node in ordem.nodesLp"
+                  :key="node.key"
+                  :ref="el => setNodeRef(el, node.key)"
+                  :class="[
+                    'dynamic-node-card min-w-[170px] rounded-xl p-4 transition-all duration-300 relative group',
+                    node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                      ? 'bg-zinc-100/50 border border-zinc-200 text-zinc-500 opacity-80 shadow-xs'
+                      : 'bg-white border border-zinc-300 text-zinc-900 shadow-md ring-2 ring-emerald-400/20'
+                  ]"
+                >
+                  <!-- Olhinho Expansível de Auditoria -->
+                  <button
+                    @click="openAuditDrawer(node, ordem.codigoBarras, ordem.modelo?.nome || 'Modelo')"
+                    class="absolute top-2.5 right-2.5 p-1 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer"
+                    title="Ver Detalhes de Auditoria"
+                    type="button"
+                  >
+                    <Eye :size="14" />
+                  </button>
+
+                  <!-- Header do Nó com Status Visual -->
+                  <div class="flex items-center justify-between gap-2 mb-1.5 pr-5">
+                    <span
+                      :class="[
+                        'text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded-full',
+                        node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                          ? 'bg-zinc-200/80 text-zinc-600'
+                          : 'bg-emerald-100 text-emerald-800 font-extrabold'
+                      ]"
+                    >
+                      Etapa {{ node.ordem }}
+                    </span>
+
+                    <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </div>
+                    <Check v-else :size="14" class="text-emerald-600 font-bold" />
+                  </div>
+
+                  <!-- Nome do Setor -->
+                  <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                    <span>{{ node.nome }}</span>
+                  </h4>
+
+                  <!-- Temporizador SLA / Duração Consolidada -->
+                  <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
+                    <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
+                      {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                    </div>
+
+                    <div v-else class="flex flex-col gap-1">
+                      <div class="flex items-center justify-between gap-1 text-[11px]">
+                        <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                        <div
+                          :class="[
+                            'font-mono font-bold flex items-center gap-1',
+                            getElapsedTimeInfo(node).isOverdue
+                              ? 'text-red-600 font-black animate-pulse'
+                              : 'text-emerald-700'
+                          ]"
+                        >
+                          <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
+                          <Clock v-else :size="12" class="text-emerald-600" />
+                          <span>{{ getElapsedTimeInfo(node).text }}</span>
+                        </div>
+                      </div>
+
+                      <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
+                        <span>Meta SLA:</span>
+                        <span>{{ node.slaAlvoMin }} min</span>
+                      </div>
+                    </div>
+
+                    <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
+                    <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                      <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
                     </div>
                   </div>
                 </div>
@@ -651,20 +956,322 @@ function getLiveTime(setorId: string, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL'
             </div>
           </div>
         </div>
+      </main>
+
+      <!-- Rodapé TV -->
+      <div class="pt-4 border-t border-zinc-200 flex justify-between items-center text-xs font-mono text-zinc-500">
+        <span>SISTEMA ERP MODELAGEM V5.1 — PAINEL TV CHÃO DE FÁBRICA</span>
+        <span>{{ now.toLocaleDateString() }} — {{ now.toLocaleTimeString() }}</span>
       </div>
+    </div>
+
+    <!-- MODO PADRÃO (DASHBOARD LIGHT MODE) -->
+    <div v-else class="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
+      <!-- Header Claro -->
+      <header class="border-b border-zinc-200 pb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="text-left">
+          <button
+            @click="router.back()"
+            class="text-xs font-mono text-zinc-500 hover:text-zinc-900 flex items-center gap-1.5 mb-2 cursor-pointer uppercase font-bold"
+            type="button"
+          >
+            <ArrowLeft :size="14" /> Voltar
+          </button>
+          <h1 class="text-2xl md:text-3xl font-extrabold tracking-tighter text-zinc-900 uppercase text-left">
+            RASTREAMENTO DE PRODUÇÃO
+          </h1>
+          <p class="text-xs font-mono text-zinc-500 uppercase mt-0.5">
+            Monitoramento Chão de Fábrica ISO 9001
+          </p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button
+            @click="isTvMode = true"
+            class="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-mono font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+            type="button"
+          >
+            <Maximize :size="14" /> Modo TV Fullscreen
+          </button>
+
+          <button
+            @click="fetchOrdensEPosicoes"
+            class="p-2 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 rounded-xl transition-colors cursor-pointer shadow-xs"
+            title="Recarregar"
+            type="button"
+          >
+            <RotateCcw :size="16" />
+          </button>
+        </div>
+      </header>
+
+      <!-- Painel Principal de Raias -->
+      <main class="space-y-8">
+        <div v-if="loading" class="flex flex-col items-center justify-center py-20 gap-4">
+          <div class="w-10 h-10 border-4 border-zinc-200 border-t-emerald-600 rounded-full animate-spin"></div>
+          <p class="text-zinc-500 font-mono text-xs uppercase tracking-widest">Carregando raias de produção...</p>
+        </div>
+
+        <div
+          v-else-if="ordens.length === 0"
+          class="p-12 border border-dashed border-zinc-300 bg-white/60 backdrop-blur-md rounded-3xl text-center max-w-xl mx-auto shadow-sm"
+        >
+          <Layers :size="36" class="text-zinc-400 mx-auto mb-3" />
+          <h3 class="text-base font-bold text-zinc-800 uppercase tracking-tight">Nenhum Teste Ativo no Momento</h3>
+          <p class="text-xs text-zinc-500 mt-2 font-mono">
+            Nenhum teste ativo no momento. Inicie uma nova Ordem de Teste para visualizar o fluxo em tempo real.
+          </p>
+        </div>
+
+        <!-- Raias das OPs -->
+        <div v-else class="space-y-8">
+          <div
+            v-for="ordem in ordens"
+            :key="ordem.id"
+            class="bg-white/70 backdrop-blur-md border border-zinc-200/60 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow relative"
+          >
+            <!-- Identificador OP -->
+            <div class="flex flex-wrap items-center justify-between gap-4 pb-4 mb-4 border-b border-zinc-200/80">
+              <div class="text-left">
+                <span class="text-xs font-mono font-bold text-emerald-700 uppercase tracking-wider block">
+                  {{ ordem.codigoBarras }}
+                </span>
+                <h2 class="text-2xl md:text-3xl font-extrabold tracking-tighter text-zinc-900 uppercase text-left">
+                  {{ ordem.modelo?.nome || 'Modelo sem Nome' }}
+                </h2>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <span v-if="ordem.possuiCaixaTeste" class="px-3 py-1 rounded-full bg-amber-100/80 border border-amber-300/60 text-amber-800 text-[10px] font-mono font-bold uppercase shadow-xs">
+                  Dual Track (Caixa Teste + Lote)
+                </span>
+                <span class="px-3 py-1 rounded-full bg-zinc-100 border border-zinc-300 text-[10px] font-mono font-bold text-zinc-700 uppercase shadow-xs">
+                  {{ ordem.status }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Trilhas e Nós que Surgem sob Bipagem -->
+            <div class="space-y-6 relative">
+              <!-- Trilha Superior: Caixa Teste -->
+              <div v-if="ordem.possuiCaixaTeste" class="bg-amber-50/40 border border-amber-300/40 rounded-2xl p-5 relative">
+                <div class="flex items-center gap-2 text-amber-800 text-xs font-mono font-bold uppercase tracking-wider mb-4">
+                  <Box :size="14" />
+                  <span>Trilha 1 — Caixa Teste (Fast Track)</span>
+                </div>
+
+                <!-- SVG Curve -->
+                <svg class="absolute inset-0 pointer-events-none w-full h-full">
+                  <path
+                    v-if="ordem.svgPathCx"
+                    :ref="el => setSvgLineRef(el, `cx-main-${ordem.id}`)"
+                    :d="ordem.svgPathCx"
+                    fill="none"
+                    stroke="#fbbf24"
+                    stroke-width="2"
+                    stroke-dasharray="4 4"
+                  />
+                </svg>
+
+                <div class="flex flex-wrap gap-4 items-center relative z-10">
+                  <div
+                    v-for="node in ordem.nodesCx"
+                    :key="node.key"
+                    :ref="el => setNodeRef(el, node.key)"
+                    :class="[
+                      'dynamic-node-card min-w-[170px] rounded-xl p-4 transition-all duration-300 relative group',
+                      node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                        ? 'bg-zinc-100/50 border border-zinc-200 text-zinc-500 opacity-80 shadow-xs'
+                        : 'bg-white border border-zinc-300 text-zinc-900 shadow-md ring-2 ring-amber-400/20'
+                    ]"
+                  >
+                    <!-- Olhinho Expansível de Auditoria -->
+                    <button
+                      @click="openAuditDrawer(node, ordem.codigoBarras, ordem.modelo?.nome || 'Modelo')"
+                      class="absolute top-2.5 right-2.5 p-1 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer"
+                      title="Ver Detalhes de Auditoria"
+                      type="button"
+                    >
+                      <Eye :size="14" />
+                    </button>
+
+                    <!-- Header do Nó com Status Visual -->
+                    <div class="flex items-center justify-between gap-2 mb-1.5 pr-5">
+                      <span
+                        :class="[
+                          'text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded-full',
+                          node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                            ? 'bg-zinc-200/80 text-zinc-600'
+                            : 'bg-amber-100 text-amber-800 font-extrabold'
+                        ]"
+                      >
+                        Etapa {{ node.ordem }}
+                      </span>
+
+                      <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                      </div>
+                      <Check v-else :size="14" class="text-emerald-600 font-bold" />
+                    </div>
+
+                    <!-- Nome do Setor -->
+                    <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                      <span>{{ node.nome }}</span>
+                    </h4>
+
+                    <!-- Temporizador SLA / Duração Consolidada -->
+                    <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
+                      <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
+                        {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                      </div>
+
+                      <div v-else class="flex flex-col gap-1">
+                        <div class="flex items-center justify-between gap-1 text-[11px]">
+                          <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                          <div
+                            :class="[
+                              'font-mono font-bold flex items-center gap-1',
+                              getElapsedTimeInfo(node).isOverdue
+                                ? 'text-red-600 font-black animate-pulse'
+                                : 'text-amber-700'
+                            ]"
+                          >
+                            <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
+                            <Clock v-else :size="12" class="text-amber-600" />
+                            <span>{{ getElapsedTimeInfo(node).text }}</span>
+                          </div>
+                        </div>
+
+                        <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
+                          <span>Meta SLA:</span>
+                          <span>{{ node.slaAlvoMin }} min</span>
+                        </div>
+                      </div>
+
+                      <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
+                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                        <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Trilha Inferior: Lote Principal -->
+              <div class="bg-emerald-50/40 border border-emerald-300/40 rounded-2xl p-5 relative">
+                <div class="flex items-center gap-2 text-emerald-800 text-xs font-mono font-bold uppercase tracking-wider mb-4">
+                  <PackageCheck :size="14" />
+                  <span>Trilha {{ ordem.possuiCaixaTeste ? '2' : '1' }} — Lote Principal</span>
+                </div>
+
+                <!-- SVG Curve -->
+                <svg class="absolute inset-0 pointer-events-none w-full h-full">
+                  <path
+                    v-if="ordem.svgPathLp"
+                    :ref="el => setSvgLineRef(el, `lp-main-${ordem.id}`)"
+                    :d="ordem.svgPathLp"
+                    fill="none"
+                    stroke="#34d399"
+                    stroke-width="2"
+                    stroke-dasharray="4 4"
+                  />
+                </svg>
+
+                <div class="flex flex-wrap gap-4 items-center relative z-10">
+                  <div
+                    v-for="node in ordem.nodesLp"
+                    :key="node.key"
+                    :ref="el => setNodeRef(el, node.key)"
+                    :class="[
+                      'dynamic-node-card min-w-[170px] rounded-xl p-4 transition-all duration-300 relative group',
+                      node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                        ? 'bg-zinc-100/50 border border-zinc-200 text-zinc-500 opacity-80 shadow-xs'
+                        : 'bg-white border border-zinc-300 text-zinc-900 shadow-md ring-2 ring-emerald-400/20'
+                    ]"
+                  >
+                    <!-- Olhinho Expansível de Auditoria -->
+                    <button
+                      @click="openAuditDrawer(node, ordem.codigoBarras, ordem.modelo?.nome || 'Modelo')"
+                      class="absolute top-2.5 right-2.5 p-1 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors cursor-pointer"
+                      title="Ver Detalhes de Auditoria"
+                      type="button"
+                    >
+                      <Eye :size="14" />
+                    </button>
+
+                    <!-- Header do Nó com Status Visual -->
+                    <div class="flex items-center justify-between gap-2 mb-1.5 pr-5">
+                      <span
+                        :class="[
+                          'text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded-full',
+                          node.status === 'CONCLUIDO' || Boolean(node.dataSaida)
+                            ? 'bg-zinc-200/80 text-zinc-600'
+                            : 'bg-emerald-100 text-emerald-800 font-extrabold'
+                        ]"
+                      >
+                        Etapa {{ node.ordem }}
+                      </span>
+
+                      <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </div>
+                      <Check v-else :size="14" class="text-emerald-600 font-bold" />
+                    </div>
+
+                    <!-- Nome do Setor -->
+                    <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                      <span>{{ node.nome }}</span>
+                    </h4>
+
+                    <!-- Temporizador SLA / Duração Consolidada -->
+                    <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
+                      <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
+                        {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                      </div>
+
+                      <div v-else class="flex flex-col gap-1">
+                        <div class="flex items-center justify-between gap-1 text-[11px]">
+                          <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                          <div
+                            :class="[
+                              'font-mono font-bold flex items-center gap-1',
+                              getElapsedTimeInfo(node).isOverdue
+                                ? 'text-red-600 font-black animate-pulse'
+                                : 'text-emerald-700'
+                            ]"
+                          >
+                            <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
+                            <Clock v-else :size="12" class="text-emerald-600" />
+                            <span>{{ getElapsedTimeInfo(node).text }}</span>
+                          </div>
+                        </div>
+
+                        <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
+                          <span>Meta SLA:</span>
+                          <span>{{ node.slaAlvoMin }} min</span>
+                        </div>
+                      </div>
+
+                      <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
+                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                        <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Glassmorphism overrides & custom easings injected via inline classes */
-/* Animação suave para as mudanças de rotas */
-.v-enter-active,
-.v-leave-active {
-  transition: opacity 0.5s ease-out;
-}
-.v-enter-from,
-.v-leave-to {
-  opacity: 0;
+.font-sf-rounded {
+  font-family: 'SF Pro Rounded', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 </style>

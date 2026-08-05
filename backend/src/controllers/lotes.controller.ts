@@ -51,7 +51,8 @@ export class LotesController {
         relations: {
           modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
           planta: true,
-          criadoPor: true
+          criadoPor: true,
+          rastreamentos: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
         },
         order: { createdAt: 'DESC' }
       });
