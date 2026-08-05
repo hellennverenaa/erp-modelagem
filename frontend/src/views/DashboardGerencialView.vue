@@ -172,6 +172,18 @@ function initWebSocket() {
     console.log('WebSocket connected to dashboard server')
   })
 
+  socket.on('connect_error', (err: any) => {
+    if (
+      err?.message === 'TOKEN_EXPIRED' ||
+      err?.message?.includes('Authentication error') ||
+      err?.message?.includes('token')
+    ) {
+      console.warn('[WebSocket] Conexão rejeitada por autenticação. Interrompendo reconexões automáticas.')
+      liveStatus.value = 'DISCONNECTED'
+      socket?.disconnect()
+    }
+  })
+
   socket.on('disconnect', () => {
     liveStatus.value = 'DISCONNECTED'
     console.log('WebSocket disconnected from dashboard server')

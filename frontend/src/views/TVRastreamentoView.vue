@@ -135,7 +135,11 @@ async function fetchFluxoProducao() {
     ordens.value = ordensEnriquecidas
   } catch (err: any) {
     console.error('[TVRastreamentoView] Erro ao carregar fluxo:', err)
-    erroFetch.value = 'Falha ao sincronizar ordens com o servidor.'
+    if (err?.response?.status === 401) {
+      erroFetch.value = 'Sessão expirada ou não autorizada. Faça login novamente.'
+    } else {
+      erroFetch.value = 'Falha ao sincronizar ordens com o servidor.'
+    }
   } finally {
     loading.value = false
     triggerLayoutAnimation()
@@ -167,13 +171,25 @@ function initWebSocket() {
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,
-    reconnectionAttempts: 10,
+    reconnectionAttempts: 5,
     withCredentials: true,
     auth: { token }
   })
 
   socket.on('connect', () => {
     liveStatus.value = 'CONNECTED'
+  })
+
+  socket.on('connect_error', (err: any) => {
+    if (
+      err?.message === 'TOKEN_EXPIRED' ||
+      err?.message?.includes('Authentication error') ||
+      err?.message?.includes('token')
+    ) {
+      console.warn('[WebSocket] Conexão rejeitada por autenticação. Interrompendo reconexões automáticas.')
+      liveStatus.value = 'DISCONNECTED'
+      socket?.disconnect()
+    }
   })
 
   socket.on('disconnect', () => {

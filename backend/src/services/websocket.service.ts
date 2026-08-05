@@ -47,7 +47,7 @@ class WebSocketService {
 
         if (!tokenStr) {
           console.warn(`[WebSocket Auth] Rejeitado — Token de autenticação ausente. Socket ID: ${socket.id}`);
-          return next(new Error('Authentication error: Missing token'));
+          return next(new Error('TOKEN_EXPIRED'));
         }
 
         const decoded = jwt.verify(tokenStr, jwtSecret, { clockTolerance: 120 });
@@ -55,7 +55,7 @@ class WebSocketService {
         next();
       } catch (err: any) {
         console.warn(`[WebSocket Auth] Rejeitado — Falha no token do Socket ID ${socket.id}:`, err.message);
-        return next(new Error('Authentication error: Invalid or expired token'));
+        return next(new Error('TOKEN_EXPIRED'));
       }
     });
 
