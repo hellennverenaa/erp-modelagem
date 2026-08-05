@@ -30,8 +30,8 @@ interface RastreamentoItem {
   setorId: string
   setor?: { id: string; nome: string; tipoSetor?: string }
   estacao?: { id: string; nome: string; codigo?: string }
-  operadorEntrada?: { id: string; nome: string; email?: string }
-  operadorSaida?: { id: string; nome: string; email?: string }
+  operadorEntrada?: { id: string; nomeCompleto?: string; usuario?: string; email?: string }
+  operadorSaida?: { id: string; nomeCompleto?: string; usuario?: string; email?: string }
   tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL'
   status: string
   dataEntrada: string
@@ -162,24 +162,24 @@ function sortNodesByRoute(nodes: NodeTrackItem[], rotasModelo: Array<{ setorId?:
 }
 
 // --------------------------------------------------
-// Formatação de Horários e SLAs
+// Formatação de Timestamps e SLAs
 // --------------------------------------------------
-function formatDataEntradaCompleta(isoDate: string): string {
-  if (!isoDate) return 'Entrada: --/-- às --:--'
+function formatTimestampFormatado(isoDate: string | null | undefined, label: string): string {
+  if (!isoDate) return `${label}: —`
   try {
     const d = new Date(isoDate)
     const dia = d.getDate().toString().padStart(2, '0')
     const mes = (d.getMonth() + 1).toString().padStart(2, '0')
     const hora = d.getHours().toString().padStart(2, '0')
     const min = d.getMinutes().toString().padStart(2, '0')
-    return `Entrada: ${dia}/${mes} às ${hora}:${min}`
+    return `${label}: ${dia}/${mes} às ${hora}:${min}`
   } catch {
-    return 'Entrada: --/-- às --:--'
+    return `${label}: —`
   }
 }
 
 function formatPermanencia(minutos: number | null | undefined): string {
-  if (minutos === null || minutos === undefined) return 'Duração N/A'
+  if (minutos === null || minutos === undefined) return 'Duração: —'
   if (minutos < 60) return `Duração: ${minutos} min`
   const h = Math.floor(minutos / 60)
   const m = minutos % 60
@@ -244,8 +244,8 @@ async function fetchOrdensEPosicoes() {
         ordem: 1,
         tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
         slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
-        operadorEntradaNome: h.operadorEntrada?.nome || null,
-        operadorSaidaNome: h.operadorSaida?.nome || null,
+        operadorEntradaNome: h.operadorEntrada?.nomeCompleto || h.operadorEntrada?.usuario || null,
+        operadorSaidaNome: h.operadorSaida?.nomeCompleto || h.operadorSaida?.usuario || null,
         estacaoNome: h.estacao?.nome || (h.estacao as any)?.codigo || null,
         ocorrencias: h.ocorrencias || []
       }))
@@ -260,8 +260,8 @@ async function fetchOrdensEPosicoes() {
         ordem: 1,
         tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
         slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
-        operadorEntradaNome: h.operadorEntrada?.nome || null,
-        operadorSaidaNome: h.operadorSaida?.nome || null,
+        operadorEntradaNome: h.operadorEntrada?.nomeCompleto || h.operadorEntrada?.usuario || null,
+        operadorSaidaNome: h.operadorSaida?.nomeCompleto || h.operadorSaida?.usuario || null,
         estacaoNome: h.estacao?.nome || (h.estacao as any)?.codigo || null,
         ocorrencias: h.ocorrencias || []
       }))
@@ -276,7 +276,7 @@ async function fetchOrdensEPosicoes() {
           ordem: 1,
           tempoPermanenciaMin: null,
           slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
-          operadorEntradaNome: 'Operador PCP / Entrada',
+          operadorEntradaNome: null,
           operadorSaidaNome: null,
           estacaoNome: 'Bancada Inicial',
           ocorrencias: []
@@ -293,7 +293,7 @@ async function fetchOrdensEPosicoes() {
           ordem: 1,
           tempoPermanenciaMin: null,
           slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
-          operadorEntradaNome: 'Operador PCP / Entrada',
+          operadorEntradaNome: null,
           operadorSaidaNome: null,
           estacaoNome: 'Bancada Inicial',
           ocorrencias: []
@@ -506,8 +506,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="w-full min-h-screen bg-zinc-50 text-zinc-900 font-sf-rounded tracking-tight selection:bg-zinc-200 selection:text-zinc-900">
-    <!-- DRAWER DE AUDITORIA E DIVERGÊNCIAS (SLIDE-OVER) -->
+  <div class="w-full min-h-screen bg-zinc-50 text-zinc-900 tracking-tight selection:bg-zinc-200 selection:text-zinc-900">
+    <!-- DRAWER DE AUDITORIA E DIVERGÊNCIAS (SLIDE-OVER REAL) -->
     <div
       v-if="selectedAuditNode"
       class="fixed inset-0 z-50 bg-zinc-950/40 backdrop-blur-sm flex justify-end transition-opacity"
@@ -538,17 +538,17 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <!-- Seção de Responsáveis e Estação -->
+          <!-- Seção de Responsáveis e Estação Real -->
           <div class="space-y-4 mb-6">
             <h4 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Rastreabilidade Operacional</h4>
 
-            <div class="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2 text-xs">
+            <div class="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2.5 text-xs">
               <div class="flex items-center justify-between">
                 <span class="text-zinc-500 font-medium flex items-center gap-1.5">
                   <User :size="14" class="text-zinc-600" /> Operador Entrada:
                 </span>
                 <span class="font-bold text-zinc-900 font-mono">
-                  {{ selectedAuditNode.node.operadorEntradaNome || 'Operador SSO Padrão' }}
+                  {{ selectedAuditNode.node.operadorEntradaNome || '—' }}
                 </span>
               </div>
 
@@ -557,17 +557,30 @@ onUnmounted(() => {
                   <User :size="14" class="text-zinc-600" /> Operador Saída:
                 </span>
                 <span class="font-bold text-zinc-900 font-mono">
-                  {{ selectedAuditNode.node.operadorSaidaNome || 'Em Andamento / Pendente' }}
+                  {{ selectedAuditNode.node.operadorSaidaNome || '—' }}
                 </span>
               </div>
 
-              <div class="flex items-center justify-between pt-1 border-t border-zinc-200/60">
+              <div class="flex items-center justify-between pt-2 border-t border-zinc-200/60">
                 <span class="text-zinc-500 font-medium flex items-center gap-1.5">
-                  <Cpu :size="14" class="text-zinc-600" /> Estação de Trabalho:
+                  <Cpu :size="14" class="text-zinc-600" /> Estação / Máquina:
                 </span>
                 <span class="font-bold text-zinc-900 font-mono">
-                  {{ selectedAuditNode.node.estacaoNome || 'Bancada Padrão' }}
+                  {{ selectedAuditNode.node.estacaoNome || '—' }}
                 </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Marcos Temporais Completo -->
+          <div class="space-y-4 mb-6">
+            <h4 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Marcos Temporais</h4>
+            <div class="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2 text-xs font-mono">
+              <div class="text-zinc-700 font-medium">
+                {{ formatTimestampFormatado(selectedAuditNode.node.dataEntrada, 'Entrada') }}
+              </div>
+              <div class="text-zinc-700 font-medium">
+                {{ formatTimestampFormatado(selectedAuditNode.node.dataSaida, 'Saída') }}
               </div>
             </div>
           </div>
@@ -814,8 +827,12 @@ onUnmounted(() => {
 
                   <!-- Temporizador SLA / Duração Consolidada -->
                   <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
-                    <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
-                      {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                    <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[10px] font-mono text-zinc-500 font-medium space-y-1">
+                      <div>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</div>
+                      <div>{{ formatTimestampFormatado(node.dataSaida, 'Saída') }}</div>
+                      <div class="font-bold text-zinc-700 pt-0.5 border-t border-zinc-200/40">
+                        {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                      </div>
                     </div>
 
                     <div v-else class="flex flex-col gap-1">
@@ -832,6 +849,12 @@ onUnmounted(() => {
                           <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
                           <Clock v-else :size="12" class="text-amber-600" />
                           <span>{{ getElapsedTimeInfo(node).text }}</span>
+                          <span
+                            v-if="getElapsedTimeInfo(node).isOverdue"
+                            class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
+                          >
+                            Atrasado
+                          </span>
                         </div>
                       </div>
 
@@ -839,11 +862,10 @@ onUnmounted(() => {
                         <span>Meta SLA:</span>
                         <span>{{ node.slaAlvoMin }} min</span>
                       </div>
-                    </div>
 
-                    <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
-                    <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
-                      <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
+                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                        <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -919,8 +941,12 @@ onUnmounted(() => {
 
                   <!-- Temporizador SLA / Duração Consolidada -->
                   <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
-                    <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
-                      {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                    <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[10px] font-mono text-zinc-500 font-medium space-y-1">
+                      <div>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</div>
+                      <div>{{ formatTimestampFormatado(node.dataSaida, 'Saída') }}</div>
+                      <div class="font-bold text-zinc-700 pt-0.5 border-t border-zinc-200/40">
+                        {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                      </div>
                     </div>
 
                     <div v-else class="flex flex-col gap-1">
@@ -937,6 +963,12 @@ onUnmounted(() => {
                           <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
                           <Clock v-else :size="12" class="text-emerald-600" />
                           <span>{{ getElapsedTimeInfo(node).text }}</span>
+                          <span
+                            v-if="getElapsedTimeInfo(node).isOverdue"
+                            class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
+                          >
+                            Atrasado
+                          </span>
                         </div>
                       </div>
 
@@ -944,11 +976,10 @@ onUnmounted(() => {
                         <span>Meta SLA:</span>
                         <span>{{ node.slaAlvoMin }} min</span>
                       </div>
-                    </div>
 
-                    <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
-                    <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
-                      <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
+                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                        <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -957,12 +988,6 @@ onUnmounted(() => {
           </div>
         </div>
       </main>
-
-      <!-- Rodapé TV -->
-      <div class="pt-4 border-t border-zinc-200 flex justify-between items-center text-xs font-mono text-zinc-500">
-        <span>SISTEMA ERP MODELAGEM V5.1 — PAINEL TV CHÃO DE FÁBRICA</span>
-        <span>{{ now.toLocaleDateString() }} — {{ now.toLocaleTimeString() }}</span>
-      </div>
     </div>
 
     <!-- MODO PADRÃO (DASHBOARD LIGHT MODE) -->
@@ -1122,8 +1147,12 @@ onUnmounted(() => {
 
                     <!-- Temporizador SLA / Duração Consolidada -->
                     <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
-                      <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
-                        {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                      <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[10px] font-mono text-zinc-500 font-medium space-y-1">
+                        <div>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</div>
+                        <div>{{ formatTimestampFormatado(node.dataSaida, 'Saída') }}</div>
+                        <div class="font-bold text-zinc-700 pt-0.5 border-t border-zinc-200/40">
+                          {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                        </div>
                       </div>
 
                       <div v-else class="flex flex-col gap-1">
@@ -1140,6 +1169,12 @@ onUnmounted(() => {
                             <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
                             <Clock v-else :size="12" class="text-amber-600" />
                             <span>{{ getElapsedTimeInfo(node).text }}</span>
+                            <span
+                              v-if="getElapsedTimeInfo(node).isOverdue"
+                              class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
+                            >
+                              Atrasado
+                            </span>
                           </div>
                         </div>
 
@@ -1147,18 +1182,17 @@ onUnmounted(() => {
                           <span>Meta SLA:</span>
                           <span>{{ node.slaAlvoMin }} min</span>
                         </div>
-                      </div>
 
-                      <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
-                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
-                        <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
+                        <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                          <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- Trilha Inferior: Lote Principal -->
+              <!-- Trilha 2: Lote Principal -->
               <div class="bg-emerald-50/40 border border-emerald-300/40 rounded-2xl p-5 relative">
                 <div class="flex items-center gap-2 text-emerald-800 text-xs font-mono font-bold uppercase tracking-wider mb-4">
                   <PackageCheck :size="14" />
@@ -1227,8 +1261,12 @@ onUnmounted(() => {
 
                     <!-- Temporizador SLA / Duração Consolidada -->
                     <div class="mt-3 pt-2.5 border-t border-zinc-200/60 flex flex-col gap-1">
-                      <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[11px] font-mono text-zinc-500 font-medium">
-                        {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                      <div v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" class="text-[10px] font-mono text-zinc-500 font-medium space-y-1">
+                        <div>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</div>
+                        <div>{{ formatTimestampFormatado(node.dataSaida, 'Saída') }}</div>
+                        <div class="font-bold text-zinc-700 pt-0.5 border-t border-zinc-200/40">
+                          {{ formatPermanencia(node.tempoPermanenciaMin) }}
+                        </div>
                       </div>
 
                       <div v-else class="flex flex-col gap-1">
@@ -1245,6 +1283,12 @@ onUnmounted(() => {
                             <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
                             <Clock v-else :size="12" class="text-emerald-600" />
                             <span>{{ getElapsedTimeInfo(node).text }}</span>
+                            <span
+                              v-if="getElapsedTimeInfo(node).isOverdue"
+                              class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
+                            >
+                              Atrasado
+                            </span>
                           </div>
                         </div>
 
@@ -1252,11 +1296,10 @@ onUnmounted(() => {
                           <span>Meta SLA:</span>
                           <span>{{ node.slaAlvoMin }} min</span>
                         </div>
-                      </div>
 
-                      <!-- Timestamp Completo de Entrada (DD/MM às HH:MM) -->
-                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
-                        <span>{{ formatDataEntradaCompleta(node.dataEntrada) }}</span>
+                        <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                          <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1269,9 +1312,3 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
-
-<style scoped>
-.font-sf-rounded {
-  font-family: 'SF Pro Rounded', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-</style>

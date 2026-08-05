@@ -9,7 +9,32 @@ import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
+import { Usuario } from '../entities/Usuario';
 import { webSocketService } from '../services/websocket.service';
+
+const isUuidString = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+async function resolveLocalOperadorId(userObj: any): Promise<string | null> {
+  if (!userObj) return null;
+  const usuarioRepo = AppDataSource.getRepository(Usuario);
+  const candidate = userObj.userId || userObj.id || userObj.usuario || userObj.username;
+  if (!candidate || typeof candidate !== 'string') return null;
+
+  if (isUuidString(candidate)) {
+    const found = await usuarioRepo.findOne({ where: { id: candidate } });
+    if (found) return found.id;
+  }
+
+  const foundByUsuario = await usuarioRepo.findOne({ where: { usuario: candidate } });
+  if (foundByUsuario) return foundByUsuario.id;
+
+  if (userObj.email && typeof userObj.email === 'string') {
+    const foundByEmail = await usuarioRepo.findOne({ where: { email: userObj.email } });
+    if (foundByEmail) return foundByEmail.id;
+  }
+
+  return null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RastreamentosController — Motor do ERP (Bipagem de Entrada/Saída)
@@ -72,10 +97,15 @@ export class RastreamentosController {
     }
 
     const { ordemTesteId, setorId, tipoLote, pecaId, estacaoId } = parseResult.data;
-    const operadorId = req.user?.userId;
+    let operadorId = req.user?.userId;
 
     if (!operadorId) {
       return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHENTICATED' });
+    }
+
+    const localOperadorId = await resolveLocalOperadorId(req.user);
+    if (localOperadorId) {
+      operadorId = localOperadorId;
     }
 
     try {
@@ -256,10 +286,15 @@ export class RastreamentosController {
     }
 
     const { ordemTesteId, setorId, tipoLote, pecaId, operadorId: bodyOperadorId, operadorSaidaId } = parseResult.data;
-    const operadorId = bodyOperadorId || operadorSaidaId || req.user?.userId;
+    let operadorId = bodyOperadorId || operadorSaidaId || req.user?.userId;
 
     if (!operadorId) {
       return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHENTICATED' });
+    }
+
+    const localOperadorId = await resolveLocalOperadorId(req.user);
+    if (localOperadorId) {
+      operadorId = localOperadorId;
     }
 
     try {
