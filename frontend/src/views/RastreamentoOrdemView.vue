@@ -161,6 +161,18 @@ function sortNodesByRoute(nodes: NodeTrackItem[], rotasModelo: Array<{ setorId?:
   })
 }
 
+// Propriedade computada reativa para garantir ordenação fluida por rota do modelo
+const sortedOrdens = computed(() => {
+  return ordens.value.map(ordem => {
+    const rotasModelo = (ordem.modelo as any)?.rotas || (ordem.modelo as any)?.rota_modelo || []
+    return {
+      ...ordem,
+      nodesCx: sortNodesByRoute(ordem.nodesCx, rotasModelo).map((n, i) => ({ ...n, ordem: i + 1 })),
+      nodesLp: sortNodesByRoute(ordem.nodesLp, rotasModelo).map((n, i) => ({ ...n, ordem: i + 1 }))
+    }
+  })
+})
+
 // --------------------------------------------------
 // Formatação de Timestamps e SLAs
 // --------------------------------------------------
@@ -718,7 +730,7 @@ onUnmounted(() => {
 
         <!-- Estado Vazio -->
         <div
-          v-else-if="ordens.length === 0"
+          v-else-if="sortedOrdens.length === 0"
           class="flex flex-col items-center justify-center py-24 text-center border border-dashed border-zinc-300 bg-white/60 backdrop-blur-md rounded-3xl p-8 max-w-xl mx-auto shadow-sm"
         >
           <Layers :size="36" class="text-zinc-400 mb-3" />
@@ -731,7 +743,7 @@ onUnmounted(() => {
         <!-- Swimlanes por OP (Glassmorphism Claro) -->
         <div
           v-else
-          v-for="ordem in ordens"
+          v-for="ordem in sortedOrdens"
           :key="ordem.id"
           class="op-swimlane bg-white/70 backdrop-blur-md border border-zinc-200/60 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow relative"
         >
@@ -817,12 +829,12 @@ onUnmounted(() => {
                       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                       <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                     </div>
-                    <Check v-else :size="14" class="text-emerald-600 font-bold" />
                   </div>
 
                   <!-- Nome do Setor -->
-                  <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                  <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between gap-1">
                     <span>{{ node.nome }}</span>
+                    <Check v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" :size="14" class="text-emerald-600 font-bold shrink-0" />
                   </h4>
 
                   <!-- Temporizador SLA / Duração Consolidada -->
@@ -863,7 +875,7 @@ onUnmounted(() => {
                         <span>{{ node.slaAlvoMin }} min</span>
                       </div>
 
-                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                      <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
                         <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
                       </div>
                     </div>
@@ -931,12 +943,12 @@ onUnmounted(() => {
                       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </div>
-                    <Check v-else :size="14" class="text-emerald-600 font-bold" />
                   </div>
 
                   <!-- Nome do Setor -->
-                  <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                  <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between gap-1">
                     <span>{{ node.nome }}</span>
+                    <Check v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" :size="14" class="text-emerald-600 font-bold shrink-0" />
                   </h4>
 
                   <!-- Temporizador SLA / Duração Consolidada -->
@@ -977,7 +989,7 @@ onUnmounted(() => {
                         <span>{{ node.slaAlvoMin }} min</span>
                       </div>
 
-                      <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                      <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
                         <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
                       </div>
                     </div>
@@ -988,6 +1000,12 @@ onUnmounted(() => {
           </div>
         </div>
       </main>
+
+      <!-- Rodapé TV -->
+      <div class="pt-4 border-t border-zinc-200 flex justify-between items-center text-xs font-mono text-zinc-500">
+        <span>SISTEMA ERP MODELAGEM V5.1 — PAINEL TV CHÃO DE FÁBRICA</span>
+        <span>{{ now.toLocaleDateString() }} — {{ now.toLocaleTimeString() }}</span>
+      </div>
     </div>
 
     <!-- MODO PADRÃO (DASHBOARD LIGHT MODE) -->
@@ -1038,7 +1056,7 @@ onUnmounted(() => {
         </div>
 
         <div
-          v-else-if="ordens.length === 0"
+          v-else-if="sortedOrdens.length === 0"
           class="p-12 border border-dashed border-zinc-300 bg-white/60 backdrop-blur-md rounded-3xl text-center max-w-xl mx-auto shadow-sm"
         >
           <Layers :size="36" class="text-zinc-400 mx-auto mb-3" />
@@ -1051,7 +1069,7 @@ onUnmounted(() => {
         <!-- Raias das OPs -->
         <div v-else class="space-y-8">
           <div
-            v-for="ordem in ordens"
+            v-for="ordem in sortedOrdens"
             :key="ordem.id"
             class="bg-white/70 backdrop-blur-md border border-zinc-200/60 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow relative"
           >
@@ -1137,12 +1155,12 @@ onUnmounted(() => {
                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                       </div>
-                      <Check v-else :size="14" class="text-emerald-600 font-bold" />
                     </div>
 
                     <!-- Nome do Setor -->
-                    <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                    <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between gap-1">
                       <span>{{ node.nome }}</span>
+                      <Check v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" :size="14" class="text-emerald-600 font-bold shrink-0" />
                     </h4>
 
                     <!-- Temporizador SLA / Duração Consolidada -->
@@ -1183,7 +1201,7 @@ onUnmounted(() => {
                           <span>{{ node.slaAlvoMin }} min</span>
                         </div>
 
-                        <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                        <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
                           <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
                         </div>
                       </div>
@@ -1251,12 +1269,12 @@ onUnmounted(() => {
                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                       </div>
-                      <Check v-else :size="14" class="text-emerald-600 font-bold" />
                     </div>
 
                     <!-- Nome do Setor -->
-                    <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between">
+                    <h4 class="text-xs font-extrabold text-zinc-900 uppercase tracking-tight text-left flex items-center justify-between gap-1">
                       <span>{{ node.nome }}</span>
+                      <Check v-if="node.status === 'CONCLUIDO' || Boolean(node.dataSaida)" :size="14" class="text-emerald-600 font-bold shrink-0" />
                     </h4>
 
                     <!-- Temporizador SLA / Duração Consolidada -->
@@ -1297,7 +1315,7 @@ onUnmounted(() => {
                           <span>{{ node.slaAlvoMin }} min</span>
                         </div>
 
-                        <div class="text-[10px] font-mono text-zinc-400 flex justify-between mt-1 pt-1 border-t border-zinc-100">
+                        <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
                           <span>{{ formatTimestampFormatado(node.dataEntrada, 'Entrada') }}</span>
                         </div>
                       </div>
