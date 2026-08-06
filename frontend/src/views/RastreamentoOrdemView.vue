@@ -28,7 +28,7 @@ import {
 interface RastreamentoItem {
   id: string
   setorId: string
-  setor?: { id: string; nome: string; tipoSetor?: string }
+  setor?: { id: string; nome: string; tipoSetor?: string; bipagemApenasSaida?: boolean }
   estacao?: { id: string; nome: string; codigo?: string }
   operadorEntrada?: { id: string; nomeCompleto?: string; usuario?: string; email?: string }
   operadorSaida?: { id: string; nomeCompleto?: string; usuario?: string; email?: string }
@@ -58,6 +58,7 @@ interface NodeTrackItem {
   ordem: number
   tempoPermanenciaMin?: number | null
   slaAlvoMin?: number | null
+  bipagemApenasSaida?: boolean
   operadorEntradaNome?: string | null
   operadorSaidaNome?: string | null
   estacaoNome?: string | null
@@ -161,7 +162,7 @@ function sortNodesByRoute(nodes: NodeTrackItem[], rotasModelo: Array<{ setorId?:
   })
 }
 
-// Propriedade computada reativa para garantir ordenação fluida por rota do modelo
+// Propriedade computada reativa para garantir ordenação por rota do modelo
 const sortedOrdens = computed(() => {
   return ordens.value.map(ordem => {
     const rotasModelo = (ordem.modelo as any)?.rotas || (ordem.modelo as any)?.rota_modelo || []
@@ -256,6 +257,7 @@ async function fetchOrdensEPosicoes() {
         ordem: 1,
         tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
         slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
+        bipagemApenasSaida: h.setor?.bipagemApenasSaida || false,
         operadorEntradaNome: h.operadorEntrada?.nomeCompleto || h.operadorEntrada?.usuario || null,
         operadorSaidaNome: h.operadorSaida?.nomeCompleto || h.operadorSaida?.usuario || null,
         estacaoNome: h.estacao?.nome || (h.estacao as any)?.codigo || null,
@@ -272,6 +274,7 @@ async function fetchOrdensEPosicoes() {
         ordem: 1,
         tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
         slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
+        bipagemApenasSaida: h.setor?.bipagemApenasSaida || false,
         operadorEntradaNome: h.operadorEntrada?.nomeCompleto || h.operadorEntrada?.usuario || null,
         operadorSaidaNome: h.operadorSaida?.nomeCompleto || h.operadorSaida?.usuario || null,
         estacaoNome: h.estacao?.nome || (h.estacao as any)?.codigo || null,
@@ -288,6 +291,7 @@ async function fetchOrdensEPosicoes() {
           ordem: 1,
           tempoPermanenciaMin: null,
           slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
+          bipagemApenasSaida: false,
           operadorEntradaNome: null,
           operadorSaidaNome: null,
           estacaoNome: 'Bancada Inicial',
@@ -305,6 +309,7 @@ async function fetchOrdensEPosicoes() {
           ordem: 1,
           tempoPermanenciaMin: null,
           slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
+          bipagemApenasSaida: false,
           operadorEntradaNome: null,
           operadorSaidaNome: null,
           estacaoNome: 'Bancada Inicial',
@@ -518,7 +523,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="w-full min-h-screen bg-zinc-50 text-zinc-900 tracking-tight selection:bg-zinc-200 selection:text-zinc-900">
+  <div class="w-full min-h-screen bg-zinc-50 text-zinc-900 font-sf-rounded tracking-tight selection:bg-zinc-200 selection:text-zinc-900">
     <!-- DRAWER DE AUDITORIA E DIVERGÊNCIAS (SLIDE-OVER REAL) -->
     <div
       v-if="selectedAuditNode"
@@ -560,7 +565,7 @@ onUnmounted(() => {
                   <User :size="14" class="text-zinc-600" /> Operador Entrada:
                 </span>
                 <span class="font-bold text-zinc-900 font-mono">
-                  {{ selectedAuditNode.node.operadorEntradaNome || '—' }}
+                  {{ selectedAuditNode.node.bipagemApenasSaida ? 'Handoff Automático' : (selectedAuditNode.node.operadorEntradaNome || 'Handoff Automático') }}
                 </span>
               </div>
 
@@ -569,7 +574,7 @@ onUnmounted(() => {
                   <User :size="14" class="text-zinc-600" /> Operador Saída:
                 </span>
                 <span class="font-bold text-zinc-900 font-mono">
-                  {{ selectedAuditNode.node.operadorSaidaNome || '—' }}
+                  {{ selectedAuditNode.node.status === 'EM_PROCESSO' ? 'Em Processo...' : (selectedAuditNode.node.operadorSaidaNome || '—') }}
                 </span>
               </div>
 
@@ -610,9 +615,9 @@ onUnmounted(() => {
               </div>
 
               <div class="p-3 bg-zinc-50 border border-zinc-200 rounded-xl text-center">
-                <span class="text-[10px] font-mono text-zinc-500 block uppercase">Tempo Real</span>
+                <span class="text-[10px] font-mono text-zinc-500 block uppercase">Tempo de Permanência</span>
                 <span class="text-sm font-extrabold text-zinc-900 font-mono">
-                  {{ formatPermanencia(selectedAuditNode.node.tempoPermanenciaMin) }}
+                  {{ selectedAuditNode.node.status === 'CONCLUIDO' || Boolean(selectedAuditNode.node.dataSaida) ? formatPermanencia(selectedAuditNode.node.tempoPermanenciaMin) : getElapsedTimeInfo(selectedAuditNode.node).text }}
                 </span>
               </div>
             </div>
@@ -852,7 +857,7 @@ onUnmounted(() => {
                         <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
                         <div
                           :class="[
-                            'font-mono font-bold flex items-center gap-1',
+                            'font-mono font-extrabold flex items-center gap-1',
                             getElapsedTimeInfo(node).isOverdue
                               ? 'text-red-600 font-black animate-pulse'
                               : 'text-amber-700'
@@ -966,7 +971,7 @@ onUnmounted(() => {
                         <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
                         <div
                           :class="[
-                            'font-mono font-bold flex items-center gap-1',
+                            'font-mono font-extrabold flex items-center gap-1',
                             getElapsedTimeInfo(node).isOverdue
                               ? 'text-red-600 font-black animate-pulse'
                               : 'text-emerald-700'
@@ -1178,7 +1183,7 @@ onUnmounted(() => {
                           <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
                           <div
                             :class="[
-                              'font-mono font-bold flex items-center gap-1',
+                              'font-mono font-extrabold flex items-center gap-1',
                               getElapsedTimeInfo(node).isOverdue
                                 ? 'text-red-600 font-black animate-pulse'
                                 : 'text-amber-700'
@@ -1292,7 +1297,7 @@ onUnmounted(() => {
                           <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
                           <div
                             :class="[
-                              'font-mono font-bold flex items-center gap-1',
+                              'font-mono font-extrabold flex items-center gap-1',
                               getElapsedTimeInfo(node).isOverdue
                                 ? 'text-red-600 font-black animate-pulse'
                                 : 'text-emerald-700'
@@ -1330,3 +1335,9 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.font-sf-rounded {
+  font-family: 'Nunito', 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+</style>

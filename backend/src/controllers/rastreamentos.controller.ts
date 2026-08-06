@@ -228,12 +228,17 @@ export class RastreamentosController {
         registroExistente.status = RastreamentoStatus.EM_PROCESSO;
 
         const salvo = await rastreamentoRepo.save(registroExistente);
-        webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
-        webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvo });
+        const salvoPopulado = await rastreamentoRepo.findOne({
+          where: { id: salvo.id },
+          relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+        }) || salvo;
+
+        webSocketService.emit('peca:avanco', { action: 'entrada', data: salvoPopulado });
+        webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvoPopulado });
 
         return res.status(200).json({
           message: 'Bipagem de entrada registrada com sucesso.',
-          rastreamento: salvo,
+          rastreamento: salvoPopulado,
         });
       }
 
@@ -250,10 +255,14 @@ export class RastreamentosController {
       });
 
       const salvo = await rastreamentoRepo.save(novoRastreamento);
+      const salvoPopulado = await rastreamentoRepo.findOne({
+        where: { id: salvo.id },
+        relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+      }) || salvo;
 
       // Emitir avanço via WebSocket
-      webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
-      webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvo });
+      webSocketService.emit('peca:avanco', { action: 'entrada', data: salvoPopulado });
+      webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvoPopulado });
 
       return res.status(201).json({
         message: 'Bipagem de entrada registrada com sucesso.',
@@ -533,10 +542,14 @@ export class RastreamentosController {
       rastreamento.status             = RastreamentoStatus.CONCLUIDO;
 
       const atualizado = await rastreamentoRepo.save(rastreamento);
+      const atualizadoPopulado = await rastreamentoRepo.findOne({
+        where: { id: atualizado.id },
+        relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+      }) || atualizado;
 
       // Emitir avanço via WebSocket
-      webSocketService.emit('peca:avanco', { action: 'saida', data: atualizado });
-      webSocketService.emit('rastreamento:atualizado', { action: 'saida', data: atualizado });
+      webSocketService.emit('peca:avanco', { action: 'saida', data: atualizadoPopulado });
+      webSocketService.emit('rastreamento:atualizado', { action: 'saida', data: atualizadoPopulado });
 
       // 5. Handoff Automático (se aplicável)
       // Se for um setor de Handoff Automático (Categoria A), transfere automaticamente para o próximo setor lógico da rota
@@ -597,7 +610,7 @@ export class RastreamentosController {
                   
                   return res.status(200).json({
                     message: 'Bipagem de saída registrada com sucesso. Aguardando a conclusão dos demais setores paralelos.',
-                    rastreamento: atualizado,
+                    rastreamento: atualizadoPopulado,
                     sla: {
                       tempoTotalMin,
                       tempoPausadoMin,
@@ -646,8 +659,13 @@ export class RastreamentosController {
                       status:           RastreamentoStatus.EM_PROCESSO,
                     });
                     const salvoHandoff = await rastreamentoRepo.save(proximoRastreamento);
-                    webSocketService.emit('peca:avanco', { action: 'handoff', data: salvoHandoff });
-                    webSocketService.emit('rastreamento:atualizado', { action: 'handoff', data: salvoHandoff });
+                    const salvoHandoffPopulado = await rastreamentoRepo.findOne({
+                      where: { id: salvoHandoff.id },
+                      relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+                    }) || salvoHandoff;
+
+                    webSocketService.emit('peca:avanco', { action: 'handoff', data: salvoHandoffPopulado });
+                    webSocketService.emit('rastreamento:atualizado', { action: 'handoff', data: salvoHandoffPopulado });
                     console.log(`[Handoff Automático] Peça transferida automaticamente de ${setorId} para ${proxima.setorId}`);
                   } else {
                     console.log(`[Handoff Automático] Evitada duplicidade. Entrada para o setor ${proxima.setorId} já existe.`);
