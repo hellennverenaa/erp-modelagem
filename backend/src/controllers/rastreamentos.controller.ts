@@ -153,38 +153,46 @@ export class RastreamentosController {
 
       // 1.2.1. Trava Estrita de Sequência (Anti-Teletransporte)
       if (pertenceARota.ordem > 1) {
-        // Encontra a etapa imediatamente anterior na rota desse mesmo modelo
-        const rotaAnterior = await rotaRepo.findOne({
-          where: {
-            modeloId: ordem.modeloId,
-            ordem: pertenceARota.ordem - 1,
-          },
-        });
+        const isCaixaTeste = tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE';
+        const isInicioCorteOuEtapa5 = pertenceARota.ordem === 5;
 
-        if (rotaAnterior) {
-          const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
-          
-          // Verifica se a saída do setor anterior foi concluída
-          const queryAnterior = checkRastreamentoRepo.createQueryBuilder('r')
-            .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
-            .andWhere('r.setorId = :setorId', { setorId: rotaAnterior.setorId })
-            .andWhere('r.status = :status', { status: RastreamentoStatus.CONCLUIDO })
-            .andWhere('r.dataSaida IS NOT NULL')
-            .andWhere('r.tipoLote = :tipoLote', { tipoLote });
+        // Bypass da Trava de Sequência para nascimento da Caixa Teste nas máquinas de corte
+        if (isCaixaTeste && isInicioCorteOuEtapa5) {
+          // Bypass de sequência permitido para Caixa Teste no início do Corte Automático
+        } else {
+          // Encontra a etapa imediatamente anterior na rota desse mesmo modelo
+          const rotaAnterior = await rotaRepo.findOne({
+            where: {
+              modeloId: ordem.modeloId,
+              ordem: pertenceARota.ordem - 1,
+            },
+          });
 
-          if (pecaId) {
-            queryAnterior.andWhere('r.pecaId = :pecaId', { pecaId });
-          } else {
-            queryAnterior.andWhere('r.pecaId IS NULL');
-          }
+          if (rotaAnterior) {
+            const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+            
+            // Verifica se a saída do setor anterior foi concluída
+            const queryAnterior = checkRastreamentoRepo.createQueryBuilder('r')
+              .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
+              .andWhere('r.setorId = :setorId', { setorId: rotaAnterior.setorId })
+              .andWhere('r.status = :status', { status: RastreamentoStatus.CONCLUIDO })
+              .andWhere('r.dataSaida IS NOT NULL')
+              .andWhere('r.tipoLote = :tipoLote', { tipoLote });
 
-          const rastreamentoAnterior = await queryAnterior.getOne();
+            if (pecaId) {
+              queryAnterior.andWhere('r.pecaId = :pecaId', { pecaId });
+            } else {
+              queryAnterior.andWhere('r.pecaId IS NULL');
+            }
 
-          if (!rastreamentoAnterior) {
-            return res.status(403).json({
-              error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
-              code: 'SEQUENCIA_INVALIDA',
-            });
+            const rastreamentoAnterior = await queryAnterior.getOne();
+
+            if (!rastreamentoAnterior) {
+              return res.status(403).json({
+                error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
+                code: 'SEQUENCIA_INVALIDA',
+              });
+            }
           }
         }
       }
@@ -500,16 +508,16 @@ export class RastreamentosController {
       }
       // ── FIM DO GATE ──────────────────────────────────────────────────────
 
-      // 3. CÁLCULO DE SLA DINÂMICO
-      // tempoPermanenciaMin = (dataSaida - dataEntrada) - tempo pausado por ocorrências (interrompeSla=true)
+      // 3. CÁLCULO DE SLA DINÂMICO COM DESCONTO DE OCORRÊNCIAS
       const agora = new Date();
       const dataEntrada = rastreamento.dataEntrada!;
+      const dataEntradaMs = dataEntrada.getTime();
+      const agoraMs = agora.getTime();
 
-      // Tempo bruto em minutos
-      const tempoTotalMs  = agora.getTime() - dataEntrada.getTime();
-      const tempoTotalMin = Math.floor(tempoTotalMs / 60_000);
+      // Diferença bruta em minutos
+      const diferencaBrutaMin = Math.floor(Math.max(0, agoraMs - dataEntradaMs) / 60_000);
 
-      // Soma o tempo das ocorrências que interrompem SLA (por rastreamentoId ou por OP e setor)
+      // Busca todas as ocorrências de produção que interrompem SLA nesta OP e Setor
       const ocorrencias = await ocorrenciaRepo
         .createQueryBuilder('oc')
         .where('(oc.rastreamentoId = :rastreamentoId OR (oc.ordemTesteId = :ordemTesteId AND oc.setorId = :setorId))', {
@@ -518,20 +526,25 @@ export class RastreamentosController {
           setorId: rastreamento.setorId
         })
         .andWhere('oc.interrompeSla = true')
-        .andWhere('oc.dataResolucao IS NOT NULL')
         .getMany();
 
-      let tempoPausadoMs = 0;
+      let totalMsPausados = 0;
       for (const oc of ocorrencias) {
-        if (oc.dataResolucao && oc.dataOcorrencia) {
-          const startMs = new Date(oc.dataOcorrencia).getTime();
-          const endMs = new Date(oc.dataResolucao).getTime();
-          if (endMs > startMs) {
-            tempoPausadoMs += (endMs - startMs);
-          }
+        const occStartMs = new Date(oc.dataOcorrencia).getTime();
+        // Se a ocorrência ainda não possui dataResolucao preenchida, assume a dataSaida (agoraMs) como limite final
+        const occEndMs = oc.dataResolucao ? new Date(oc.dataResolucao).getTime() : agoraMs;
+
+        // Medição do tempo de interseção real de pausa estritamente entre dataEntrada e dataSaida
+        const startIntersecao = Math.max(dataEntradaMs, occStartMs);
+        const endIntersecao = Math.min(agoraMs, occEndMs);
+
+        if (endIntersecao > startIntersecao) {
+          totalMsPausados += (endIntersecao - startIntersecao);
         }
       }
-      const tempoPausadoMin = Math.floor(tempoPausadoMs / 60_000);
+
+      const tempoTotalMin = diferencaBrutaMin;
+      const tempoPausadoMin = Math.floor(totalMsPausados / 60_000);
       const tempoPermanenciaMin = Math.max(0, tempoTotalMin - tempoPausadoMin);
 
       // 4. Atualiza o rastreamento com dados de saída

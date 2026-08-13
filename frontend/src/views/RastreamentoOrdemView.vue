@@ -199,6 +199,30 @@ function formatPermanencia(minutos: number | null | undefined): string {
   return `Duração: ${h}h ${m}min`
 }
 
+function formatPrazoSetor(minutos: number | null | undefined): string {
+  if (!minutos || minutos <= 0) return 'Sem Prazo'
+  if (minutos % 1440 === 0) {
+    const dias = minutos / 1440
+    return `${dias} ${dias === 1 ? 'dia' : 'dias'}`
+  }
+  if (minutos >= 60) {
+    const horas = Math.floor(minutos / 60)
+    const restMin = minutos % 60
+    if (restMin === 0) {
+      return `${horas} ${horas === 1 ? 'hora' : 'horas'}`
+    }
+    return `${horas}h ${restMin}min`
+  }
+  return `${minutos} min`
+}
+
+function formatEstacao(nome: string | null | undefined): string {
+  if (!nome || !nome.trim() || nome === '—' || nome === 'null' || nome === 'undefined') {
+    return 'Posto Manual'
+  }
+  return nome
+}
+
 function getElapsedTimeInfo(node: NodeTrackItem) {
   if (!node.dataEntrada) return { text: '0m 0s', isOverdue: false, totalMins: 0 }
 
@@ -583,7 +607,7 @@ onUnmounted(() => {
                   <Cpu :size="14" class="text-zinc-600" /> Estação / Máquina:
                 </span>
                 <span class="font-bold text-zinc-900 font-mono">
-                  {{ selectedAuditNode.node.estacaoNome || '—' }}
+                  {{ formatEstacao(selectedAuditNode.node.estacaoNome) }}
                 </span>
               </div>
             </div>
@@ -602,15 +626,15 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Métricas de Permanência vs. SLA -->
+          <!-- Métricas de Permanência vs. Prazo -->
           <div class="space-y-4 mb-6">
-            <h4 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Métricas de Compliance SLA</h4>
+            <h4 class="text-xs font-bold text-zinc-400 uppercase tracking-wider">Métricas de Compliance de Prazo</h4>
 
             <div class="grid grid-cols-2 gap-3">
               <div class="p-3 bg-zinc-50 border border-zinc-200 rounded-xl text-center">
-                <span class="text-[10px] font-mono text-zinc-500 block uppercase">Meta SLA</span>
+                <span class="text-[10px] font-mono text-zinc-500 block uppercase">Prazo Limite</span>
                 <span class="text-sm font-extrabold text-zinc-900 font-mono">
-                  {{ selectedAuditNode.node.slaAlvoMin ? `${selectedAuditNode.node.slaAlvoMin} min` : 'Sem Meta' }}
+                  {{ selectedAuditNode.node.slaAlvoMin ? formatPrazoSetor(selectedAuditNode.node.slaAlvoMin) : 'Sem Prazo' }}
                 </span>
               </div>
 
@@ -830,7 +854,15 @@ onUnmounted(() => {
                       Etapa {{ node.ordem }}
                     </span>
 
-                    <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                    <span
+                      v-if="node.status !== 'CONCLUIDO' && !node.dataSaida && getElapsedTimeInfo(node).isOverdue"
+                      class="bg-red-600 text-white text-[10px] px-2.5 py-1 rounded font-black uppercase tracking-wider flex items-center gap-1 shadow-sm animate-pulse"
+                    >
+                      <AlertTriangle :size="12" class="text-white shrink-0" />
+                      <span>ATRASADO</span>
+                    </span>
+
+                    <div v-else-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
                       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                       <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                     </div>
@@ -854,7 +886,7 @@ onUnmounted(() => {
 
                     <div v-else class="flex flex-col gap-1">
                       <div class="flex items-center justify-between gap-1 text-[11px]">
-                        <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                        <span class="text-zinc-500 font-mono text-[10px]">Tempo Ativo:</span>
                         <div
                           :class="[
                             'font-mono font-extrabold flex items-center gap-1',
@@ -863,21 +895,15 @@ onUnmounted(() => {
                               : 'text-amber-700'
                           ]"
                         >
-                          <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
-                          <Clock v-else :size="12" class="text-amber-600" />
+                          <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600 shrink-0" />
+                          <Clock v-else :size="12" class="text-amber-600 shrink-0" />
                           <span>{{ getElapsedTimeInfo(node).text }}</span>
-                          <span
-                            v-if="getElapsedTimeInfo(node).isOverdue"
-                            class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
-                          >
-                            Atrasado
-                          </span>
                         </div>
                       </div>
 
                       <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
-                        <span>Meta SLA:</span>
-                        <span>{{ node.slaAlvoMin }} min</span>
+                        <span>Prazo Limite:</span>
+                        <span class="font-bold text-zinc-600">{{ formatPrazoSetor(node.slaAlvoMin) }}</span>
                       </div>
 
                       <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
@@ -944,7 +970,15 @@ onUnmounted(() => {
                       Etapa {{ node.ordem }}
                     </span>
 
-                    <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                    <span
+                      v-if="node.status !== 'CONCLUIDO' && !node.dataSaida && getElapsedTimeInfo(node).isOverdue"
+                      class="bg-red-600 text-white text-[10px] px-2.5 py-1 rounded font-black uppercase tracking-wider flex items-center gap-1 shadow-sm animate-pulse"
+                    >
+                      <AlertTriangle :size="12" class="text-white shrink-0" />
+                      <span>ATRASADO</span>
+                    </span>
+
+                    <div v-else-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
                       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </div>
@@ -968,7 +1002,7 @@ onUnmounted(() => {
 
                     <div v-else class="flex flex-col gap-1">
                       <div class="flex items-center justify-between gap-1 text-[11px]">
-                        <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                        <span class="text-zinc-500 font-mono text-[10px]">Tempo Ativo:</span>
                         <div
                           :class="[
                             'font-mono font-extrabold flex items-center gap-1',
@@ -977,21 +1011,15 @@ onUnmounted(() => {
                               : 'text-emerald-700'
                           ]"
                         >
-                          <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
-                          <Clock v-else :size="12" class="text-emerald-600" />
+                          <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600 shrink-0" />
+                          <Clock v-else :size="12" class="text-emerald-600 shrink-0" />
                           <span>{{ getElapsedTimeInfo(node).text }}</span>
-                          <span
-                            v-if="getElapsedTimeInfo(node).isOverdue"
-                            class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
-                          >
-                            Atrasado
-                          </span>
                         </div>
                       </div>
 
                       <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
-                        <span>Meta SLA:</span>
-                        <span>{{ node.slaAlvoMin }} min</span>
+                        <span>Prazo Limite:</span>
+                        <span class="font-bold text-zinc-600">{{ formatPrazoSetor(node.slaAlvoMin) }}</span>
                       </div>
 
                       <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
@@ -1156,7 +1184,15 @@ onUnmounted(() => {
                         Etapa {{ node.ordem }}
                       </span>
 
-                      <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                      <span
+                        v-if="node.status !== 'CONCLUIDO' && !node.dataSaida && getElapsedTimeInfo(node).isOverdue"
+                        class="bg-red-600 text-white text-[10px] px-2.5 py-1 rounded font-black uppercase tracking-wider flex items-center gap-1 shadow-sm animate-pulse"
+                      >
+                        <AlertTriangle :size="12" class="text-white shrink-0" />
+                        <span>ATRASADO</span>
+                      </span>
+
+                      <div v-else-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                       </div>
@@ -1180,7 +1216,7 @@ onUnmounted(() => {
 
                       <div v-else class="flex flex-col gap-1">
                         <div class="flex items-center justify-between gap-1 text-[11px]">
-                          <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                          <span class="text-zinc-500 font-mono text-[10px]">Tempo Ativo:</span>
                           <div
                             :class="[
                               'font-mono font-extrabold flex items-center gap-1',
@@ -1189,21 +1225,15 @@ onUnmounted(() => {
                                 : 'text-amber-700'
                             ]"
                           >
-                            <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
-                            <Clock v-else :size="12" class="text-amber-600" />
+                            <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600 shrink-0" />
+                            <Clock v-else :size="12" class="text-amber-600 shrink-0" />
                             <span>{{ getElapsedTimeInfo(node).text }}</span>
-                            <span
-                              v-if="getElapsedTimeInfo(node).isOverdue"
-                              class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
-                            >
-                              Atrasado
-                            </span>
                           </div>
                         </div>
 
                         <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
-                          <span>Meta SLA:</span>
-                          <span>{{ node.slaAlvoMin }} min</span>
+                          <span>Prazo Limite:</span>
+                          <span class="font-bold text-zinc-600">{{ formatPrazoSetor(node.slaAlvoMin) }}</span>
                         </div>
 
                         <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
@@ -1270,7 +1300,15 @@ onUnmounted(() => {
                         Etapa {{ node.ordem }}
                       </span>
 
-                      <div v-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
+                      <span
+                        v-if="node.status !== 'CONCLUIDO' && !node.dataSaida && getElapsedTimeInfo(node).isOverdue"
+                        class="bg-red-600 text-white text-[10px] px-2.5 py-1 rounded font-black uppercase tracking-wider flex items-center gap-1 shadow-sm animate-pulse"
+                      >
+                        <AlertTriangle :size="12" class="text-white shrink-0" />
+                        <span>ATRASADO</span>
+                      </span>
+
+                      <div v-else-if="node.status !== 'CONCLUIDO' && !node.dataSaida" class="relative flex h-2 w-2">
                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                       </div>
@@ -1294,7 +1332,7 @@ onUnmounted(() => {
 
                       <div v-else class="flex flex-col gap-1">
                         <div class="flex items-center justify-between gap-1 text-[11px]">
-                          <span class="text-zinc-500 font-mono text-[10px]">SLA Ativo:</span>
+                          <span class="text-zinc-500 font-mono text-[10px]">Tempo Ativo:</span>
                           <div
                             :class="[
                               'font-mono font-extrabold flex items-center gap-1',
@@ -1303,21 +1341,15 @@ onUnmounted(() => {
                                 : 'text-emerald-700'
                             ]"
                           >
-                            <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600" />
-                            <Clock v-else :size="12" class="text-emerald-600" />
+                            <AlertTriangle v-if="getElapsedTimeInfo(node).isOverdue" :size="12" class="text-red-600 shrink-0" />
+                            <Clock v-else :size="12" class="text-emerald-600 shrink-0" />
                             <span>{{ getElapsedTimeInfo(node).text }}</span>
-                            <span
-                              v-if="getElapsedTimeInfo(node).isOverdue"
-                              class="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold bg-red-100 text-red-700 rounded-md uppercase tracking-wider inline-block"
-                            >
-                              Atrasado
-                            </span>
                           </div>
                         </div>
 
                         <div v-if="node.slaAlvoMin" class="text-[9px] font-mono text-zinc-400 flex justify-between">
-                          <span>Meta SLA:</span>
-                          <span>{{ node.slaAlvoMin }} min</span>
+                          <span>Prazo Limite:</span>
+                          <span class="font-bold text-zinc-600">{{ formatPrazoSetor(node.slaAlvoMin) }}</span>
                         </div>
 
                         <div class="text-[10px] font-mono text-zinc-500 flex justify-between mt-1 pt-1 border-t border-zinc-100">
