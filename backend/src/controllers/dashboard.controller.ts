@@ -16,11 +16,14 @@ export class DashboardController {
       trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
 
       // ==========================================
-      // KPI A: LEAD TIME
+      // KPI A: LEAD TIME ABSOLUTO & DOWNTIME EM PARALELO
       // ==========================================
       const ordensLeadTime = await AppDataSource.getRepository(OrdemTeste).find({
         where: {
           status: In([
+            OrdemTesteStatus.EM_CORTE,
+            OrdemTesteStatus.COSTURA,
+            OrdemTesteStatus.MONTAGEM,
             OrdemTesteStatus.LABORATORIO,
             OrdemTesteStatus.AGUARDANDO_RESULTADO_FINAL,
             OrdemTesteStatus.APROVACAO_CONCESSAO,
@@ -40,6 +43,7 @@ export class DashboardController {
         codigoBarras: string;
         tipoLote: string;
         leadTimeHoras: number;
+        downtimeHoras: number;
         modelo: string;
         marca: string;
         dataInicio: Date;
@@ -62,39 +66,43 @@ export class DashboardController {
         for (const [tipo, trackings] of Object.entries(trackingsByLote)) {
           if (trackings.length === 0) continue;
 
-          let totalMinutos = 0;
+          let totalMinutosAbsolutos = 0;
+          let totalDowntimeLoteMin = 0;
+
           for (const r of trackings) {
+            // Tempo de permanência absoluto (NÃO desconta downtime do lead time)
             if (r.dataSaida) {
-              totalMinutos += r.tempoPermanenciaMin || 0;
+              totalMinutosAbsolutos += r.tempoPermanenciaMin || 0;
             } else {
               const dataEntrada = r.dataEntrada || r.createdAt;
               const timeSpentMs = agora.getTime() - dataEntrada.getTime();
               const timeSpentMin = Math.floor(timeSpentMs / 60000);
+              totalMinutosAbsolutos += timeSpentMin;
+            }
 
-              const occurrences = await AppDataSource.getRepository(OcorrenciaProducao).find({
-                where: {
-                  rastreamentoId: r.id,
-                  interrompeSla: true
-                }
-              });
-
-              let pausedMs = 0;
-              for (const oc of occurrences) {
-                const end = oc.dataResolucao ? oc.dataResolucao.getTime() : agora.getTime();
-                pausedMs += end - oc.dataOcorrencia.getTime();
+            // Downtime em paralelo para este rastreamento
+            const occurrences = await AppDataSource.getRepository(OcorrenciaProducao).find({
+              where: {
+                rastreamentoId: r.id,
+                interrompeSla: true
               }
+            });
 
-              const pausedMin = Math.floor(pausedMs / 60000);
-              const activeMin = Math.max(0, timeSpentMin - pausedMin);
-              totalMinutos += activeMin;
+            for (const oc of occurrences) {
+              const end = oc.dataResolucao ? oc.dataResolucao.getTime() : agora.getTime();
+              const durMs = Math.max(0, end - oc.dataOcorrencia.getTime());
+              totalDowntimeLoteMin += Math.floor(durMs / 60000);
             }
           }
 
-          const leadTimeHoras = Number((totalMinutos / 60).toFixed(2));
+          const leadTimeHoras = Number((totalMinutosAbsolutos / 60).toFixed(2));
+          const downtimeHoras = Number((totalDowntimeLoteMin / 60).toFixed(2));
+
           leadTimeResultados.push({
             codigoBarras: ordem.codigoBarras,
             tipoLote: tipo,
             leadTimeHoras,
+            downtimeHoras,
             modelo: ordem.modelo?.nome || 'N/A',
             marca: ordem.modelo?.marca?.nome || 'N/A',
             dataInicio: ordem.dataInicio
@@ -107,17 +115,73 @@ export class DashboardController {
       const caixaTesteList = leadTimeResultados.filter(r => r.tipoLote === 'CAIXA_TESTE');
       const lotePrincipalList = leadTimeResultados.filter(r => r.tipoLote === 'LOTE_PRINCIPAL');
 
-      const avg5CaixaTeste = caixaTesteList.slice(0, 5).reduce((acc, curr) => acc + curr.leadTimeHoras, 0) / Math.max(1, Math.min(5, caixaTesteList.length));
-      const avg5LotePrincipal = lotePrincipalList.slice(0, 5).reduce((acc, curr) => acc + curr.leadTimeHoras, 0) / Math.max(1, Math.min(5, lotePrincipalList.length));
+      const avg5CaixaTeste = caixaTesteList.length > 0
+        ? caixaTesteList.slice(0, 5).reduce((acc, curr) => acc + curr.leadTimeHoras, 0) / Math.min(5, caixaTesteList.length)
+        : 0;
+
+      const avg5LotePrincipal = lotePrincipalList.length > 0
+        ? lotePrincipalList.slice(0, 5).reduce((acc, curr) => acc + curr.leadTimeHoras, 0) / Math.min(5, lotePrincipalList.length)
+        : 0;
+
+      // Downtime total acumulado das ocorrências com interrompeSla = true (últimos 30 dias)
+      const ocorrenciasDowntime = await AppDataSource.getRepository(OcorrenciaProducao).find({
+        where: {
+          interrompeSla: true,
+          dataOcorrencia: MoreThanOrEqual(trintaDiasAtras)
+        }
+      });
+
+      let downtimeTotalMinGlobal = 0;
+      const motivosMap: Record<string, { minutos: number; quantidade: number }> = {};
+
+      const tipoRotulos: Record<string, string> = {
+        GARGALO_MAQUINA: 'Quebra / Parada de Máquina',
+        FALTA_MATERIAL: 'Falta de Insumos / Materiais',
+        PROBLEMA_QUALIDADE: 'Divergência de Qualidade',
+        BLOQUEIO_PROCESSO: 'Bloqueio de Processo',
+        ACIDENTE_TRABALHO: 'Acidente de Trabalho',
+        OUTRO: 'Outros Motivos'
+      };
+
+      for (const oc of ocorrenciasDowntime) {
+        const end = oc.dataResolucao ? oc.dataResolucao.getTime() : agora.getTime();
+        const min = Math.max(0, Math.floor((end - oc.dataOcorrencia.getTime()) / 60000));
+        downtimeTotalMinGlobal += min;
+
+        const nomeMotivo = tipoRotulos[oc.tipoOcorrencia] || oc.titulo || 'Outros Motivos';
+        if (!motivosMap[nomeMotivo]) {
+          motivosMap[nomeMotivo] = { minutos: 0, quantidade: 0 };
+        }
+        motivosMap[nomeMotivo].minutos += min;
+        motivosMap[nomeMotivo].quantidade += 1;
+      }
+
+      const motivosParada = Object.entries(motivosMap).map(([motivo, dados]) => {
+        const percentual = downtimeTotalMinGlobal > 0
+          ? Number(((dados.minutos / downtimeTotalMinGlobal) * 100).toFixed(1))
+          : 0;
+        return {
+          motivo,
+          minutos: dados.minutos,
+          horas: Number((dados.minutos / 60).toFixed(1)),
+          quantidade: dados.quantidade,
+          percentual
+        };
+      });
+
+      motivosParada.sort((a, b) => b.minutos - a.minutos);
 
       const kpiA = {
         mediaCaixaTeste: Number(avg5CaixaTeste.toFixed(2)),
         mediaLotePrincipal: Number(avg5LotePrincipal.toFixed(2)),
+        downtimeTotalMin: downtimeTotalMinGlobal,
+        downtimeTotalHoras: Number((downtimeTotalMinGlobal / 60).toFixed(1)),
+        motivosParada,
         grafico: leadTimeResultados.slice(0, 10)
       };
 
       // ==========================================
-      // KPI B: MAPA DE GARGALOS
+      // KPI B: MAPA DE GARGALOS & GALERIA DE OCORRÊNCIAS
       // ==========================================
       const ocorrencias = await AppDataSource.getRepository(OcorrenciaProducao).find({
         where: {
@@ -172,7 +236,7 @@ export class DashboardController {
       });
 
       // ==========================================
-      // KPI C: FPY
+      // KPI C: FIRST PASS YIELD (FPY) POR SETOR
       // ==========================================
       const inspecoes = await AppDataSource.getRepository(Inspecao).find({
         where: {
@@ -184,44 +248,68 @@ export class DashboardController {
         }
       });
 
-      const fpyPorSetor: Record<string, { total: number; aprovadas: number }> = {};
-      let totalGlobal = 0;
-      let aprovadasGlobal = 0;
+      const rastreamentosRecent = await AppDataSource.getRepository(Rastreamento).find({
+        where: {
+          createdAt: MoreThanOrEqual(trintaDiasAtras)
+        },
+        relations: {
+          setor: true
+        }
+      });
+
+      const fpyPorSetor: Record<string, { totalInspecionadas: number; aprovadas: number; totalRastreamentos: number }> = {};
+
+      for (const r of rastreamentosRecent) {
+        const setorNome = r.setor?.nome || 'SETOR DESCONHECIDO';
+        if (!fpyPorSetor[setorNome]) {
+          fpyPorSetor[setorNome] = { totalInspecionadas: 0, aprovadas: 0, totalRastreamentos: 0 };
+        }
+        fpyPorSetor[setorNome].totalRastreamentos += 1;
+      }
+
+      let totalAprovadasGlobal = 0;
+      let totalInspectGlobal = 0;
 
       for (const insp of inspecoes) {
         const setorNome = insp.setor?.nome || 'SETOR DESCONHECIDO';
         if (!fpyPorSetor[setorNome]) {
-          fpyPorSetor[setorNome] = { total: 0, aprovadas: 0 };
+          fpyPorSetor[setorNome] = { totalInspecionadas: 0, aprovadas: 0, totalRastreamentos: 0 };
         }
 
-        fpyPorSetor[setorNome].total += 1;
-        totalGlobal += 1;
+        fpyPorSetor[setorNome].totalInspecionadas += 1;
+        totalInspectGlobal += 1;
 
         if (insp.resultado === ResultadoInspecao.APROVADO || insp.resultado === ResultadoInspecao.APROVADO_CONCESSAO) {
           fpyPorSetor[setorNome].aprovadas += 1;
-          aprovadasGlobal += 1;
+          totalAprovadasGlobal += 1;
         }
       }
 
       const fpySetores = Object.entries(fpyPorSetor).map(([setor, dados]) => {
-        const fpy = dados.total > 0 ? (dados.aprovadas / dados.total) * 100 : 100;
+        const baseCalculo = dados.totalRastreamentos > 0 ? dados.totalRastreamentos : dados.totalInspecionadas;
+        const fpyRaw = baseCalculo > 0 ? (dados.aprovadas / baseCalculo) * 100 : 100;
+        const fpyPercentual = Math.min(100, Number(fpyRaw.toFixed(2)));
+
         return {
           setor,
-          totalInspecoes: dados.total,
+          totalInspecoes: dados.totalInspecionadas,
+          totalRastreamentos: dados.totalRastreamentos,
           aprovadasPrimeira: dados.aprovadas,
-          fpyPercentual: Number(fpy.toFixed(2))
+          fpyPercentual
         };
       });
 
-      const fpyGlobalVal = totalGlobal > 0 ? (aprovadasGlobal / totalGlobal) * 100 : 100;
+      const fpyGlobalVal = totalInspectGlobal > 0
+        ? Math.min(100, Number(((totalAprovadasGlobal / totalInspectGlobal) * 100).toFixed(2)))
+        : 100;
 
       const kpiC = {
-        fpyGlobal: Number(fpyGlobalVal.toFixed(2)),
+        fpyGlobal: fpyGlobalVal,
         setores: fpySetores
       };
 
       // ==========================================
-      // KPI D: INDICE DE RETRABALHO
+      // KPI D: ÍNDICE DE RETRABALHO POR ORIGEM
       // ==========================================
       const retrabalhos = await AppDataSource.getRepository(Retrabalho).find({
         where: {
@@ -276,7 +364,7 @@ export class DashboardController {
           setorOrigem: setor,
           totalRetrabalhos: dados.total,
           tempoMedioMin: avgTime,
-          tiposDivergencia: Array.from(dados.divergencias).join(', '),
+          tiposDivergencia: Array.from(dados.divergencias).join(', ') || 'Não especificada',
           percentualDoTotal: Number(percent.toFixed(2))
         };
       });
