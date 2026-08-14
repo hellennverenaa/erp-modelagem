@@ -116,17 +116,66 @@ const fotoIndexAtiva = ref(0)
 async function fetchKpis() {
   try {
     const res = await api.get('/dashboard/kpis')
+    const raw = res.data
+
     kpiA.value = {
-      mediaCaixaTeste: res.data.kpiA?.mediaCaixaTeste ?? 0,
-      mediaLotePrincipal: res.data.kpiA?.mediaLotePrincipal ?? 0,
-      downtimeTotalMin: res.data.kpiA?.downtimeTotalMin ?? 0,
-      downtimeTotalHoras: res.data.kpiA?.downtimeTotalHoras ?? 0,
-      motivosParada: res.data.kpiA?.motivosParada ?? [],
-      grafico: res.data.kpiA?.grafico ?? []
+      mediaCaixaTeste: raw.kpiA?.mediaCaixaTeste ?? 0,
+      mediaLotePrincipal: raw.kpiA?.mediaLotePrincipal ?? 0,
+      downtimeTotalMin: raw.kpiA?.downtimeTotalMin ?? 0,
+      downtimeTotalHoras: raw.kpiA?.downtimeTotalHoras ?? 0,
+      motivosParada: (raw.kpiA?.motivosParada ?? []).map((m: any) => ({
+        motivo: m.motivo ?? 'Desconhecido',
+        minutos: m.minutos ?? 0,
+        horas: m.horas ?? 0,
+        quantidade: m.quantidade ?? 0,
+        percentual: m.percentual ?? 0
+      })),
+      grafico: (raw.kpiA?.grafico ?? []).map((g: any) => ({
+        codigoBarras: g.codigoBarras ?? '',
+        tipoLote: g.tipoLote ?? '',
+        leadTimeHoras: g.leadTimeHoras ?? 0,
+        downtimeHoras: g.downtimeHoras ?? 0,
+        modelo: g.modelo ?? '',
+        marca: g.marca ?? '',
+        dataInicio: g.dataInicio ?? ''
+      }))
     }
-    kpiB.value = res.data.kpiB ?? []
-    kpiC.value = res.data.kpiC ?? { fpyGlobal: 100, setores: [] }
-    kpiD.value = res.data.kpiD ?? { totalRetrabalhos: 0, setores: [] }
+
+    kpiB.value = (raw.kpiB ?? []).map((b: any) => ({
+      id: b.id ?? '',
+      titulo: b.titulo ?? '',
+      descricao: b.descricao ?? '',
+      tipoOcorrencia: b.tipoOcorrencia ?? '',
+      gravidade: b.gravidade ?? 'BAIXA',
+      status: b.status ?? '',
+      dataOcorrencia: b.dataOcorrencia ?? '',
+      setor: b.setor ?? 'N/A',
+      reportadoPor: b.reportadoPor ?? 'N/A',
+      totalFotos: b.totalFotos ?? 0,
+      fotos: b.fotos ?? []
+    }))
+
+    kpiC.value = {
+      fpyGlobal: raw.kpiC?.fpyGlobal ?? 100,
+      setores: (raw.kpiC?.setores ?? []).map((s: any) => ({
+        setor: s.setor ?? 'N/A',
+        totalInspecoes: s.totalInspecoes ?? 0,
+        totalRastreamentos: s.totalRastreamentos ?? 0,
+        aprovadasPrimeira: s.aprovadasPrimeira ?? 0,
+        fpyPercentual: s.fpyPercentual ?? 0
+      }))
+    }
+
+    kpiD.value = {
+      totalRetrabalhos: raw.kpiD?.totalRetrabalhos ?? 0,
+      setores: (raw.kpiD?.setores ?? []).map((d: any) => ({
+        setorOrigem: d.setorOrigem ?? 'N/A',
+        totalRetrabalhos: d.totalRetrabalhos ?? 0,
+        tempoMedioMin: d.tempoMedioMin ?? 0,
+        tiposDivergencia: d.tiposDivergencia ?? '',
+        percentualDoTotal: d.percentualDoTotal ?? 0
+      }))
+    }
   } catch (error) {
     console.error('[Dashboard] Erro ao buscar KPIs:', error)
   } finally {
@@ -201,10 +250,11 @@ function fotoProxima() {
 // ==========================================
 // FORMATAÇÃO
 // ==========================================
-function formatHour(val: number) {
-  if (!val || isNaN(val)) return '—'
-  const h = Math.floor(val)
-  const m = Math.round((val - h) * 60)
+function formatHour(val: number | null | undefined) {
+  const n = val ?? 0
+  if (n === 0 || isNaN(n)) return '0min'
+  const h = Math.floor(n)
+  const m = Math.round((n - h) * 60)
   if (h === 0) return `${m}min`
   return `${h}h ${m}min`
 }

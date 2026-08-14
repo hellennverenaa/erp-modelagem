@@ -81,7 +81,14 @@ app.get('/health', (_req, res) => {
 });
 
 // ═══ CAMADA 7: ROTAS PROTEGIDAS (JWT obrigatório) ═══
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Serve arquivos de upload (fotos de ocorrências) com headers explícitos de CORS e CORP
+// Necessário para evitar bloqueio OpaqueResponseBlocking do Helmet no Vite dev server (porta 5173)
+app.use('/uploads', (_req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, '../uploads')));
+
 app.use('/api', apiRoutes);
 
 // ═══ CAMADA 8: TRATAMENTO DE ERROS CENTRALIZADO ═══
