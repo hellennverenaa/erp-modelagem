@@ -40,6 +40,7 @@ interface LeadTimeItem {
 }
 
 interface KpiAData {
+  totalOrdensAtivas: number
   mediaCaixaTeste: number
   mediaLotePrincipal: number
   downtimeTotalMin: number
@@ -86,6 +87,7 @@ const liveStatus = ref<'CONNECTED' | 'DISCONNECTED'>('DISCONNECTED')
 let socket: any = null
 
 const kpiA = ref<KpiAData>({
+  totalOrdensAtivas: 0,
   mediaCaixaTeste: 0,
   mediaLotePrincipal: 0,
   downtimeTotalMin: 0,
@@ -117,8 +119,10 @@ async function fetchKpis() {
   try {
     const res = await api.get('/dashboard/kpis')
     const raw = res.data
+    console.log('[Dashboard] Payload completo da API recebido:', JSON.stringify(raw, null, 2))
 
     kpiA.value = {
+      totalOrdensAtivas: raw.kpiA?.totalOrdensAtivas ?? 0,
       mediaCaixaTeste: raw.kpiA?.mediaCaixaTeste ?? 0,
       mediaLotePrincipal: raw.kpiA?.mediaLotePrincipal ?? 0,
       downtimeTotalMin: raw.kpiA?.downtimeTotalMin ?? 0,
@@ -343,8 +347,16 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Trio de métricas lado a lado -->
+        <!-- Quarteto de métricas lado a lado -->
         <div class="tc-metrics-row">
+          <!-- Ordens em Andamento -->
+          <div class="tc-metric-box tc-metric-box--orange">
+            <span class="tc-metric-box__label">Ordens Ativas</span>
+            <span class="tc-metric-box__label tc-metric-box__label--sub">No chão de fábrica</span>
+            <span class="tc-metric-box__value">{{ kpiA.totalOrdensAtivas }}</span>
+            <span class="tc-metric-box__hint">Total em andamento</span>
+          </div>
+
           <!-- Caixa Teste -->
           <div class="tc-metric-box tc-metric-box--blue">
             <span class="tc-metric-box__label">Caixa Teste</span>
@@ -965,12 +977,16 @@ onUnmounted(() => {
 ═══════════════════════════════════════════════════════════ */
 .tc-metrics-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 900px) {
+  .tc-metrics-row { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 500px) {
   .tc-metrics-row { grid-template-columns: 1fr; }
 }
 
@@ -987,6 +1003,7 @@ onUnmounted(() => {
 .tc-metric-box--blue { border-top: 3px solid #2563eb; }
 .tc-metric-box--indigo { border-top: 3px solid #4f46e5; }
 .tc-metric-box--red { border-top: 3px solid #e11d48; }
+.tc-metric-box--orange { border-top: 3px solid #f97316; }
 
 .tc-metric-box__label {
   font-size: 0.6875rem;

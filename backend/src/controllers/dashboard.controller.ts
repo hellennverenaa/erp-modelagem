@@ -17,14 +17,12 @@ export class DashboardController {
   public getKpis = async (_req: Request, res: Response): Promise<Response> => {
     try {
       const agora = new Date();
-      const trintaDiasAtras = new Date();
-      trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
 
       // ==========================================
-      // KPI A: LEAD TIME ABSOLUTO + DOWNTIME
+      // KPI A: LEAD TIME ABSOLUTO + DOWNTIME + ORDENS EM ANDAMENTO
       // ==========================================
-      // LEFT JOIN em rastreamentos e modelo para não descartar OPs sem rastreamento ainda
-      const ordensLeadTime = await AppDataSource
+      // Busca TODAS as ordens ativas sem filtro de data de 30 dias e sem take(30)
+      const ordensAtivas = await AppDataSource
         .getRepository(OrdemTeste)
         .createQueryBuilder('ordem')
         .leftJoinAndSelect('ordem.rastreamentos', 'rastreamento')
@@ -43,7 +41,6 @@ export class DashboardController {
           ]
         })
         .orderBy('ordem.dataInicio', 'DESC')
-        .take(30)
         .getMany();
 
       const leadTimeResultados: {
@@ -56,8 +53,24 @@ export class DashboardController {
         dataInicio: Date;
       }[] = [];
 
-      for (const ordem of ordensLeadTime) {
+      for (const ordem of ordensAtivas) {
         const rastreamentos = ordem.rastreamentos ?? [];
+        
+        // Regra Especial: Ordem no chão de fábrica mas que ainda não teve nenhuma bipagem
+        if (rastreamentos.length === 0) {
+            const tempoDecorridoMin = Math.max(0, Math.floor((agora.getTime() - (ordem.dataInicio?.getTime() || agora.getTime())) / 60000));
+            leadTimeResultados.push({
+                codigoBarras: ordem.codigoBarras,
+                tipoLote: 'LOTE_PRINCIPAL', // Fallback assumido
+                leadTimeHoras: safeNum(tempoDecorridoMin / 60),
+                downtimeHoras: 0,
+                modelo: ordem.modelo?.nome ?? 'N/A',
+                marca: ordem.modelo?.marca?.nome ?? 'N/A',
+                dataInicio: ordem.dataInicio
+            });
+            continue; // Já adicionou a ordem, vai para a próxima
+        }
+
         const byLote: Record<string, typeof rastreamentos> = {
           CAIXA_TESTE: [],
           LOTE_PRINCIPAL: []
@@ -75,7 +88,6 @@ export class DashboardController {
           let totalDowntimeMin = 0;
 
           for (const r of trackings) {
-            // Lead time absoluto (NÃO desconta downtime — reflete permanência real)
             if (r.dataSaida) {
               totalMinAbsoluto += r.tempoPermanenciaMin ?? 0;
             } else {
@@ -83,7 +95,6 @@ export class DashboardController {
               totalMinAbsoluto += Math.max(0, Math.floor((agora.getTime() - entrada.getTime()) / 60000));
             }
 
-            // Downtime via LEFT JOIN explícito — rastreamento pode não ter ocorrências
             const occurrences = await AppDataSource
               .getRepository(OcorrenciaProducao)
               .createQueryBuilder('oc')
@@ -122,12 +133,11 @@ export class DashboardController {
         ? lpList.slice(0, 5).reduce((s, c) => s + c.leadTimeHoras, 0) / Math.min(5, lpList.length)
         : 0;
 
-      // Downtime global dos últimos 30 dias (LEFT JOIN — inclui ocorrências sem rastreamento)
+      // Downtime global de TODA a base ativa
       const ocDowntime = await AppDataSource
         .getRepository(OcorrenciaProducao)
         .createQueryBuilder('oc')
         .where('oc.interrompeSla = :sla', { sla: true })
-        .andWhere('oc.dataOcorrencia >= :desde', { desde: trintaDiasAtras })
         .getMany();
 
       let downtimeTotalMinGlobal = 0;
@@ -163,6 +173,7 @@ export class DashboardController {
       motivosParada.sort((a, b) => b.minutos - a.minutos);
 
       const kpiA = {
+        totalOrdensAtivas: ordensAtivas.length, // Propriedade nova solicitada
         mediaCaixaTeste: safeNum(avgCT),
         mediaLotePrincipal: safeNum(avgLP),
         downtimeTotalMin: downtimeTotalMinGlobal,
@@ -173,7 +184,6 @@ export class DashboardController {
 
       // ==========================================
       // KPI B: MAPA DE GARGALOS
-      // LEFT JOIN em setor, reportadoPor e ordemTeste
       // ==========================================
       const ocorrencias = await AppDataSource
         .getRepository(OcorrenciaProducao)
@@ -218,15 +228,14 @@ export class DashboardController {
       });
 
       // ==========================================
-      // KPI C: FPY — LEFT JOIN (inclui inspeções sem setor vinculado)
+      // KPI C: FPY
       // ==========================================
       const inspecoes = await AppDataSource
         .getRepository(Inspecao)
         .createQueryBuilder('insp')
         .leftJoinAndSelect('insp.setor', 'setor')
         .where('insp.tipoInspecao = :tipo', { tipo: TipoInspecao.SAIDA_SETOR })
-        .andWhere('insp.dataInspecao >= :desde', { desde: trintaDiasAtras })
-        .getMany();
+        .getMany(); // Sem filtro de data
 
       const fpyPorSetor: Record<string, { total: number; aprovadas: number }> = {};
       let totalInspGlobal = 0;
@@ -255,7 +264,7 @@ export class DashboardController {
         fpyPercentual: safeNum(d.total > 0 ? (d.aprovadas / d.total) * 100 : 100)
       }));
 
-      fpySetores.sort((a, b) => a.fpyPercentual - b.fpyPercentual); // Piores primeiro
+      fpySetores.sort((a, b) => a.fpyPercentual - b.fpyPercentual);
 
       const kpiC = {
         fpyGlobal: safeNum(totalInspGlobal > 0 ? (aprovadasGlobal / totalInspGlobal) * 100 : 100),
@@ -263,15 +272,14 @@ export class DashboardController {
       };
 
       // ==========================================
-      // KPI D: RETRABALHO — LEFT JOIN (inclui retrabalhos sem divergencia)
+      // KPI D: RETRABALHO
       // ==========================================
       const retrabalhos = await AppDataSource
         .getRepository(Retrabalho)
         .createQueryBuilder('rt')
         .leftJoinAndSelect('rt.setorOrigem', 'setorOrigem')
         .leftJoinAndSelect('rt.divergencia', 'divergencia')
-        .where('rt.createdAt >= :desde', { desde: trintaDiasAtras })
-        .getMany();
+        .getMany(); // Sem filtro de data
 
       const rtPorSetor: Record<string, { total: number; tempos: number[]; divs: Set<string> }> = {};
       let totalRtGlobal = 0;

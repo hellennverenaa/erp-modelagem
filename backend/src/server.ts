@@ -29,25 +29,7 @@ const app = express();
 const port = process.env.ERP_PORT || 3001;
 
 // ═══ CAMADA 1: SEGURANÇA DE TRANSPORTE (Helmet) ═══
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],  // Swagger UI precisa de inline styles
-      scriptSrc: ["'self'", "'unsafe-inline'"], // Swagger UI precisa de inline scripts
-      imgSrc: ["'self'", 'data:', 'https:'],
-    },
-  },
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  frameguard: { action: 'deny' },         // Anti-clickjacking
-  hidePoweredBy: true,                     // Oculta X-Powered-By
-  noSniff: true,                           // Anti MIME-sniffing
-  hsts: {
-    maxAge: 31536000,                      // 1 ano
-    includeSubDomains: true,
-    preload: true,
-  },
-}));
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 // ═══ CAMADA 2: CORS (Whitelist de Origens do .env) ═══
 app.use(cors(corsOptions));
