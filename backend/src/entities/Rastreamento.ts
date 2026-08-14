@@ -104,6 +104,9 @@ export class Rastreamento {
   @Column({ name: 'tempo_permanencia_min', type: 'int', nullable: true })
   tempoPermanenciaMin: number | null;
 
+  @Column({ name: 'tempo_pausado_min', type: 'int', nullable: true, default: 0 })
+  tempoPausadoMin: number | null;
+
   @Column({ type: 'enum', enum: RastreamentoStatus, default: RastreamentoStatus.EM_PROCESSO })
   status: RastreamentoStatus;
 

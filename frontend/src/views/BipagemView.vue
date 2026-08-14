@@ -59,7 +59,7 @@ interface ItemChecklistUI {
   isAvulso: boolean
 }
 
-const VALORES_SETOR_FASE_INICIAL = ['ALMOXARIFADO', 'NAVALHA', 'TELAS'] as const
+const VALORES_SETOR_FASE_INICIAL = ['ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS'] as const
 
 // ─── 1. Declaração do Estado Reativo (Refs e Reactives - APENAS NO TOPO) ──
 const setores = ref<Setor[]>([])
@@ -138,6 +138,19 @@ const isSetorFaseInicial = computed<boolean>(() => {
   const setor = setores.value.find(s => s.id === selecionouSetorId.value)
   if (!setor?.tipoOpcaoValor) return false
   return (VALORES_SETOR_FASE_INICIAL as readonly string[]).includes(setor.tipoOpcaoValor)
+})
+
+const isFaseMonolitica = computed<boolean>(() => {
+  if (!selecionouSetorId.value) return false
+  const setor = setores.value.find(s => s.id === selecionouSetorId.value)
+  if (!setor?.tipoOpcaoValor) return false
+  const setoresMonoliticos = [
+    'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
+    'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
+    'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
+    'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
+  ];
+  return setoresMonoliticos.includes(setor.tipoOpcaoValor)
 })
 
 const podeAdicionarItemAvulso = computed(() => {
@@ -725,6 +738,12 @@ watch([ordemAtiva, selecionouSetorId], async ([novoLote, novoSetor]) => {
   }
 }, { immediate: true })
 
+watch(isFaseMonolitica, (monolitico) => {
+  if (monolitico && tipoLote.value === 'CAIXA_TESTE') {
+    tipoLote.value = 'LOTE_PRINCIPAL'
+  }
+})
+
 onMounted(async () => {
   loadingSetores.value = true
   try {
@@ -870,6 +889,7 @@ onMounted(async () => {
               <span>Lote Principal</span>
             </button>
             <button
+              v-if="!isFaseMonolitica"
               type="button"
               class="tab-btn"
               :class="{ 'tab-btn--active': tipoLote === 'CAIXA_TESTE' }"
@@ -880,6 +900,9 @@ onMounted(async () => {
               <span>Caixa Teste</span>
             </button>
           </div>
+          <span v-if="isFaseMonolitica" class="field-hint text-amber-600 mt-2 block font-medium">
+            A bipagem neste setor é monolítica para todo o lote. Processe como Lote Principal. A Caixa Teste será liberada para bipagem independente a partir das etapas pós-corte (ex: Serigrafia/Apoio).
+          </span>
         </div>
 
         <!-- ── BARCODE INPUT & CAMERA ACTION ── -->

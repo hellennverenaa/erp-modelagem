@@ -59,10 +59,10 @@ interface TimelineStep {
 }
 
 const steps: TimelineStep[] = [
-  { id: 'almoxarifado', label: 'Almoxarifado', valores: ['ALMOXARIFADO'] },
+  { id: 'almoxarifado', label: 'Almoxarifado', valores: ['ALMOXARIFADO_MODELAGEM'] },
   { id: 'navalha', label: 'Navalha', valores: ['NAVALHA'] },
   { id: 'telas', label: 'Telas', valores: ['TELAS'] },
-  { id: 'corte', label: 'Corte', valores: ['RECEBIMENTO_CORTE', 'SEPARACAO_CORTE', 'DUBLAGEM_CORTE', 'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'] },
+  { id: 'corte', label: 'Corte', valores: ['CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'] },
   { id: 'serigrafia_bordado', label: 'Serigrafia/Bordado', valores: ['SERIGRAFIA', 'BORDADO'] },
   { id: 'apoio', label: 'Apoio', valores: ['APOIO'] },
   { id: 'costura', label: 'Costura', valores: ['COSTURA_PROGRAMADA', 'COSTURA'] },
@@ -218,7 +218,7 @@ function getStepIdForSector(sector: any) {
   const matchedStep = steps.find(s => s.valores.includes(tipo))
   if (matchedStep) return matchedStep.id
 
-  if (nome.includes('ALMOXARIFADO')) return 'almoxarifado'
+  if (nome.includes('ALMOXARIFADO_MODELAGEM')) return 'almoxarifado'
   if (nome.includes('NAVALHA')) return 'navalha'
   if (nome.includes('TELA')) return 'telas'
   if (nome.includes('CORTE')) return 'corte'

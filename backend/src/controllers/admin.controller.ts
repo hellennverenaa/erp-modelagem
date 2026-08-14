@@ -61,6 +61,7 @@ export class AdminController {
       const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
 
       const setores = await setorRepo.find({
+        where: { ativo: true },
         order: { ordemFluxo: 'ASC' }
       });
 

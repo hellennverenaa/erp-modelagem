@@ -1,3 +1,4 @@
+import { IsNull } from "typeorm";
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { AppDataSource } from '../config/database';
@@ -52,6 +53,7 @@ const biparEntradaSchema = z.object({
   ordemTesteId: z.string().uuid({ message: 'ordemTesteId deve ser um UUID válido.' }),
   setorId:      z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
   tipoLote:     z.nativeEnum(TipoLote),
+  status:       z.nativeEnum(RastreamentoStatus).optional(),
   operadorId:   z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
   operadorEntradaId: z.string().uuid({ message: 'operadorEntradaId deve ser um UUID válido.' }).optional().nullable(),
   pecaId:       z.string().uuid().optional().nullable(),
@@ -71,12 +73,11 @@ const biparSaidaSchema = z.object({
 // Esses são os `valor` armazenados na tabela config_opcoes, categoria 'setor_tipo'.
 // Os setores de Handoff Automático (Categoria A) são definidos pelo campo config_opcoes.valor
 const SETORES_HANDOFF_AUTOMATICO_VALORES = [
-  'ALMOXARIFADO',
+  'ALMOXARIFADO_MODELAGEM',
   'NAVALHA',
   'TELAS',
-  'RECEBIMENTO_CORTE',
-  'SEPARACAO_CORTE',
-  'DUBLAGEM_CORTE',
+  'CORTE_RECEBIMENTO',
+  'CORTE_DUBLAGEM',
 ];
 
 export class RastreamentosController {
@@ -109,18 +110,31 @@ export class RastreamentosController {
     }
 
     try {
-      // 1.0. Trava de Nascimento da Caixa Teste: impede entrada de CAIXA_TESTE em setores iniciais
+      const setorRepo = AppDataSource.getRepository(Setor);
+      const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+      const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
+      let tipoOpcaoValor: string | null = null;
+
+      if (setorInfo?.tipoOpcaoId) {
+        const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
+        if (tipoOpcao) tipoOpcaoValor = tipoOpcao.valor;
+      }
+
       if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
-        const setorRepo = AppDataSource.getRepository(Setor);
-        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
-        const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
-        if (setorInfo?.tipoOpcaoId) {
-          const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
-          if (tipoOpcao && SETORES_HANDOFF_AUTOMATICO_VALORES.includes(tipoOpcao.valor)) {
-            return res.status(400).json({
-              error: 'A Caixa Teste só pode dar entrada a partir das máquinas de Corte Automático (Ponte, Lectra, etc.).',
-              code: 'CAIXA_TESTE_NOT_ALLOWED_IN_INITIAL_SECTOR'
-            });
+        // Trava Monolítica do Corte Expandida
+        if (tipoOpcaoValor) {
+          const setoresMonoliticos = [
+            'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
+            'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
+            'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
+            'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
+          ];
+          
+          if (setoresMonoliticos.includes(tipoOpcaoValor)) {
+             return res.status(400).json({
+                error: 'Neste setor, a bipagem é monolítica e deve ser realizada exclusivamente como Lote Principal. A Caixa Teste só corre de forma independente a partir das etapas pós-corte (ex: Serigrafia).',
+                code: 'FASE_MONOLITICA_CAIXA_TESTE_BLOQUEADA'
+             });
           }
         }
       }
@@ -151,14 +165,46 @@ export class RastreamentosController {
         });
       }
 
+      const inputStatus = parseResult.data.status;
+      const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+
+      if (inputStatus !== RastreamentoStatus.EM_RETRABALHO) {
+        const queryBuilder = rastreamentoRepo.createQueryBuilder('r')
+          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId', { modeloId: ordem.modeloId })
+          .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
+          .andWhere('r.tipoLote = :tipoLote', { tipoLote })
+          .andWhere('r.dataEntrada IS NOT NULL')
+          .andWhere('rm.ordem > :ordemAtual', { ordemAtual: pertenceARota.ordem });
+
+        if (pecaId) {
+          queryBuilder.andWhere('r.pecaId = :pecaId', { pecaId });
+        } else {
+          queryBuilder.andWhere('r.pecaId IS NULL');
+        }
+
+        const retrocesso = await queryBuilder.getOne();
+        if (retrocesso) {
+          return res.status(400).json({
+            error: 'Bipagem rejeitada: Este lote já avançou para etapas subsequentes na rota de produção deste modelo.',
+            code: 'RETROCESSO_BLOQUEADO'
+          });
+        }
+      }
+
       // 1.2.1. Trava Estrita de Sequência (Anti-Teletransporte)
       if (pertenceARota.ordem > 1) {
         const isCaixaTeste = tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE';
-        const isInicioCorteOuEtapa5 = pertenceARota.ordem === 5;
+        let isInicioCorteOuEtapa5 = pertenceARota.ordem === 5;
+        
+        // Verifica se é um dos subsetores iniciais do corte para garantir o bypass
+        const allowedInitialSectors = ['CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM'];
+        if (tipoOpcaoValor && allowedInitialSectors.includes(tipoOpcaoValor)) {
+          isInicioCorteOuEtapa5 = true;
+        }
 
-        // Bypass da Trava de Sequência para nascimento da Caixa Teste nas máquinas de corte
+        // Bypass da Trava de Sequência para nascimento da Caixa Teste nas máquinas de corte e subsetores iniciais
         if (isCaixaTeste && isInicioCorteOuEtapa5) {
-          // Bypass de sequência permitido para Caixa Teste no início do Corte Automático
+          // Bypass de sequência permitido para Caixa Teste no início do Corte Automático ou subsetores permitidos
         } else {
           // Encontra a etapa imediatamente anterior na rota desse mesmo modelo
           const rotaAnterior = await rotaRepo.findOne({
@@ -172,22 +218,18 @@ export class RastreamentosController {
             const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
             
             // Verifica se a saída do setor anterior foi concluída
-            const queryAnterior = checkRastreamentoRepo.createQueryBuilder('r')
-              .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
-              .andWhere('r.setorId = :setorId', { setorId: rotaAnterior.setorId })
-              .andWhere('r.status = :status', { status: RastreamentoStatus.CONCLUIDO })
-              .andWhere('r.dataSaida IS NOT NULL')
-              .andWhere('r.tipoLote = :tipoLote', { tipoLote });
+            const rastreamentoAnterior = await checkRastreamentoRepo.findOne({
+              where: {
+                ordemTesteId,
+                setorId: rotaAnterior.setorId,
+                status: RastreamentoStatus.CONCLUIDO,
+                tipoLote,
+                ...(pecaId ? { pecaId } : { pecaId: IsNull() })
+              },
+              order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
+            });
 
-            if (pecaId) {
-              queryAnterior.andWhere('r.pecaId = :pecaId', { pecaId });
-            } else {
-              queryAnterior.andWhere('r.pecaId IS NULL');
-            }
-
-            const rastreamentoAnterior = await queryAnterior.getOne();
-
-            if (!rastreamentoAnterior) {
+            if (!rastreamentoAnterior || !rastreamentoAnterior.dataSaida) {
               return res.status(403).json({
                 error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
                 code: 'SEQUENCIA_INVALIDA',
@@ -197,21 +239,16 @@ export class RastreamentosController {
         }
       }
 
-      const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
-
       // 1.3. Trava de Duplicidade e Idempotência de Entrada
-      const queryExistente = rastreamentoRepo.createQueryBuilder('r')
-        .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
-        .andWhere('r.setorId = :setorId', { setorId })
-        .andWhere('r.tipoLote = :tipoLote', { tipoLote });
-      
-      if (pecaId) {
-        queryExistente.andWhere('r.pecaId = :pecaId', { pecaId });
-      } else {
-        queryExistente.andWhere('r.pecaId IS NULL');
-      }
-
-      const registroExistente = await queryExistente.getOne();
+      const registroExistente = await rastreamentoRepo.findOne({
+        where: {
+          ordemTesteId,
+          setorId,
+          tipoLote,
+          ...(pecaId ? { pecaId } : { pecaId: IsNull() })
+        },
+        order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
+      });
       if (registroExistente) {
         // Bloqueio de Múltiplas Entradas Ativas (Idempotência / HTTP 409)
         if (registroExistente.status === RastreamentoStatus.CONCLUIDO) {
@@ -315,6 +352,29 @@ export class RastreamentosController {
     }
 
     try {
+      if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
+        const setorRepo = AppDataSource.getRepository(Setor);
+        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+        const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
+        if (setorInfo?.tipoOpcaoId) {
+          const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
+          if (tipoOpcao) {
+            const setoresMonoliticos = [
+              'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
+              'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
+              'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
+              'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
+            ];
+            if (setoresMonoliticos.includes(tipoOpcao.valor)) {
+               return res.status(400).json({
+                  error: 'Neste setor, a bipagem é monolítica e deve ser realizada exclusivamente como Lote Principal. A Caixa Teste só corre de forma independente a partir das etapas pós-corte (ex: Serigrafia).',
+                  code: 'FASE_MONOLITICA_CAIXA_TESTE_BLOQUEADA'
+               });
+            }
+          }
+        }
+      }
+
       const rastreamentoRepo  = AppDataSource.getRepository(Rastreamento);
       const checklistRepo     = AppDataSource.getRepository(Checklist);
       const inspecaoRepo      = AppDataSource.getRepository(Inspecao);
@@ -387,6 +447,7 @@ export class RastreamentosController {
           ...(pecaId ? { pecaId } : {}),
           status: RastreamentoStatus.CONCLUIDO,
         },
+        order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
       });
 
       if (rastreamentoConcluido) {
@@ -405,6 +466,7 @@ export class RastreamentosController {
           ...(pecaId ? { pecaId } : {}),
           status: RastreamentoStatus.EM_PROCESSO,
         },
+        order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
       });
 
       // Trava Lógica de Saída sem Entrada
@@ -545,13 +607,15 @@ export class RastreamentosController {
 
       const tempoTotalMin = diferencaBrutaMin;
       const tempoPausadoMin = Math.floor(totalMsPausados / 60_000);
-      const tempoPermanenciaMin = Math.max(0, tempoTotalMin - tempoPausadoMin);
+      // Preservação de Integridade: Não desconte o tempoPausadoMin de tempoPermanenciaMin
+      const tempoPermanenciaMin = tempoTotalMin;
 
       // 4. Atualiza o rastreamento com dados de saída
       rastreamento.dataSaida          = agora;
       rastreamento.operadorSaidaId    = operadorId;
       rastreamento.inspecaoSaidaId    = foundInspecaoId;
       rastreamento.tempoPermanenciaMin = tempoPermanenciaMin;
+      rastreamento.tempoPausadoMin    = tempoPausadoMin;
       rastreamento.status             = RastreamentoStatus.CONCLUIDO;
 
       const atualizado = await rastreamentoRepo.save(rastreamento);
