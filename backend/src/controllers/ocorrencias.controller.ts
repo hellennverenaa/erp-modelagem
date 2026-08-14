@@ -5,6 +5,7 @@ import { OcorrenciaProducao, TipoOcorrencia, GravidadeOcorrencia, StatusOcorrenc
 import { Anexo } from '../entities/Anexo';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { Setor } from '../entities/Setor';
+import { Usuario } from '../entities/Usuario';
 import { webSocketService } from '../services/websocket.service';
 
 const criarOcorrenciaSchema = z.object({
@@ -15,13 +16,15 @@ const criarOcorrenciaSchema = z.object({
   descricao: z.string().min(5, { message: 'A descricao deve conter pelo menos 5 caracteres.' }),
   tipoOcorrencia: z.nativeEnum(TipoOcorrencia, { message: 'Tipo de ocorrencia invalido.' }),
   gravidade: z.nativeEnum(GravidadeOcorrencia, { message: 'Gravidade invalida.' }),
-  interrompeSla: z.boolean().optional().default(false)
+  interrompeSla: z.boolean().optional().default(false),
+  codigoCrachao: z.string().optional().nullable()
 });
 
 export class OcorrenciasController {
   public createOcorrencia = async (req: Request, res: Response): Promise<Response> => {
     try {
-      if (!req.user) {
+      let operadorId = req.user?.userId;
+      if (!operadorId) {
         return res.status(401).json({ error: 'Usuario nao autenticado.', code: 'AUTH_UNAUTHENTICATED' });
       }
 
@@ -35,6 +38,30 @@ export class OcorrenciasController {
       }
 
       const data = parseResult.data;
+
+      // Integracao com Seguranca RFID
+      if (data.codigoCrachao) {
+        const usuarioRepo = AppDataSource.getRepository(Usuario);
+        const crachaoNormalizado = Usuario.normalizarCodigoCrachao(data.codigoCrachao);
+        
+        // Busca híbrida cobrindo todas as possíveis colunas físicas
+        const operadorReal = await usuarioRepo.findOne({
+          where: [
+            { codigoCracha: crachaoNormalizado },
+            { rfid: crachaoNormalizado },
+            { codigoCrachao: crachaoNormalizado },
+            { codigoBarrasCracha: crachaoNormalizado }
+          ]
+        });
+        
+        if (!operadorReal) {
+          return res.status(404).json({
+            error: 'Crachá não cadastrado no sistema.',
+            code: 'CRACHA_NAO_ENCONTRADO'
+          });
+        }
+        operadorId = operadorReal.id;
+      }
 
       const otRepo = AppDataSource.getRepository(OrdemTeste);
       const ot = await otRepo.findOneBy({ id: data.ordemTesteId });
@@ -52,7 +79,7 @@ export class OcorrenciasController {
       ocorrencia.ordemTesteId = data.ordemTesteId;
       ocorrencia.rastreamentoId = data.rastreamentoId || null;
       ocorrencia.setorId = data.setorId;
-      ocorrencia.reportadoPorId = req.user.userId;
+      ocorrencia.reportadoPorId = operadorId;
       ocorrencia.titulo = data.titulo;
       ocorrencia.descricao = data.descricao;
       ocorrencia.tipoOcorrencia = data.tipoOcorrencia;

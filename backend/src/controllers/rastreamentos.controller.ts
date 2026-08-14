@@ -11,6 +11,7 @@ import { Setor } from '../entities/Setor';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Usuario } from '../entities/Usuario';
+import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { webSocketService } from '../services/websocket.service';
 
 const isUuidString = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
@@ -56,6 +57,7 @@ const biparEntradaSchema = z.object({
   status:       z.nativeEnum(RastreamentoStatus).optional(),
   operadorId:   z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
   operadorEntradaId: z.string().uuid({ message: 'operadorEntradaId deve ser um UUID válido.' }).optional().nullable(),
+  codigoCrachao: z.string().optional().nullable(),
   pecaId:       z.string().uuid().optional().nullable(),
   estacaoId:    z.string().uuid().optional().nullable(),
 });
@@ -66,6 +68,7 @@ const biparSaidaSchema = z.object({
   tipoLote:       z.nativeEnum(TipoLote).optional().default(TipoLote.LOTE_PRINCIPAL),
   operadorId:     z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
   operadorSaidaId: z.string().uuid({ message: 'operadorSaidaId deve ser um UUID válido.' }).optional().nullable(),
+  codigoCrachao:  z.string().optional().nullable(),
   pecaId:         z.string().uuid().optional().nullable(),
 });
 
@@ -97,7 +100,7 @@ export class RastreamentosController {
       });
     }
 
-    const { ordemTesteId, setorId, tipoLote, pecaId, estacaoId } = parseResult.data;
+    const { ordemTesteId, setorId, tipoLote, pecaId, estacaoId, codigoCrachao } = parseResult.data;
     let operadorId = req.user?.userId;
 
     if (!operadorId) {
@@ -110,6 +113,62 @@ export class RastreamentosController {
     }
 
     try {
+      const usuarioRepo = AppDataSource.getRepository(Usuario);
+      let operadorReal: Usuario | null = null;
+      
+      if (codigoCrachao) {
+        // ─── DEBUG DE RECONHECIMENTO RFID (biparEntrada) ───
+        const rawLen = codigoCrachao.length;
+        const hasCarriageReturn = /\r/.test(codigoCrachao);
+        const hasNewline = /\n/.test(codigoCrachao);
+        const hasTab = /\t/.test(codigoCrachao);
+        const hasLeadingSpaces = codigoCrachao !== codigoCrachao.trimStart();
+        const hasTrailingSpaces = codigoCrachao !== codigoCrachao.trimEnd();
+        console.log('[RFID biparEntrada] ═══ DEBUG CRACHAO ═══');
+        console.log('[RFID biparEntrada] Valor bruto (repr):', JSON.stringify(codigoCrachao));
+        console.log('[RFID biparEntrada] Tamanho bruto (chars):', rawLen);
+        console.log('[RFID biparEntrada] Tem \\r:', hasCarriageReturn, '| \\n:', hasNewline, '| \\t:', hasTab);
+        console.log('[RFID biparEntrada] Espaço no inicio:', hasLeadingSpaces, '| no fim:', hasTrailingSpaces);
+        // ───
+        const crachaoNormalizado = Usuario.normalizarCodigoCrachao(codigoCrachao);
+        console.log('[RFID biparEntrada] Pós-normalizacao (repr):', JSON.stringify(crachaoNormalizado), '| Tamanho:', crachaoNormalizado.length);
+        
+        // Busca híbrida cobrindo todas as possíveis colunas de hardware
+        operadorReal = await usuarioRepo.findOne({
+          where: [
+            { codigoCracha: crachaoNormalizado },
+            { rfid: crachaoNormalizado },
+            { codigoCrachao: crachaoNormalizado },
+            { codigoBarrasCracha: crachaoNormalizado }
+          ]
+        });
+        
+        console.log('[RFID biparEntrada] Usuário encontrado:', operadorReal ? operadorReal.email : 'NÃO ENCONTRADO');
+        
+        if (!operadorReal) {
+          return res.status(404).json({
+            error: 'Crachá não cadastrado no sistema.',
+            code: 'CRACHA_NAO_ENCONTRADO'
+          });
+        }
+        operadorId = operadorReal.id;
+      } else {
+        operadorReal = await usuarioRepo.findOne({ where: { id: operadorId } });
+      }
+
+      if (operadorReal && operadorReal.perfilId) {
+        const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
+        const permissao = await perfilPermissaoRepo.findOne({
+          where: { perfilId: operadorReal.perfilId, setorId: setorId, permitido: true }
+        });
+        if (!permissao) {
+          return res.status(403).json({
+            error: 'Acesso Negado: O perfil deste operador não possui autorização de trabalho para o setor selecionado.',
+            code: 'OPERADOR_NAO_AUTORIZADO'
+          });
+        }
+      }
+
       const setorRepo = AppDataSource.getRepository(Setor);
       const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
       const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
@@ -352,6 +411,61 @@ export class RastreamentosController {
     }
 
     try {
+      const { codigoCrachao } = parseResult.data;
+      const usuarioRepo = AppDataSource.getRepository(Usuario);
+      let operadorReal: Usuario | null = null;
+      
+      if (codigoCrachao) {
+        // ─── DEBUG DE RECONHECIMENTO RFID (biparSaida) ───
+        const rawLen = codigoCrachao.length;
+        const hasCarriageReturn = /\r/.test(codigoCrachao);
+        const hasNewline = /\n/.test(codigoCrachao);
+        const hasLeadingSpaces = codigoCrachao !== codigoCrachao.trimStart();
+        const hasTrailingSpaces = codigoCrachao !== codigoCrachao.trimEnd();
+        console.log('[RFID biparSaida] ═══ DEBUG CRACHAO ═══');
+        console.log('[RFID biparSaida] Valor bruto (repr):', JSON.stringify(codigoCrachao));
+        console.log('[RFID biparSaida] Tamanho bruto (chars):', rawLen);
+        console.log('[RFID biparSaida] Tem \\r:', hasCarriageReturn, '| \\n:', hasNewline);
+        console.log('[RFID biparSaida] Espaço no inicio:', hasLeadingSpaces, '| no fim:', hasTrailingSpaces);
+        // ───
+        const crachaoNormalizado = Usuario.normalizarCodigoCrachao(codigoCrachao);
+        console.log('[RFID biparSaida] Pós-normalizacao (repr):', JSON.stringify(crachaoNormalizado), '| Tamanho:', crachaoNormalizado.length);
+        
+        // Busca híbrida cobrindo todas as possíveis colunas de hardware
+        operadorReal = await usuarioRepo.findOne({
+          where: [
+            { codigoCracha: crachaoNormalizado },
+            { rfid: crachaoNormalizado },
+            { codigoCrachao: crachaoNormalizado },
+            { codigoBarrasCracha: crachaoNormalizado }
+          ]
+        });
+        
+        console.log('[RFID biparSaida] Usuário encontrado:', operadorReal ? operadorReal.email : 'NÃO ENCONTRADO');
+        
+        if (!operadorReal) {
+          return res.status(404).json({
+            error: 'Crachá não cadastrado no sistema.',
+            code: 'CRACHA_NAO_ENCONTRADO'
+          });
+        }
+        operadorId = operadorReal.id;
+      } else {
+        operadorReal = await usuarioRepo.findOne({ where: { id: operadorId } });
+      }
+
+      if (operadorReal && operadorReal.perfilId) {
+        const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
+        const permissao = await perfilPermissaoRepo.findOne({
+          where: { perfilId: operadorReal.perfilId, setorId: setorId, permitido: true }
+        });
+        if (!permissao) {
+          return res.status(403).json({
+            error: 'Acesso Negado: O perfil deste operador não possui autorização de trabalho para o setor selecionado.',
+            code: 'OPERADOR_NAO_AUTORIZADO'
+          });
+        }
+      }
       if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
         const setorRepo = AppDataSource.getRepository(Setor);
         const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
@@ -820,6 +934,8 @@ export class RastreamentosController {
           }
           return {
             ...r,
+            operadorEntradaNome: r.operadorEntrada?.nomeCompleto || null,
+            operadorSaidaNome: r.operadorSaida?.nomeCompleto || null,
             setor: {
               ...r.setor,
               tipoSetor,

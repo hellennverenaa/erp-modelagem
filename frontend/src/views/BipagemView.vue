@@ -90,8 +90,15 @@ const showChecklistModal = ref(false)
 const showModalQuiosque   = ref(false)
 const modalQuiosqueTitulo = ref('Ação Restrita')
 const modalQuiosqueSubtitulo = ref('Aproxime o Crachá ou RFID do Gestor')
-const acaoPendente = ref<'entrada' | 'saida' | 'fechamento_checklist' | null>(null)
+const acaoPendente = ref<'entrada' | 'saida' | 'fechamento_checklist' | 'ocorrencia' | null>(null)
 const gestorAutenticado  = ref<any>(null)
+
+// ─── ESTADO DO MODO QUIOSQUE RFID (PASSO 8.2) ───
+const showRfidModal = ref(false)
+const rfidInputRef = ref<HTMLInputElement | null>(null)
+const rfidCode = ref('')
+const rfidError = ref('')
+let rfidErrorTimeout: any = null
 
 const loadingSetores = ref(false)
 const loadingBip = ref(false)
@@ -112,6 +119,7 @@ const loadingOcorrencia = ref(false)
 
 const ocorrenciaForm = reactive({
   ordemTesteId: '',
+  setorId: '',
   titulo: '',
   descricao: '',
   tipoOcorrencia: 'GARGALO_MAQUINA',
@@ -174,6 +182,21 @@ function forcarFocoInput() {
   nextTick(() => {
     if (inputFocusRef.value) {
       inputFocusRef.value.focus()
+    }
+  })
+}
+
+function forcarFocoRfidInput() {
+  // Limpeza absoluta da variável reativa antes mesmo do próximo tick
+  rfidCode.value = ''
+  
+  nextTick(() => {
+    // Limpeza secundária agressiva dentro do tick de renderização
+    // Isso garante que resíduos do buffer de teclado da OP não vazem pro crachá
+    rfidCode.value = ''
+    if (rfidInputRef.value) {
+      rfidInputRef.value.value = ''
+      rfidInputRef.value.focus()
     }
   })
 }
@@ -495,6 +518,10 @@ function abrirModalOcorrencia() {
   if (ordemAtiva.value) {
     ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
   }
+  
+  if (selecionouSetorId.value) {
+    ocorrenciaForm.setorId = selecionouSetorId.value
+  }
 
   ocorrenciaForm.titulo = ''
   ocorrenciaForm.descricao = ''
@@ -505,7 +532,6 @@ function abrirModalOcorrencia() {
   fotoPreview.value = null
   showOcorrenciaModal.value = true
 }
-
 function fecharModalOcorrencia() {
   showOcorrenciaModal.value = false
 }
@@ -534,6 +560,7 @@ async function submeterOcorrencia() {
   }
 
   ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
+  ocorrenciaForm.setorId = selecionouSetorId.value
 
   if (!ocorrenciaForm.titulo.trim()) {
     triggerToast('Informe o titulo da ocorrencia.', 'error')
@@ -544,44 +571,12 @@ async function submeterOcorrencia() {
     return
   }
 
-  loadingOcorrencia.value = true
-  try {
-    const resOcorrencia = await api.post('/ocorrencias', {
-      ordemTesteId: ocorrenciaForm.ordemTesteId,
-      setorId: selecionouSetorId.value,
-      titulo: ocorrenciaForm.titulo.trim(),
-      descricao: ocorrenciaForm.descricao.trim(),
-      tipoOcorrencia: ocorrenciaForm.tipoOcorrencia,
-      gravidade: ocorrenciaForm.gravidade,
-      interrompeSla: ocorrenciaForm.interrompeSla
-    })
-
-    const ocorrenciaId = resOcorrencia.data.id
-
-    if (fotoFile.value && ocorrenciaId) {
-      const formData = new FormData()
-      formData.append('file', fotoFile.value)
-
-      await api.post(`/ocorrencias/${ocorrenciaId}/anexos`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      })
-    }
-
-    triggerToast('Ocorrencia registrada com sucesso.', 'success')
-    fecharModalOcorrencia()
-
-    const resLotes = await api.get('/lotes')
-    lotesDisponiveis.value = resLotes.data
-  } catch (err: any) {
-    console.error('[BipagemView] Erro ao registrar ocorrencia:', err)
-    const errorData = err.response?.data
-    const descError = errorData?.error || 'Erro de comunicacao com o servidor.'
-    triggerToast(`Falha ao registrar ocorrencia: ${descError}`, 'error')
-  } finally {
-    loadingOcorrencia.value = false
-  }
+  // Interceptado para o fluxo RFID - Passo 8.3
+  acaoPendente.value = 'ocorrencia'
+  rfidCode.value = ''
+  rfidError.value = ''
+  showRfidModal.value = true
+  forcarFocoRfidInput()
 }
 
 async function executarBipagemComOperador(acao: 'entrada' | 'saida', gestor: any) {
@@ -641,10 +636,6 @@ async function executarBipagemComOperador(acao: 'entrada' | 'saida', gestor: any
     } else if (status === 403) {
       const descError = errorData?.error || 'Acesso ou liberação negada pelo Gate de Qualidade.'
       triggerToast(`Handoff Negado: ${descError}`, 'error')
-    } else if (status === 409) {
-      checklistConcluidoComSucesso.value = true
-      const descError = errorData?.error || 'A bipagem desta OP já está ativa ou foi concluída neste setor.'
-      triggerToast(descError, 'error')
     } else if (status === 404) {
       const descError = errorData?.error || 'Nenhuma bipagem de entrada ativa localizada para efetuar a saída deste lote.'
       triggerToast(descError, 'error')
@@ -656,6 +647,116 @@ async function executarBipagemComOperador(acao: 'entrada' | 'saida', gestor: any
     loadingBip.value = false
     forcarFocoInput()
   }
+}
+
+async function processarLeituraRfid() {
+  const cracha = rfidCode.value.trim()
+  if (!cracha) return
+
+  loadingBip.value = true
+  try {
+    const ordemTesteId = ordemAtiva.value?.id || ocorrenciaForm.ordemTesteId
+    const setorId = selecionouSetorId.value
+    if (!ordemTesteId || !setorId) {
+      triggerToast('Falta contexto de OP ou Setor para finalizar a ação.', 'error')
+      fecharRfidModal()
+      loadingBip.value = false
+      return
+    }
+
+    const acao = acaoPendente.value
+
+    if (acao === 'ocorrencia') {
+      const resOcorrencia = await api.post('/ocorrencias', {
+        ordemTesteId: ocorrenciaForm.ordemTesteId,
+        setorId: selecionouSetorId.value,
+        titulo: ocorrenciaForm.titulo.trim(),
+        descricao: ocorrenciaForm.descricao.trim(),
+        tipoOcorrencia: ocorrenciaForm.tipoOcorrencia,
+        gravidade: ocorrenciaForm.gravidade,
+        interrompeSla: ocorrenciaForm.interrompeSla,
+        codigoCrachao: cracha
+      })
+
+      const ocorrenciaId = resOcorrencia.data.id
+
+      if (fotoFile.value && ocorrenciaId) {
+        const formData = new FormData()
+        formData.append('foto', fotoFile.value)
+        await api.post(`/ocorrencias/${ocorrenciaId}/anexos`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+      }
+
+      triggerToast('Ocorrência registrada com sucesso.', 'success')
+      showOcorrenciaModal.value = false
+      fecharRfidModal()
+      
+      const resLotes = await api.get('/lotes')
+      lotesDisponiveis.value = resLotes.data
+
+    } else {
+      const endpoint = acao === 'entrada'
+        ? '/rastreamentos/bipar-entrada'
+        : '/rastreamentos/bipar-saida'
+
+      const payload: any = {
+        ordemTesteId,
+        setorId,
+        tipoLote: tipoLote.value,
+        codigoCrachao: cracha
+      }
+
+      const res = await api.post(endpoint, payload)
+      
+      const acaoTexto = acao === 'entrada' ? 'Entrada' : 'Saída'
+      const opNome = ordemAtiva.value?.codigoBarras || 'OP'
+      triggerToast(`Bipagem de ${acaoTexto} registrada com sucesso para ${opNome}.`, 'success')
+      tocarSomSucesso()
+
+      const resLotes = await api.get('/lotes')
+      lotesDisponiveis.value = resLotes.data
+
+      codigoLeitura.value = ''
+      ordemAtiva.value = null
+      checklistConcluidoComSucesso.value = false
+      fecharRfidModal()
+    }
+  } catch (err: any) {
+    console.error('RFID Bipagem Error:', err?.response?.data || err?.message || err)
+    const status = err?.response?.status
+    const errorData = err?.response?.data
+    
+    if (status === 403 || status === 404) {
+      rfidError.value = errorData?.error || 'Acesso negado ou crachá não encontrado.'
+      if (rfidErrorTimeout) clearTimeout(rfidErrorTimeout)
+      rfidErrorTimeout = setTimeout(() => {
+        rfidError.value = ''
+        rfidCode.value = ''
+        forcarFocoRfidInput()
+      }, 3000)
+    } else {
+      fecharRfidModal()
+      if (status === 400) {
+        triggerToast(`Falha na Bipagem/Ocorrência: ${errorData?.error || 'Dados inválidos'}`, 'error')
+      } else if (status === 409) {
+        checklistConcluidoComSucesso.value = true
+        triggerToast(errorData?.error || 'A bipagem desta OP já está ativa ou foi concluída.', 'error')
+      } else {
+        triggerToast('Erro de comunicação com o servidor.', 'error')
+      }
+    }
+  } finally {
+    loadingBip.value = false
+  }
+}
+
+function fecharRfidModal() {
+  showRfidModal.value = false
+  rfidCode.value = ''
+  rfidError.value = ''
+  if (rfidErrorTimeout) clearTimeout(rfidErrorTimeout)
+  forcarFocoInput()
 }
 
 async function processarBipagem(acao: 'entrada' | 'saida') {
@@ -693,11 +794,10 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
 
   // Intermediário: Aproxime o crachá para registrar Entrada / Saída / Handoff
   acaoPendente.value = acao
-  modalQuiosqueTitulo.value = acao === 'entrada' ? 'Autenticação de Entrada' : 'Autenticação de Saída'
-  modalQuiosqueSubtitulo.value = acao === 'entrada'
-    ? 'Aproxime o crachá para registrar a Entrada'
-    : 'Aproxime o crachá para registrar a Saída'
-  showModalQuiosque.value = true
+  rfidCode.value = ''
+  rfidError.value = ''
+  showRfidModal.value = true
+  forcarFocoRfidInput()
 }
 
 // ─── 4. Watchers & Lifecycle Hooks (DECLARADOS POR ÚLTIMO) ─────────────────
@@ -1025,11 +1125,29 @@ onMounted(async () => {
           </div>
 
           <form @submit.prevent="submeterOcorrencia" class="ocorrencia-modal-form">
-            <!-- Badge de Lote Ativo somente leitura -->
-            <div class="active-op-badge">
-              <AlertOctagon :size="18" class="ocorrencia-icon" aria-hidden="true" />
-              <span class="active-op-text">Relatando problema no Lote: {{ ordemAtiva?.codigoBarras }}</span>
-            </div>
+            <!-- Contexto Pré-preenchido e Bloqueado (Passo 8.3) -->
+              <div class="form-grid-2" style="margin-bottom: 1rem;">
+                <div class="field-group">
+                  <label class="field-label">Ordem de Produção (OP)</label>
+                  <input
+                    type="text"
+                    class="text-input"
+                    :value="ordemAtiva?.codigoBarras || '— Nenhuma OP ativa —'"
+                    readonly
+                    style="background-color: #f1f5f9; color: #64748b; cursor: not-allowed;"
+                  />
+                </div>
+                <div class="field-group">
+                  <label class="field-label">Setor Atual</label>
+                  <input
+                    type="text"
+                    class="text-input"
+                    :value="setores.find(s => s.id === selecionouSetorId)?.nome || '— Setor não selecionado —'"
+                    readonly
+                    style="background-color: #f1f5f9; color: #64748b; cursor: not-allowed;"
+                  />
+                </div>
+              </div>
 
             <!-- Título -->
             <div class="field-group">
@@ -1476,6 +1594,90 @@ onMounted(async () => {
       </div>
     </Transition>
 
+    <!-- ── MODAL RFID QUIOSQUE - PASSO 8.2 (Tema Light) ── -->
+    <Transition name="modal-fade">
+      <div
+        v-if="showRfidModal"
+        class="bp-rfid-overlay"
+        @click="forcarFocoRfidInput"
+      >
+        <div class="bp-rfid-card" @click.stop>
+          <div class="bp-rfid-header">
+            <h3 class="bp-rfid-title">Autenticação de Operador</h3>
+            <p class="bp-rfid-subtitle">
+              OP: <strong>{{ ordemAtiva?.codigoBarras || '—' }}</strong>
+            </p>
+          </div>
+
+          <div class="bp-rfid-body">
+            <!-- Alerta discreto de erro (não invasivo, 3s auto-reset) -->
+            <Transition name="toast-slide">
+              <div v-if="rfidError" class="bp-rfid-error-inline">
+                <AlertOctagon :size="18" class="bp-rfid-error-inline-icon" aria-hidden="true" />
+                <div>
+                  <p class="bp-rfid-error-msg">{{ rfidError }}</p>
+                  <p class="bp-rfid-error-hint">Aguarde 3 segundos para tentar novamente...</p>
+                </div>
+              </div>
+            </Transition>
+
+            <div class="bp-rfid-icon-ring" :class="{ 'bp-rfid-icon-ring--loading': loadingBip }">
+              <Loader2 v-if="loadingBip" :size="36" class="bp-rfid-spinner" />
+              <Lock v-else :size="36" class="bp-rfid-lock-icon" />
+            </div>
+
+            <p class="bp-rfid-instruction">
+              Aproxime o crachá para confirmar
+              <strong>{{ acaoPendente === 'entrada' ? 'Entrada' : acaoPendente === 'saida' ? 'Saída' : 'Ocorrência' }}</strong>
+            </p>
+
+              <!-- Campo de código + botão câmera (alternativa ao RFID físico) -->
+              <div class="field-group" style="width: 100%; max-width: 360px;">
+                <label for="rfid-barcode-input" class="field-label">Ou bipe / digite o código do crachá:</label>
+                <div class="input-action-row">
+                  <div class="barcode-input-wrapper">
+                    <Barcode :size="20" class="barcode-input-icon" aria-hidden="true" />
+                    <input
+                      id="rfid-barcode-input"
+                      ref="rfidInputRef"
+                      type="text"
+                      v-model="rfidCode"
+                      class="barcode-input"
+                      placeholder="Crachá / RFID..."
+                      autocomplete="off"
+                      @keyup.enter="processarLeituraRfid"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    class="btn-camera"
+                    @click="iniciarCamera"
+                    :disabled="loadingBip"
+                    title="Ler código com a câmera"
+                    aria-label="Escanear com a câmera"
+                  >
+                    <Camera :size="20" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          <div class="bp-rfid-footer">
+            <button
+              type="button"
+              class="btn-action btn-action--saida"
+              style="max-width: 200px;"
+              @click="fecharRfidModal"
+              :disabled="loadingBip"
+            >
+              <X :size="18" />
+              <span>Cancelar</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- ── MODAL QUIOSQUE (VALIDAÇÃO RFID / BARCODE DO OPERADOR / GESTOR) ── -->
     <ModalAuthQuiosque
       :show="showModalQuiosque"
@@ -1491,6 +1693,158 @@ onMounted(async () => {
 /* ═══════════════════════════════════════════════════════
    ROOT LAYOUT & CARDS
 ═══════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════
+   MODAL RFID QUIOSQUE — TEMA LIGHT (PASSO 8.2)
+═══════════════════════════════════════════════════════ */
+.bp-rfid-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.bp-rfid-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.2);
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bp-rfid-header {
+  padding: 1.5rem;
+  text-align: center;
+  border-bottom: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+
+.bp-rfid-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 0.25rem;
+}
+
+.bp-rfid-subtitle {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.bp-rfid-body {
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  position: relative;
+}
+
+/* Alerta discreto inline (substitui a tarja invasiva) */
+.bp-rfid-error-inline {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  width: 100%;
+  background: #fff1f2;
+  border: 1px solid #fca5a5;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  color: #991b1b;
+}
+
+.bp-rfid-error-inline-icon {
+  color: #dc2626;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.bp-rfid-error-msg {
+  font-size: 0.875rem;
+  font-weight: 700;
+  margin: 0;
+  color: #991b1b;
+}
+
+.bp-rfid-error-hint {
+  font-size: 0.75rem;
+  color: #b91c1c;
+  margin: 0.125rem 0 0;
+}
+
+.bp-rfid-icon-ring {
+  width: 5rem;
+  height: 5rem;
+  border-radius: 50%;
+  background: #f1f5f9;
+  border: 3px solid #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.3s;
+}
+
+.bp-rfid-icon-ring--loading {
+  border-color: #1e40af;
+  animation: rfid-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes rfid-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(30, 64, 175, 0.2); }
+  50%       { box-shadow: 0 0 0 10px rgba(30, 64, 175, 0); }
+}
+
+.bp-rfid-lock-icon {
+  color: #64748b;
+}
+
+.bp-rfid-spinner {
+  color: #1e40af;
+  animation: spin 1s linear infinite;
+}
+
+.bp-rfid-instruction {
+  font-size: 0.9375rem;
+  color: #334155;
+  text-align: center;
+  margin: 0;
+}
+
+.bp-rfid-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+  display: flex;
+  justify-content: center;
+}
+
+.bp-rfid-hidden-input {
+  opacity: 0;
+  position: absolute;
+  z-index: -10;
+  pointer-events: none;
+}
+
+/* Transição do modal RFID */
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
 .bp-root {
   display: flex;
   flex-direction: column;
@@ -1835,23 +2189,35 @@ onMounted(async () => {
 }
 
 /* ═══════════════════════════════════════════════════════
-   ACTION BUTTONS
+   ACTION BUTTONS E RESPONSIVIDADE ULTRA (PASSO 8.2)
 ═══════════════════════════════════════════════════════ */
 .action-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  grid-template-columns: 1fr;
+  gap: 12px;
   margin-top: 0.5rem;
 }
 
-@media (max-width: 480px) {
+@media (min-width: 768px) {
   .action-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (min-width: 1024px) {
+  .action-grid.has-checklist {
+    grid-template-columns: 1fr 1fr 1fr;
   }
 }
 
 .btn-action {
-  height: 3.5rem;
+  min-height: 48px;
+  height: auto;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
   display: flex;
   align-items: center;
   justify-content: center;

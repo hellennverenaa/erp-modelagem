@@ -86,8 +86,8 @@ export class Usuario {
    */
   static normalizarCodigoCrachao(input: string | null | undefined): string {
     if (!input) return '';
-    // Remove caracteres nulos/controle comuns em scanners USB (ex: \r, \n, \t) e espaços
-    let limpo = input.replace(/[\r\n\t\f\v]/g, '').trim();
+    // Remove caracteres de controle (ex: \r, \n, \t), espaços em branco normais (\s) e caracteres de largura zero
+    let limpo = input.replace(/[\s\r\n\t\f\v\u200B-\u200D\uFEFF]/g, '').trim();
     // Converter para maiúsculas para manter consistência entre RFID hex/dec e Barcodes
     limpo = limpo.toUpperCase();
     return limpo;
