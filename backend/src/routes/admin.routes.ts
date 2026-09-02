@@ -70,7 +70,7 @@ router.get('/setores', adminController.getSetores);
  * @swagger
  * /api/admin/config-opcoes:
  *   get:
- *     summary: Lista config_opcoes filtradas por categoria (ex: setor_tipo)
+ *     summary: "Lista config_opcoes filtradas por categoria (ex: setor_tipo)"
  *     tags: [Admin]
  *     security:
  *       - bearerAuth: []

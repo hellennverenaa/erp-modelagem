@@ -16,6 +16,7 @@ export interface JwtPayload {
   perfilId: string;       // UUID do perfil (RBAC) do banco de dados local
   perfilNome: string;     // Ex: 'REVISORA', 'COORDENADOR_SETOR'
   plantaId: string;       // UUID da planta de lotação
+  planta_id?: string;     // UUID da planta (contexto multi-tenant Shared Database)
   setorId?: string;       // UUID do setor (opcional)
   nomeCompleto: string;   // Nome para exibição
   usuario?: string;       // Nome de usuário Unix (opcional)
@@ -87,6 +88,7 @@ export async function verificaToken(req: Request, res: Response, next: NextFunct
       perfilId: userLocal.perfilId,
       perfilNome: userLocal.perfil?.nome || decoded.perfilNome || '',
       plantaId: userLocal.plantaId,
+      planta_id: userLocal.plantaId,
       setorId: userLocal.setorId || undefined,
       nomeCompleto: userLocal.nomeCompleto,
     };
