@@ -8,6 +8,15 @@ const api = axios.create({
   },
 })
 
+// Tokens temporários antigos não são JWTs e devem ser removidos para evitar
+// que a aplicação continue enviando Bearer dev-login-bypass-token.
+if (localStorage.getItem('erp_token') === 'dev-login-bypass-token') {
+  localStorage.removeItem('erp_token')
+  localStorage.removeItem('token')
+  localStorage.removeItem('jwt_token')
+  localStorage.removeItem('erp_user')
+}
+
 function getStoredToken(): string | null {
   return (
     localStorage.getItem('erp_token') ||
