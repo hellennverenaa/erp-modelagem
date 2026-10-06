@@ -509,6 +509,11 @@ async function salvarRota() {
 
   const rotaFiltrada = rotaSalvar.filter(r => r.setorId !== '')
 
+  if (rotaFiltrada.length === 0) {
+    showToast('Nenhum setor da rota está cadastrado. Cadastre os setores antes de salvar.', 'error')
+    return
+  }
+
   const slasPorSetor: Record<string, number> = {}
   for (const r of rotaFiltrada) {
     if (r.setorId) {
