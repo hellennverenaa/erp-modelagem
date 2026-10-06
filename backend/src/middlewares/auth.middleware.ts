@@ -58,7 +58,9 @@ export async function verificaToken(req: Request, res: Response, next: NextFunct
     const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 120 }) as unknown as JwtPayload;
 
     // Obtém o nome de usuário (username/usuario) a partir do token legando (Unix)
-    const username = decoded.usuario || decoded.username || decoded.userId;
+    const username = String(
+      decoded.usuario || decoded.username || decoded.userId || ''
+    ).trim().toLowerCase();
     if (!username) {
       res.status(401).json({
         error: 'Identificador de usuário inválido no token.',
