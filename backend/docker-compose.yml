@@ -17,17 +17,18 @@ services:
     container_name: erp-backend
     restart: unless-stopped
     ports:
-      - "${ERP_PORT:-3001}:3001"
+      - "${ERP_EXTERNAL_PORT:-3001}:3001"
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       ERP_PORT: 3001
       
-      # Conexão com o PostgreSQL dedicado
-      DB_HOST: ${DB_HOST:-erp-postgres}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-erp_modelagem}
+      # PostgreSQL existente no host (clone da produção)
+      DB_HOST: host.docker.internal
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-postgres}
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS}
+      DB_SCHEMA: ${DB_SCHEMA:-erp_modelagem}
       
       # Conexão com o Redis (Cache e Rate Limiting)
       REDIS_HOST: ${REDIS_HOST:-erp-redis}
@@ -41,7 +42,7 @@ services:
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-604800}
       
       # Integração Legada (Comunicação entre containers)
-      DASS_AUTH_URL: http://main-service:2399
+      DASS_AUTH_URL: http://gateway:2399/api
       SOBRACORTE_API_URL: ${SOBRACORTE_API_URL:-http://host.docker.internal:3333}
       
       # CORS e Outros Ajustes
@@ -72,8 +73,6 @@ services:
       - "host.docker.internal:host-gateway"
       
     depends_on:
-      erp-postgres:
-        condition: service_healthy
       erp-redis:
         condition: service_healthy
         
@@ -92,39 +91,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
-
-  # ═════════════════════════════════════════════════════════════════
-  # SERVIÇO: erp-postgres (Banco de Dados PostgreSQL Dedicado)
-  # ═════════════════════════════════════════════════════════════════
-  erp-postgres:
-    image: postgres:16-alpine
-    container_name: erp-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${DB_NAME:-erp_modelagem}
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASS}
-    ports:
-      # Mapeia a porta 5432 interna para 5433 externa no host para evitar conflitos
-      - "${DB_EXTERNAL_PORT:-5433}:5432"
-    volumes:
-      - erp_pgdata:/var/lib/postgresql/data
-    networks:
-      - erp_internal
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-erp_modelagem}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
-          memory: 256M
 
   # ═════════════════════════════════════════════════════════════════
   # SERVIÇO: erp-redis (Cache e Rate Limiting)
@@ -156,8 +122,6 @@ services:
 # VOLUMES PERSISTENTES
 # ═════════════════════════════════════════════════════════════════
 volumes:
-  erp_pgdata:
-    driver: local
   erp_redisdata:
     driver: local
   erp_uploads:

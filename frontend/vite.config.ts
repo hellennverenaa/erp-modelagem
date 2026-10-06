@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backendTarget = env.ERP_BACKEND_URL || 'http://localhost:3001'
+  const backendTarget = env.GATEWAY_URL || 'http://localhost:2399'
 
   return {
     optimizeDeps: {
