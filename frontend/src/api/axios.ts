@@ -1,6 +1,7 @@
 import axios from 'axios'
 
-const apiBaseUrl = import.meta.env.VITE_API_URL || '/api'
+// O gateway publica o ERP sob este prefixo e remove-o antes do encaminhamento.
+const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/erp-modelagem'
 
 const api = axios.create({
   baseURL: apiBaseUrl,
