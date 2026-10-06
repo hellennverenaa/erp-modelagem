@@ -15,6 +15,7 @@
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/config/database.ts",
     "migration:run": "ts-node src/database/prepare.ts && typeorm-ts-node-commonjs migration:run -d src/config/database.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/config/database.ts",
+    "import:catalogo-pecas": "ts-node src/database/importCatalogoPecas.ts",
     "seed": "ts-node src/database/seed.ts"
   },
   "keywords": [],
