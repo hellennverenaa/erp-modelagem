@@ -24,7 +24,7 @@ export const corsOptions: CorsOptions = {
     // Permitir requisições sem origin (Postman, curl, health checks internos)
     if (!origin) return callback(null, true);
 
-    if (ALLOWED_ORIGINS.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
       callback(new Error(`Origem ${origin} não autorizada pela política de CORS.`));
@@ -36,3 +36,12 @@ export const corsOptions: CorsOptions = {
   exposedHeaders: ['X-Total-Count', 'X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   maxAge: 86400, // Preflight cache: 24h
 };
+
+export function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) return true;
+
+  // Em desenvolvimento o Vite pode mudar de porta se a padrão estiver ocupada.
+  // Aceitamos somente origens loopback; em produção permanece a whitelist explícita.
+  const isLocalDevelopment = process.env.NODE_ENV !== 'production';
+  return isLocalDevelopment && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}

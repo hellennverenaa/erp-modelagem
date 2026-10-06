@@ -1,12 +1,22 @@
 import axios from 'axios'
 
+const apiBaseUrl = import.meta.env.VITE_API_URL || '/api'
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
+  baseURL: apiBaseUrl,
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
 })
+
+export function getApiOrigin(): string {
+  try {
+    return new URL(apiBaseUrl, window.location.origin).origin
+  } catch {
+    return window.location.origin
+  }
+}
 
 // Tokens temporários antigos não são JWTs e devem ser removidos para evitar
 // que a aplicação continue enviando Bearer dev-login-bypass-token.
@@ -33,46 +43,16 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-let isRefreshing = false
-
 api.interceptors.response.use(
   (res) => res,
   async (err) => {
     const originalRequest = err.config
-    const isLoginRequest = originalRequest?.url?.includes('/auth/login') || originalRequest?.url?.includes('/auth/refresh')
+    const isAuthenticationRequest = /\/auth\/(login|refresh)(?:\/|$)/.test(originalRequest?.url || '')
 
-    if (err.response?.status === 401 && !isLoginRequest && !originalRequest?._retry) {
-      originalRequest._retry = true
-
-      const userRaw = localStorage.getItem('erp_user')
-      if (userRaw && !isRefreshing) {
-        isRefreshing = true
-        try {
-          const user = JSON.parse(userRaw)
-          const usuarioStr = user?.usuario || user?.username || 'hellen.magalhaes'
-          const resLogin = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/auth/login`, {
-            usuario: usuarioStr,
-            senha: '123'
-          })
-
-          const newToken = resLogin.data?.token
-          if (newToken) {
-            localStorage.setItem('erp_token', newToken)
-            localStorage.setItem('token', newToken)
-            if (api.defaults.headers.common) {
-              api.defaults.headers.common.Authorization = `Bearer ${newToken}`
-            }
-            originalRequest.headers.Authorization = `Bearer ${newToken}`
-            isRefreshing = false
-            return api(originalRequest)
-          }
-        } catch {
-          isRefreshing = false
-        }
-      }
-
+    if (err.response?.status === 401 && !isAuthenticationRequest) {
       localStorage.removeItem('erp_token')
       localStorage.removeItem('token')
+      localStorage.removeItem('jwt_token')
       localStorage.removeItem('erp_user')
       if (window.location.pathname !== '/') {
         window.location.href = '/'

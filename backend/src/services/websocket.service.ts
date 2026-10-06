@@ -1,30 +1,18 @@
 import { Server, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
+import { isAllowedOrigin } from '../config/cors';
 
 class WebSocketService {
   private io: Server | null = null;
 
   public init(httpServer: HttpServer): Server {
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'http://localhost:3000',
-      'http://localhost:5174',
-    ];
-
-    if (process.env.CORS_ALLOWED_ORIGINS) {
-      process.env.CORS_ALLOWED_ORIGINS.split(',').forEach(o => {
-        const trimmed = o.trim();
-        if (trimmed && !allowedOrigins.includes(trimmed)) {
-          allowedOrigins.push(trimmed);
-        }
-      });
-    }
-
     this.io = new Server(httpServer, {
       cors: {
-        origin: allowedOrigins,
+        origin: (origin, callback) => {
+          if (isAllowedOrigin(origin)) callback(null, true);
+          else callback(new Error('Origem não autorizada para WebSocket.'));
+        },
         methods: ['GET', 'POST'],
         credentials: true,
       },
@@ -33,7 +21,10 @@ class WebSocketService {
       transports: ['websocket', 'polling'],
     });
 
-    const jwtSecret = process.env.JWT_SECRET || 'erp_modelagem_secret_key_2026';
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET não definido para autenticação do WebSocket.');
+    }
 
     // Middleware de Handshake com Autenticação JWT
     this.io.use((socket: Socket, next) => {

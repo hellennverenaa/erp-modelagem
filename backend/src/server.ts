@@ -53,13 +53,24 @@ swaggerSetup(app);
 
 // ═══ CAMADA 6: ROTAS PÚBLICAS (sem JWT) ═══
 // Health Check
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'UP',
-    timestamp: new Date().toISOString(),
-    database: AppDataSource.isInitialized ? 'CONNECTED' : 'DISCONNECTED',
-    version: '4.0.0',
-  });
+app.get('/health', async (_req, res) => {
+  try {
+    if (!AppDataSource.isInitialized) throw new Error('Database is not initialized');
+    await AppDataSource.query('SELECT 1');
+    res.json({
+      status: 'UP',
+      timestamp: new Date().toISOString(),
+      database: 'CONNECTED',
+      version: '4.0.0',
+    });
+  } catch {
+    res.status(503).json({
+      status: 'DOWN',
+      timestamp: new Date().toISOString(),
+      database: 'DISCONNECTED',
+      version: '4.0.0',
+    });
+  }
 });
 
 // ═══ CAMADA 7: ROTAS PROTEGIDAS (JWT obrigatório) ═══
@@ -82,26 +93,29 @@ console.log(`🔌 Banco de Dados - Host: ${process.env.DB_HOST || 'localhost'} |
 console.log(`🔌 Redis Cache - Host: ${process.env.REDIS_HOST || 'Não configurado'}`);
 
 const httpServer = createServer(app);
-webSocketService.init(httpServer);
 
-// Inicializa o servidor Express primeiro (Garante que a aplicação esteja de pé para responder diagnósticos)
-httpServer.listen(port, () => {
-  console.log(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
-  console.log(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
-  console.log(`🔒 Helmet, CORS e Rate Limiting ativos`);
-});
-
-// Inicialização do banco de dados assíncrona com tratamento fail-safe
-AppDataSource.initialize()
-  .then(() => {
+async function startServer(): Promise<void> {
+  try {
+    await AppDataSource.initialize();
+    if (await AppDataSource.showMigrations()) {
+      throw new Error('Há migrações pendentes. Execute npm run migration:run antes de iniciar o backend.');
+    }
     console.log('📦 Banco de dados conectado com sucesso via TypeORM!');
-  })
-  .catch((error) => {
-    console.error('\n********************************************************************************');
-    console.error('❌ ERRO CRÍTICO: Falha ao conectar no PostgreSQL. Verifique se o DB_HOST no .env está apontando para "erp-postgres" ou "host.docker.internal" e não para localhost.');
-    console.error(`🔌 Host de destino configurado: ${process.env.DB_HOST || 'localhost'}`);
-    console.error('💡 Dica: Verifique se o serviço do banco de dados PostgreSQL está rodando e a porta está aberta.');
-    console.error('Detalhes do erro:', error.message || error);
-    console.error('********************************************************************************\n');
-    // Não matamos o processo para permitir diagnóstico via rota de /health
-  });
+
+    webSocketService.init(httpServer);
+    httpServer.listen(port, () => {
+      console.log(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
+      console.log(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
+      console.log('🔒 Helmet, CORS e Rate Limiting ativos');
+    });
+  } catch (error: any) {
+    console.error('Não foi possível iniciar o backend: confirme o PostgreSQL, as migrações e as variáveis de ambiente.');
+    console.error(error?.message || error);
+    if (AppDataSource.isInitialized) {
+      await AppDataSource.destroy().catch(() => undefined);
+    }
+    process.exitCode = 1;
+  }
+}
+
+void startServer();

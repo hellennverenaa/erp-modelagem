@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { io, Socket } from 'socket.io-client'
-import api from '../api/axios'
+import api, { getApiOrigin } from '../api/axios'
 import { gsap } from 'gsap'
 import {
   ArrowLeft,
@@ -15,8 +15,6 @@ import {
   Box,
   PackageCheck,
   Clock,
-  Activity,
-  CheckCircle2,
   Check,
   AlertTriangle,
   Eye,
@@ -472,8 +470,7 @@ function animateSvgPathsAndCards() {
 // WebSockets & Listeners
 // --------------------------------------------------
 function initWebSocket() {
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
-  const socketUrl = apiUrl.replace(/\/api\/?$/, '')
+  const socketUrl = getApiOrigin()
   const token = localStorage.getItem('erp_token') || localStorage.getItem('token') || ''
 
   socket = io(socketUrl, {

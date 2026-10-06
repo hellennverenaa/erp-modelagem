@@ -30,8 +30,7 @@ import {
   Lock,
   ShieldCheck,
   History,
-  User,
-  Cpu
+  User
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -871,21 +870,6 @@ function formatPecaRemanejada(dadosAnt: Record<string, any> | null, dadosNov: Re
   const origem = dadosAnt?.maquinaNome || dadosAnt?.setorCorteOpcaoId || 'Sem máquina'
   const destino = dadosNov?.maquinaNome || dadosNov?.setorCorteOpcaoId || 'Sem máquina'
   return `Peça ${String(pecaNome).toUpperCase()} remanejada do subsetor ${origem} para ${destino}`
-}
-
-function formatAuditJson(data: Record<string, any> | null): string {
-  if (!data) return '-'
-  if (typeof data !== 'object') return String(data)
-  const keys = Object.keys(data)
-  if (keys.length === 0) return '-'
-  return keys.map(k => {
-    const nomeAmigavel = getSetorNome(k)
-    const v = data[k]
-    if (typeof v === 'object' && v !== null) {
-      return `${nomeAmigavel}: ${JSON.stringify(v)}`
-    }
-    return `${nomeAmigavel}: ${v} min`
-  }).join('\n')
 }
 
 async function salvarManutencao() {

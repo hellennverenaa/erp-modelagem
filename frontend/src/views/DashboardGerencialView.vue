@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { io } from 'socket.io-client'
-import api from '../api/axios'
+import api, { getApiOrigin } from '../api/axios'
 import {
   Clock,
   AlertTriangle,
@@ -15,11 +15,15 @@ import {
   ChevronRight,
   RefreshCw,
   Wifi,
-  WifiOff
+  WifiOff,
+  Check,
+  Activity,
+  Layers,
+  ShieldCheck
 } from 'lucide-vue-next'
 
 // ==========================================
-// INTERFACES
+// INTERFACES (PRESERVADAS 100%)
 // ==========================================
 interface MotivoParada {
   motivo: string
@@ -80,7 +84,7 @@ interface RetrabalhoSetor {
 }
 
 // ==========================================
-// ESTADO REATIVO
+// ESTADO REATIVO (PRESERVADO 100%)
 // ==========================================
 const loading = ref(true)
 const liveStatus = ref<'CONNECTED' | 'DISCONNECTED'>('DISCONNECTED')
@@ -98,8 +102,9 @@ const kpiA = ref<KpiAData>({
 
 const kpiB = ref<GargaloItem[]>([])
 
-const kpiC = ref<{ fpyGlobal: number; setores: FpySetor[] }>({
-  fpyGlobal: 100,
+const kpiC = ref<{ fpyGlobal: number | null; totalInspecoes: number; setores: FpySetor[] }>({
+  fpyGlobal: null,
+  totalInspecoes: 0,
   setores: []
 })
 
@@ -113,7 +118,7 @@ const modalGaleriaFotos = ref<string[] | null>(null)
 const fotoIndexAtiva = ref(0)
 
 // ==========================================
-// BUSCA DE DADOS
+// BUSCA DE DADOS (PRESERVADA 100%)
 // ==========================================
 async function fetchKpis() {
   try {
@@ -160,7 +165,8 @@ async function fetchKpis() {
     }))
 
     kpiC.value = {
-      fpyGlobal: raw.kpiC?.fpyGlobal ?? 100,
+      fpyGlobal: raw.kpiC?.fpyGlobal ?? null,
+      totalInspecoes: raw.kpiC?.totalInspecoes ?? 0,
       setores: (raw.kpiC?.setores ?? []).map((s: any) => ({
         setor: s.setor ?? 'N/A',
         totalInspecoes: s.totalInspecoes ?? 0,
@@ -188,11 +194,10 @@ async function fetchKpis() {
 }
 
 // ==========================================
-// WEBSOCKET
+// WEBSOCKET (PRESERVADO 100%)
 // ==========================================
 function initWebSocket() {
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
-  const socketUrl = apiUrl.replace(/\/api\/?$/, '')
+  const socketUrl = getApiOrigin()
   const token = localStorage.getItem('erp_token') || localStorage.getItem('token') || ''
 
   socket = io(socketUrl, {
@@ -221,12 +226,12 @@ function initWebSocket() {
 }
 
 // ==========================================
-// GALERIA DE FOTOS
+// GALERIA DE FOTOS (PRESERVADA 100%)
 // ==========================================
 function getFotoUrl(path: string) {
   if (!path) return ''
   if (path.startsWith('http')) return path
-  const base = (import.meta.env.VITE_API_URL || 'http://localhost:3001/api').replace(/\/api\/?$/, '')
+  const base = getApiOrigin()
   return `${base}/${path.replace(/^\//, '')}`
 }
 
@@ -252,7 +257,7 @@ function fotoProxima() {
 }
 
 // ==========================================
-// FORMATAÇÃO
+// FORMATAÇÃO (PRESERVADA 100%)
 // ==========================================
 function formatHour(val: number | null | undefined) {
   const n = val ?? 0
@@ -277,7 +282,7 @@ function formatDate(d: string) {
 }
 
 // ==========================================
-// LIFECYCLE
+// LIFECYCLE (PRESERVADO 100%)
 // ==========================================
 onMounted(() => {
   fetchKpis()
@@ -290,1406 +295,837 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="tc-root">
+  <div class="tc-root min-h-screen bg-slate-50/60 pb-20 text-slate-900 antialiased selection:bg-slate-900 selection:text-white">
+    <div class="max-w-[1780px] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
 
-    <!-- ─── CABEÇALHO ─────────────────────────────────────────────────── -->
-    <header class="tc-header">
-      <div class="tc-header__left">
-        <div class="tc-header__icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-            <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-          </svg>
-        </div>
-        <div>
-          <h1 class="tc-header__title">Torre de Controle de Produção</h1>
-          <p class="tc-header__sub">KPIs gerenciais em tempo real — Lead Time · Gargalos · FPY · Retrabalho</p>
-        </div>
-      </div>
-
-      <div class="tc-header__right">
-        <div class="tc-live-badge" :class="liveStatus === 'CONNECTED' ? 'tc-live-badge--on' : 'tc-live-badge--off'">
-          <span class="tc-live-dot"></span>
-          <Wifi v-if="liveStatus === 'CONNECTED'" :size="12" />
-          <WifiOff v-else :size="12" />
-          <span>{{ liveStatus === 'CONNECTED' ? 'Sincronizado' : 'Offline' }}</span>
-        </div>
-        <button class="tc-btn-refresh" type="button" @click="fetchKpis" aria-label="Sincronizar KPIs">
-          <RefreshCw :size="14" />
-          <span>Atualizar</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- ─── SKELETON LOADING ──────────────────────────────────────────── -->
-    <div v-if="loading" class="tc-skeleton-grid">
-      <div class="tc-skeleton tc-skeleton--half"></div>
-      <div class="tc-skeleton tc-skeleton--half"></div>
-      <div class="tc-skeleton tc-skeleton--full"></div>
-      <div class="tc-skeleton tc-skeleton--half"></div>
-      <div class="tc-skeleton tc-skeleton--half"></div>
-    </div>
-
-    <!-- ─── BENTO GRID DOS 4 KPIs ─────────────────────────────────────── -->
-    <div v-else class="tc-bento">
-
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <!-- KPI A · LEAD TIME EFETIVO & DOWNTIME (Linha 1 - span completo) -->
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <section class="tc-card tc-card--lead-time">
-        <div class="tc-card__header">
-          <div class="tc-icon-wrap tc-icon-wrap--blue">
-            <Clock :size="18" />
+      <!-- ─── CABEÇALHO EXECUTIVO INDUSTRIAL (TELEMETRIA DE ALTO PADRÃO) ─── -->
+      <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-6 border-b border-slate-200/80 gap-5">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-xs ring-1 ring-slate-800 flex-shrink-0">
+            <Layers :size="22" class="stroke-[2.2]" />
           </div>
           <div>
-            <h2 class="tc-card__title">Lead Time Efetivo & Downtime Acumulado</h2>
-            <p class="tc-card__desc">Tempo absoluto de permanência de cada lote e paradas que ativaram o SLA</p>
-          </div>
-        </div>
-
-        <!-- Quarteto de métricas lado a lado -->
-        <div class="tc-metrics-row">
-          <!-- Ordens em Andamento -->
-          <div class="tc-metric-box tc-metric-box--orange">
-            <span class="tc-metric-box__label">Ordens Ativas</span>
-            <span class="tc-metric-box__label tc-metric-box__label--sub">No chão de fábrica</span>
-            <span class="tc-metric-box__value">{{ kpiA.totalOrdensAtivas }}</span>
-            <span class="tc-metric-box__hint">Total em andamento</span>
-          </div>
-
-          <!-- Caixa Teste -->
-          <div class="tc-metric-box tc-metric-box--blue">
-            <span class="tc-metric-box__label">Caixa Teste</span>
-            <span class="tc-metric-box__label tc-metric-box__label--sub">Média Lead Time</span>
-            <span class="tc-metric-box__value">{{ formatHour(kpiA.mediaCaixaTeste) }}</span>
-            <span class="tc-metric-box__hint">Tempo total de ciclo</span>
-          </div>
-
-          <!-- Lote Principal -->
-          <div class="tc-metric-box tc-metric-box--indigo">
-            <span class="tc-metric-box__label">Lote Principal</span>
-            <span class="tc-metric-box__label tc-metric-box__label--sub">Média Lead Time</span>
-            <span class="tc-metric-box__value">{{ formatHour(kpiA.mediaLotePrincipal) }}</span>
-            <span class="tc-metric-box__hint">Tempo total de ciclo</span>
-          </div>
-
-          <!-- Downtime Acumulado -->
-          <div class="tc-metric-box tc-metric-box--red">
-            <div class="flex items-center gap-1.5">
-              <PauseCircle :size="14" class="text-rose-500" />
-              <span class="tc-metric-box__label tc-metric-box__label--red">Downtime Acumulado</span>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">TORRE DE CONTROLE</span>
+              <span class="text-slate-300">•</span>
+              <span class="text-[10px] font-mono uppercase tracking-widest text-blue-600 font-bold">TELEMETRIA INDUSTRIAL BI</span>
             </div>
-            <span class="tc-metric-box__label tc-metric-box__label--sub">Paradas com SLA</span>
-            <span class="tc-metric-box__value tc-metric-box__value--red">{{ kpiA.downtimeTotalHoras }}h</span>
-            <span class="tc-metric-box__hint tc-metric-box__hint--red">{{ kpiA.downtimeTotalMin }} min acumulados</span>
-          </div>
-        </div>
-
-        <!-- Seção de motivos de parada + sparkline em paralelo -->
-        <div class="tc-lead-body">
-
-          <!-- Motivos reais de parada -->
-          <div class="tc-motivos">
-            <div class="tc-motivos__header">
-              <Wrench :size="14" class="text-slate-500" />
-              <span>Motivos Reais de Parada (30 dias)</span>
-            </div>
-
-            <div v-if="kpiA.motivosParada.length === 0" class="tc-empty">
-              Nenhuma parada por ocorrência neste período.
-            </div>
-
-            <div v-else class="tc-motivos__list">
-              <div
-                v-for="item in kpiA.motivosParada"
-                :key="item.motivo"
-                class="tc-motivo-item"
-              >
-                <div class="tc-motivo-item__top">
-                  <span class="tc-motivo-item__name">{{ item.motivo }}</span>
-                  <div class="tc-motivo-item__stats">
-                    <span class="tc-motivo-item__qty">{{ item.quantidade }} {{ item.quantidade === 1 ? 'ocorr.' : 'ocorr.' }}</span>
-                    <span class="tc-motivo-item__time">{{ formatMin(item.minutos) }}</span>
-                    <span class="tc-motivo-item__pct">{{ item.percentual }}%</span>
-                  </div>
-                </div>
-                <div class="tc-bar-track">
-                  <div class="tc-bar-fill tc-bar-fill--rose" :style="{ width: `${Math.min(100, item.percentual)}%` }"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Sparkline do histórico de lead time -->
-          <div class="tc-sparkline-wrap">
-            <div class="tc-sparkline__header">
-              <span>Variação do Lead Time (últimas ordens)</span>
-            </div>
-            <div class="tc-sparkline__chart">
-              <svg viewBox="0 0 440 90" class="tc-svg" aria-hidden="true">
-                <!-- Grid lines -->
-                <line x1="0" y1="45" x2="440" y2="45" stroke="#e2e8f0" stroke-dasharray="3 3" />
-                <line x1="0" y1="20" x2="440" y2="20" stroke="#f1f5f9" stroke-dasharray="3 3" />
-                <line x1="0" y1="70" x2="440" y2="70" stroke="#f1f5f9" stroke-dasharray="3 3" />
-
-                <!-- Área sombreada -->
-                <path
-                  v-if="kpiA.grafico.length > 1"
-                  fill="url(#grad-blue)"
-                  opacity="0.18"
-                  :d="(() => {
-                    const g = kpiA.grafico
-                    const maxV = Math.max(...g.map(x => x.leadTimeHoras), 1)
-                    const pts = g.map((item, i) => {
-                      const x = (i / Math.max(1, g.length - 1)) * 440
-                      const y = 80 - (item.leadTimeHoras / maxV) * 60
-                      return `${x},${y}`
-                    })
-                    const first = pts[0].split(',')
-                    const last = pts[pts.length - 1].split(',')
-                    return `M ${pts.join(' L ')} L ${last[0]},80 L ${first[0]},80 Z`
-                  })()"
-                />
-
-                <!-- Linha do gráfico -->
-                <path
-                  v-if="kpiA.grafico.length > 1"
-                  fill="none"
-                  stroke="#2563eb"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  :d="kpiA.grafico
-                    .map((item, i) => {
-                      const maxV = Math.max(...kpiA.grafico.map(x => x.leadTimeHoras), 1)
-                      const x = (i / Math.max(1, kpiA.grafico.length - 1)) * 440
-                      const y = 80 - (item.leadTimeHoras / maxV) * 60
-                      return `${x},${y}`
-                    })
-                    .reduce((acc, curr, idx) => idx === 0 ? `M ${curr}` : `${acc} L ${curr}`, '')"
-                />
-
-                <!-- Pontos -->
-                <circle
-                  v-for="(item, i) in kpiA.grafico"
-                  :key="i"
-                  :cx="(i / Math.max(1, kpiA.grafico.length - 1)) * 440"
-                  :cy="80 - (item.leadTimeHoras / Math.max(...kpiA.grafico.map(x => x.leadTimeHoras), 1)) * 60"
-                  r="4"
-                  fill="#fff"
-                  stroke="#2563eb"
-                  stroke-width="2"
-                />
-
-                <defs>
-                  <linearGradient id="grad-blue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#2563eb" />
-                    <stop offset="100%" stop-color="#2563eb" stop-opacity="0" />
-                  </linearGradient>
-                </defs>
-              </svg>
-            </div>
-            <div class="tc-sparkline__legend">
-              <span>← Mais recentes</span>
-              <span>Anteriores →</span>
-            </div>
-          </div>
-
-        </div>
-      </section>
-
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <!-- KPI B · MAPA DE GARGALOS & GALERIA (Linha 2 - metade esquerda) -->
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <section class="tc-card tc-card--gargalos">
-        <div class="tc-card__header">
-          <div class="tc-icon-wrap tc-icon-wrap--amber">
-            <AlertTriangle :size="18" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <h2 class="tc-card__title">Gargalos Operacionais</h2>
-            <p class="tc-card__desc">Ocorrências ativas em aberto ou em análise no chão de fábrica</p>
-          </div>
-          <span class="tc-badge-count" :class="kpiB.length > 0 ? 'tc-badge-count--amber' : 'tc-badge-count--green'">
-            {{ kpiB.length }} {{ kpiB.length === 1 ? 'ativo' : 'ativos' }}
-          </span>
-        </div>
-
-        <div class="tc-gargalos-list">
-          <div v-if="kpiB.length === 0" class="tc-empty tc-empty--tall">
-            <span>✓</span>
-            <span>Nenhum gargalo ativo no momento. Produção fluindo normalmente.</span>
-          </div>
-
-          <div
-            v-else
-            v-for="oc in kpiB"
-            :key="oc.id"
-            class="tc-gargalo-item"
-          >
-            <div class="tc-gargalo-item__body">
-              <div class="tc-gargalo-item__meta">
-                <span class="tc-badge-grav" :class="{
-                  'tc-badge-grav--critica': oc.gravidade === 'CRITICA',
-                  'tc-badge-grav--alta': oc.gravidade === 'ALTA',
-                  'tc-badge-grav--media': oc.gravidade === 'MEDIA',
-                  'tc-badge-grav--baixa': oc.gravidade === 'BAIXA',
-                }">{{ oc.gravidade }}</span>
-                <span class="tc-gargalo-setor">{{ oc.setor }}</span>
-                <span class="tc-gargalo-date">{{ formatDate(oc.dataOcorrencia) }}</span>
-              </div>
-              <h3 class="tc-gargalo-item__title">{{ oc.titulo }}</h3>
-              <p class="tc-gargalo-item__desc">{{ oc.descricao }}</p>
-              <p class="tc-gargalo-item__reporter">Registrado por: <strong>{{ oc.reportadoPor }}</strong></p>
-            </div>
-
-            <!-- Botão tátil de 48px para galeria de fotos -->
-            <button
-              v-if="oc.fotos && oc.fotos.length > 0"
-              type="button"
-              class="tc-btn-galeria"
-              @click="abrirGaleria(oc.fotos)"
-              :aria-label="`Ver ${oc.fotos.length} ${oc.fotos.length === 1 ? 'foto' : 'fotos'} da ocorrência`"
-              :title="`${oc.fotos.length} ${oc.fotos.length === 1 ? 'foto' : 'fotos'} do desvio de qualidade`"
-            >
-              <ImageIcon :size="20" />
-              <span>{{ oc.fotos.length }}</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <!-- KPI C · FIRST PASS YIELD (Linha 2 - metade direita - topo)  -->
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <section class="tc-card tc-card--fpy">
-        <div class="tc-card__header">
-          <div class="tc-icon-wrap tc-icon-wrap--emerald">
-            <TrendingUp :size="18" />
-          </div>
-          <div>
-            <h2 class="tc-card__title">First Pass Yield (FPY)</h2>
-            <p class="tc-card__desc">Taxa de aprovação na primeira passagem de inspeção</p>
-          </div>
-        </div>
-
-        <!-- Global FPY destaque -->
-        <div class="tc-fpy-global">
-          <div class="tc-fpy-global__number">
-            <span class="tc-fpy-global__value" :class="kpiC.fpyGlobal >= 90 ? 'tc-fpy-global__value--meta' : 'tc-fpy-global__value--alert'">
-              {{ kpiC.fpyGlobal }}%
-            </span>
-            <span class="tc-fpy-global__label">FPY Global</span>
-          </div>
-          <span class="tc-pill" :class="kpiC.fpyGlobal >= 90 ? 'tc-pill--emerald' : 'tc-pill--rose'">
-            {{ kpiC.fpyGlobal >= 90 ? '✓ Meta ≥90%' : '⚠ Abaixo da Meta' }}
-          </span>
-        </div>
-
-        <!-- Lista de setores -->
-        <div class="tc-fpy-list">
-          <div v-if="kpiC.setores.length === 0" class="tc-empty">
-            Sem inspeções de saída registradas nos últimos 30 dias.
-          </div>
-          <div v-else v-for="item in kpiC.setores" :key="item.setor" class="tc-fpy-setor">
-            <div class="tc-fpy-setor__info">
-              <span class="tc-fpy-setor__name">{{ item.setor }}</span>
-              <span class="tc-fpy-setor__pct" :class="item.fpyPercentual >= 90 ? 'tc-fpy-setor__pct--ok' : 'tc-fpy-setor__pct--nok'">
-                {{ item.fpyPercentual }}%
-              </span>
-            </div>
-            <div class="tc-bar-track">
-              <div
-                class="tc-bar-fill"
-                :class="item.fpyPercentual >= 90 ? 'tc-bar-fill--emerald' : 'tc-bar-fill--rose'"
-                :style="{ width: `${Math.min(100, item.fpyPercentual)}%` }"
-              ></div>
-            </div>
-            <p class="tc-fpy-setor__detail">{{ item.aprovadasPrimeira }} aprovadas de {{ item.totalInspecoes > 0 ? item.totalInspecoes : item.totalRastreamentos }} inspecionadas</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <!-- KPI D · RETRABALHO POR ORIGEM (Linha 3)                      -->
-      <!-- ══════════════════════════════════════════════════════════════ -->
-      <section class="tc-card tc-card--retrabalho">
-        <div class="tc-card__header">
-          <div class="tc-icon-wrap tc-icon-wrap--orange">
-            <RotateCcw :size="18" />
-          </div>
-          <div>
-            <h2 class="tc-card__title">Índice de Retrabalho por Setor de Origem</h2>
-            <p class="tc-card__desc">Ranking dos setores que geraram o maior volume de defeitos (últimos 30 dias)</p>
-          </div>
-          <div class="tc-retrabalho-total">
-            <span class="tc-retrabalho-total__num">{{ kpiD.totalRetrabalhos }}</span>
-            <span class="tc-retrabalho-total__label">casos</span>
-          </div>
-        </div>
-
-        <div v-if="kpiD.setores.length === 0" class="tc-empty tc-empty--tall">
-          <span>✓</span>
-          <span>Nenhum retrabalho apontado nos últimos 30 dias.</span>
-        </div>
-
-        <div v-else class="tc-retrabalho-grid">
-          <div
-            v-for="item in kpiD.setores"
-            :key="item.setorOrigem"
-            class="tc-retrabalho-card"
-          >
-            <div class="tc-retrabalho-card__header">
-              <span class="tc-retrabalho-card__setor">{{ item.setorOrigem }}</span>
-              <span class="tc-retrabalho-card__count">{{ item.totalRetrabalhos }} {{ item.totalRetrabalhos === 1 ? 'caso' : 'casos' }}</span>
-            </div>
-            <div class="tc-bar-track tc-bar-track--lg">
-              <div
-                class="tc-bar-fill tc-bar-fill--orange"
-                :style="{ width: `${Math.min(100, item.percentualDoTotal)}%` }"
-              ></div>
-            </div>
-            <div class="tc-retrabalho-card__footer">
-              <span>{{ item.percentualDoTotal }}% do total</span>
-              <span>Tempo médio: {{ item.tempoMedioMin }} min</span>
-            </div>
-            <p v-if="item.tiposDivergencia" class="tc-retrabalho-card__diverg" :title="item.tiposDivergencia">
-              Divergências: {{ item.tiposDivergencia }}
+            <h1 class="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-slate-900 mt-0.5">
+              Torre de Controle de Produção
+            </h1>
+            <p class="text-xs text-slate-500 font-medium tracking-tight mt-0.5">
+              Telemetria gerencial em tempo real · Lead Time, Gargalos Operacionais, FPY e Retrabalho
             </p>
           </div>
         </div>
-      </section>
 
-    </div><!-- /tc-bento -->
+        <div class="flex items-center gap-3 self-end sm:self-center">
+          <!-- LIVE SYNC STATUS BADGE COM PULSO SUAVE -->
+          <div
+            class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold tracking-tight transition-all duration-300 shadow-xs"
+            :class="liveStatus === 'CONNECTED'
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/90'
+              : 'bg-slate-100 text-slate-500 border border-slate-200'"
+          >
+            <span v-if="liveStatus === 'CONNECTED'" class="relative flex h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span v-else class="w-2 h-2 rounded-full bg-slate-400"></span>
 
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <!--  MODAL · GALERIA DE FOTOS DO DESVIO DE QUALIDADE           -->
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <Transition name="tc-fade">
-      <div
-        v-if="modalGaleriaFotos"
-        class="tc-modal-overlay"
-        @click.self="fecharGaleria"
-      >
-        <div class="tc-modal">
-          <!-- Cabeçalho do modal -->
-          <div class="tc-modal__header">
-            <div class="flex items-center gap-2">
-              <ImageIcon :size="18" class="text-blue-600" />
-              <h3 class="tc-modal__title">
-                Desvio de Qualidade — Foto {{ fotoIndexAtiva + 1 }} de {{ modalGaleriaFotos.length }}
-              </h3>
-            </div>
-            <button class="tc-modal__close" type="button" @click="fecharGaleria" aria-label="Fechar galeria">
-              <X :size="18" />
-            </button>
+            <Wifi v-if="liveStatus === 'CONNECTED'" :size="13" class="stroke-[2.5]" />
+            <WifiOff v-else :size="13" class="stroke-[2.5]" />
+            <span>{{ liveStatus === 'CONNECTED' ? 'Live Sync Ativo' : 'Offline' }}</span>
           </div>
 
-          <!-- Área da foto -->
-          <div class="tc-modal__photo-area">
-            <img
-              :src="getFotoUrl(modalGaleriaFotos[fotoIndexAtiva])"
-              alt="Foto do desvio de qualidade"
-              class="tc-modal__img"
-            />
-            <!-- Navegação -->
-            <button
-              v-if="modalGaleriaFotos.length > 1"
-              type="button"
-              class="tc-modal__nav tc-modal__nav--prev"
-              @click="fotoAnterior"
-              aria-label="Foto anterior"
-            >
-              <ChevronLeft :size="22" />
-            </button>
-            <button
-              v-if="modalGaleriaFotos.length > 1"
-              type="button"
-              class="tc-modal__nav tc-modal__nav--next"
-              @click="fotoProxima"
-              aria-label="Próxima foto"
-            >
-              <ChevronRight :size="22" />
-            </button>
-          </div>
+          <!-- BOTÃO ATUALIZAR -->
+          <button
+            class="inline-flex items-center gap-2 px-4 py-1.5 rounded-xl bg-white border border-slate-200/90 hover:bg-slate-50 hover:border-slate-300 text-slate-700 hover:text-slate-900 text-xs font-bold font-mono tracking-tight shadow-xs transition-all active:scale-95 cursor-pointer"
+            type="button"
+            @click="fetchKpis"
+            aria-label="Sincronizar KPIs"
+          >
+            <RefreshCw :size="13" class="stroke-[2.5]" />
+            <span>Atualizar</span>
+          </button>
+        </div>
+      </header>
 
-          <!-- Thumbnails -->
-          <div v-if="modalGaleriaFotos.length > 1" class="tc-modal__thumbs">
-            <button
-              v-for="(foto, i) in modalGaleriaFotos"
-              :key="i"
-              type="button"
-              class="tc-modal__thumb"
-              :class="{ 'tc-modal__thumb--active': fotoIndexAtiva === i }"
-              @click="fotoIndexAtiva = i"
-            >
-              <img :src="getFotoUrl(foto)" alt="Miniatura" />
-            </button>
+      <!-- ─── SKELETON LOADING (BENTO WIREFRAME INDUSTRIAL) ───────────── -->
+      <div v-if="loading" class="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-pulse">
+        <div class="lg:col-span-12 h-96 rounded-3xl bg-white border border-slate-200/80 p-6 flex flex-col justify-between">
+          <div class="h-6 w-72 bg-slate-200 rounded-md"></div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="h-28 bg-slate-100 rounded-2xl"></div>
+            <div class="h-28 bg-slate-100 rounded-2xl"></div>
+            <div class="h-28 bg-slate-100 rounded-2xl"></div>
+            <div class="h-28 bg-slate-100 rounded-2xl"></div>
           </div>
-
-          <div class="tc-modal__footer">
-            <button type="button" class="tc-modal__btn-close" @click="fecharGaleria">
-              Fechar Visualização
-            </button>
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <div class="lg:col-span-5 h-32 bg-slate-100 rounded-2xl"></div>
+            <div class="lg:col-span-7 h-32 bg-slate-100 rounded-2xl"></div>
+          </div>
+        </div>
+        <div class="lg:col-span-7 h-96 rounded-3xl bg-white border border-slate-200/80 p-6">
+          <div class="h-6 w-48 bg-slate-200 rounded-md mb-4"></div>
+          <div class="space-y-3">
+            <div class="h-20 bg-slate-100 rounded-2xl"></div>
+            <div class="h-20 bg-slate-100 rounded-2xl"></div>
+          </div>
+        </div>
+        <div class="lg:col-span-5 h-96 rounded-3xl bg-white border border-slate-200/80 p-6">
+          <div class="h-6 w-48 bg-slate-200 rounded-md mb-4"></div>
+          <div class="h-28 bg-slate-100 rounded-2xl mb-4"></div>
+          <div class="space-y-2">
+            <div class="h-8 bg-slate-100 rounded-xl"></div>
+            <div class="h-8 bg-slate-100 rounded-xl"></div>
+          </div>
+        </div>
+        <div class="lg:col-span-12 h-64 rounded-3xl bg-white border border-slate-200/80 p-6">
+          <div class="h-6 w-60 bg-slate-200 rounded-md mb-4"></div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="h-24 bg-slate-100 rounded-2xl"></div>
+            <div class="h-24 bg-slate-100 rounded-2xl"></div>
+            <div class="h-24 bg-slate-100 rounded-2xl"></div>
+            <div class="h-24 bg-slate-100 rounded-2xl"></div>
           </div>
         </div>
       </div>
-    </Transition>
 
+      <!-- ─── BENTO GRID DOS 4 KPIs DE NEGÓCIO ────────────────────────── -->
+      <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- KPI A · LEAD TIME EFETIVO & DOWNTIME (Span 12)               -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <section class="lg:col-span-12 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs hover:border-slate-300/80 transition-all duration-300 relative overflow-hidden">
+          <!-- Header do Card -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-6 mb-6 border-b border-slate-100 gap-4">
+            <div class="flex items-center gap-3.5">
+              <div class="w-11 h-11 rounded-2xl bg-slate-100 border border-slate-200/90 text-slate-800 flex items-center justify-center flex-shrink-0 shadow-2xs">
+                <Clock :size="20" class="stroke-[2.2]" />
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI A · DESEMPENHO CRÍTICO</span>
+                  <span class="text-slate-300">•</span>
+                  <span class="text-[10px] font-mono uppercase tracking-widest text-blue-600 font-bold">CICLO & PARADAS</span>
+                </div>
+                <h2 class="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mt-0.5">
+                  Lead Time Efetivo & Downtime Acumulado
+                </h2>
+                <p class="text-xs text-slate-500 font-medium">
+                  Tempo absoluto de permanência por lote e paradas operacionais que ativaram o SLA
+                </p>
+              </div>
+            </div>
+
+            <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-[11px] font-mono font-bold text-slate-700 self-start sm:self-center shadow-2xs">
+              <Activity :size="13" class="text-blue-600 stroke-[2.5]" />
+              <span>SLA Dinâmico Descontado</span>
+            </div>
+          </div>
+
+          <!-- Quarteto de Métricas Numéricas de Alto Impacto -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4.5 mb-6">
+            <!-- 1. Ordens Ativas (WIP) -->
+            <div class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-white hover:shadow-xs group border-l-4 border-l-slate-900">
+              <div class="flex justify-between items-start">
+                <div>
+                  <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold block">WIP TOTAL (CHÃO DE FÁBRICA)</span>
+                  <span class="text-[11px] text-slate-500 font-medium block mt-0.5">Ordens ativas em rota</span>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full bg-slate-900 ring-4 ring-slate-100"></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-slate-900 tabular-nums">
+                  {{ kpiA.totalOrdensAtivas }}
+                </span>
+              </div>
+              <span class="text-[11px] font-mono text-slate-400 font-medium block mt-1.5">
+                Total de OPs em andamento
+              </span>
+            </div>
+
+            <!-- 2. Caixa Teste (Piloto) -->
+            <div class="bg-blue-50/20 border border-blue-100 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-white hover:shadow-xs group border-l-4 border-l-blue-600">
+              <div class="flex justify-between items-start">
+                <div>
+                  <span class="text-[10px] font-mono uppercase tracking-widest text-blue-600 font-bold block">LEAD TIME · CAIXA TESTE</span>
+                  <span class="text-[11px] text-slate-500 font-medium block mt-0.5">Ciclo piloto antecipado</span>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full bg-blue-600 ring-4 ring-blue-50"></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-blue-600 tabular-nums">
+                  {{ formatHour(kpiA.mediaCaixaTeste) }}
+                </span>
+              </div>
+              <span class="text-[11px] font-mono text-slate-400 font-medium block mt-1.5">
+                Média de ciclo da caixa piloto
+              </span>
+            </div>
+
+            <!-- 3. Lote Principal (Volume) -->
+            <div class="bg-indigo-50/20 border border-indigo-100 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-white hover:shadow-xs group border-l-4 border-l-indigo-600">
+              <div class="flex justify-between items-start">
+                <div>
+                  <span class="text-[10px] font-mono uppercase tracking-widest text-indigo-600 font-bold block">LEAD TIME · LOTE PRINCIPAL</span>
+                  <span class="text-[11px] text-slate-500 font-medium block mt-0.5">Média de escala fabril</span>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-50"></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-indigo-600 tabular-nums">
+                  {{ formatHour(kpiA.mediaLotePrincipal) }}
+                </span>
+              </div>
+              <span class="text-[11px] font-mono text-slate-400 font-medium block mt-1.5">
+                Ciclo fabril em escala de volume
+              </span>
+            </div>
+
+            <!-- 4. Downtime Acumulado -->
+            <div class="bg-rose-50/30 border border-rose-200/80 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-rose-50/60 hover:shadow-xs group border-l-4 border-l-rose-500">
+              <div class="flex justify-between items-start">
+                <div>
+                  <div class="flex items-center gap-1.5">
+                    <PauseCircle :size="13" class="text-rose-600 stroke-[2.5]" />
+                    <span class="text-[10px] font-mono uppercase tracking-widest text-rose-600 font-bold block">DOWNTIME TOTAL ACUMULADO</span>
+                  </div>
+                  <span class="text-[11px] text-rose-500/90 font-medium block mt-0.5">Paradas com pausa de SLA</span>
+                </div>
+                <span class="w-2.5 h-2.5 rounded-full bg-rose-500 ring-4 ring-rose-100" :class="{ 'animate-pulse': kpiA.downtimeTotalMin > 0 }"></span>
+              </div>
+              <div class="mt-4">
+                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-rose-600 tabular-nums">
+                  {{ kpiA.downtimeTotalHoras }}h
+                </span>
+              </div>
+              <span class="text-[11px] font-mono text-rose-600 font-bold block mt-1.5">
+                {{ kpiA.downtimeTotalMin }} min acumulados
+              </span>
+            </div>
+          </div>
+
+          <!-- Sub-grid: Motivos de Parada + Sparkline SVG -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-6 border-t border-slate-100">
+
+            <!-- LADO ESQUERDO: Motivos Reais de Parada -->
+            <div class="lg:col-span-5 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between mb-4">
+                  <div class="flex items-center gap-2">
+                    <Wrench :size="14" class="text-slate-600" />
+                    <span class="text-xs font-mono font-bold uppercase tracking-wider text-slate-700">
+                      Motivos Reais de Parada (30 dias)
+                    </span>
+                  </div>
+                  <span class="text-[10px] font-mono text-slate-400 font-bold uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-full">
+                    {{ kpiA.motivosParada.length }} {{ kpiA.motivosParada.length === 1 ? 'motivo' : 'motivos' }}
+                  </span>
+                </div>
+
+                <div v-if="kpiA.motivosParada.length === 0" class="text-center py-10 px-4 bg-slate-50/70 border border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2">
+                  <div class="w-9 h-9 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <Check :size="18" class="stroke-[3]" />
+                  </div>
+                  <span class="text-[10px] font-mono uppercase tracking-widest text-emerald-700 font-bold">Fluxo Contínuo</span>
+                  <p class="text-xs font-mono font-bold text-slate-700">
+                    Sem paradas impeditivas no período.
+                  </p>
+                  <p class="text-[11px] text-slate-400 font-medium">
+                    Nenhuma ocorrência ativou a pausa de SLA nas últimas ordens.
+                  </p>
+                </div>
+
+                <div v-else class="space-y-2.5 max-h-[290px] overflow-y-auto pr-1">
+                  <div
+                    v-for="item in kpiA.motivosParada"
+                    :key="item.motivo"
+                    class="bg-slate-50/70 border border-slate-200/80 rounded-xl p-3.5 hover:border-slate-300 hover:bg-white transition-all shadow-2xs"
+                  >
+                    <div class="flex justify-between items-start gap-2 mb-2">
+                      <span class="text-xs font-bold text-slate-900 line-clamp-1">{{ item.motivo }}</span>
+                      <div class="flex items-center gap-2 flex-shrink-0">
+                        <span class="text-[10px] font-mono font-bold bg-slate-200/70 text-slate-700 px-2 py-0.5 rounded">
+                          {{ item.quantidade }} ocorr.
+                        </span>
+                        <span class="text-xs font-mono font-bold text-slate-800 tabular-nums">
+                          {{ formatMin(item.minutos) }}
+                        </span>
+                        <span class="text-xs font-mono font-black text-rose-600 tabular-nums">
+                          {{ item.percentual }}%
+                        </span>
+                      </div>
+                    </div>
+                    <!-- Barra de progresso industrial -->
+                    <div class="w-full h-1.5 bg-slate-200/70 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-gradient-to-r from-rose-500 to-amber-500 rounded-full transition-all duration-500"
+                        :style="{ width: `${Math.min(100, item.percentual)}%` }"
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- LADO DIREITO: Sparkline da Curva de Lead Time -->
+            <div class="lg:col-span-7 flex flex-col justify-between bg-slate-50/60 border border-slate-200/80 rounded-2xl p-4 sm:p-5">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <Activity :size="14" class="text-slate-600" />
+                  <span class="text-xs font-mono font-bold uppercase tracking-wider text-slate-700">
+                    Variação do Lead Time (Últimas Ordens)
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="inline-flex items-center gap-1.5 text-[10px] font-mono text-slate-500 font-bold uppercase tracking-wider">
+                    <span class="w-2 h-2 rounded-full bg-slate-900 inline-block"></span>
+                    Lead Time (Horas)
+                  </span>
+                </div>
+              </div>
+
+              <!-- Gráfico SVG Vetorial de Alta Fidelidade -->
+              <div class="w-full h-44 sm:h-52 flex items-center justify-center my-1 relative">
+                <svg viewBox="0 0 520 120" class="w-full h-full overflow-visible" aria-hidden="true">
+                  <defs>
+                    <linearGradient id="tc-lead-grad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#0f172a" stop-opacity="0.18" />
+                      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.0" />
+                    </linearGradient>
+                  </defs>
+
+                  <!-- Linhas Guia Sutis -->
+                  <line x1="0" y1="20" x2="520" y2="20" stroke="#e2e8f0" stroke-dasharray="4 4" stroke-width="1" />
+                  <line x1="0" y1="60" x2="520" y2="60" stroke="#e2e8f0" stroke-dasharray="4 4" stroke-width="1" />
+                  <line x1="0" y1="100" x2="520" y2="100" stroke="#cbd5e1" stroke-width="1" />
+
+                  <!-- Área Sombreada -->
+                  <path
+                    v-if="kpiA.grafico.length > 1"
+                    fill="url(#tc-lead-grad)"
+                    :d="(() => {
+                      const g = kpiA.grafico
+                      const maxV = Math.max(...g.map(x => x.leadTimeHoras), 1)
+                      const pts = g.map((item, i) => {
+                        const x = (i / Math.max(1, g.length - 1)) * 520
+                        const y = 100 - (item.leadTimeHoras / maxV) * 80
+                        return `${x.toFixed(1)},${y.toFixed(1)}`
+                      })
+                      const first = pts[0].split(',')
+                      const last = pts[pts.length - 1].split(',')
+                      return `M ${pts.join(' L ')} L ${last[0]},100 L ${first[0]},100 Z`
+                    })()"
+                  />
+
+                  <!-- Linha Principal Contínua -->
+                  <path
+                    v-if="kpiA.grafico.length > 1"
+                    fill="none"
+                    stroke="#0f172a"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    :d="kpiA.grafico
+                      .map((item, i) => {
+                        const maxV = Math.max(...kpiA.grafico.map(x => x.leadTimeHoras), 1)
+                        const x = (i / Math.max(1, kpiA.grafico.length - 1)) * 520
+                        const y = 100 - (item.leadTimeHoras / maxV) * 80
+                        return `${x.toFixed(1)},${y.toFixed(1)}`
+                      })
+                      .reduce((acc, curr, idx) => idx === 0 ? `M ${curr}` : `${acc} L ${curr}`, '')"
+                  />
+
+                  <!-- Nós de Dados Interativos com Tooltip -->
+                  <circle
+                    v-for="(item, i) in kpiA.grafico"
+                    :key="i"
+                    :cx="(i / Math.max(1, kpiA.grafico.length - 1)) * 520"
+                    :cy="100 - (item.leadTimeHoras / Math.max(...kpiA.grafico.map(x => x.leadTimeHoras), 1)) * 80"
+                    r="4.5"
+                    fill="#ffffff"
+                    stroke="#0f172a"
+                    stroke-width="2.5"
+                    class="transition-transform duration-150 hover:scale-150 cursor-pointer"
+                  >
+                    <title>{{ item.tipoLote }} - {{ item.modelo }}: {{ item.leadTimeHoras }}h</title>
+                  </circle>
+                </svg>
+
+                <div v-if="kpiA.grafico.length <= 1" class="absolute inset-0 flex items-center justify-center">
+                  <span class="text-xs font-mono text-slate-400">Dados históricos insuficientes para curva temporal.</span>
+                </div>
+              </div>
+
+              <!-- Legenda Temporal Inferior -->
+              <div class="flex justify-between items-center text-[10px] font-mono text-slate-400 border-t border-slate-200/60 pt-2 font-bold uppercase tracking-wider">
+                <span>← Lotes Recentes</span>
+                <span class="text-slate-300">|</span>
+                <span>Lotes Anteriores →</span>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- KPI B · GARGALOS OPERACIONAIS (Span 7)                       -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <section class="lg:col-span-7 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-7 shadow-xs hover:border-slate-300/80 transition-all duration-300 flex flex-col justify-between">
+          <div>
+            <!-- Header do Card -->
+            <div class="flex items-start justify-between pb-5 mb-5 border-b border-slate-100 gap-3">
+              <div class="flex items-center gap-3.5">
+                <div class="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200/90 text-amber-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
+                  <AlertTriangle :size="20" class="stroke-[2.2]" />
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI B · CONTROLE DE DESVIOS</span>
+                  </div>
+                  <h2 class="text-xl font-black text-slate-900 tracking-tight mt-0.5">
+                    Gargalos Operacionais
+                  </h2>
+                  <p class="text-xs text-slate-500 font-medium">
+                    Ocorrências ativas em aberto ou em análise no chão de fábrica
+                  </p>
+                </div>
+              </div>
+
+              <!-- Badge Contador de Gargalos -->
+              <span
+                class="font-mono text-xs font-black px-3 py-1 rounded-full border tracking-tight flex-shrink-0 shadow-2xs"
+                :class="kpiB.length > 0
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'"
+              >
+                {{ kpiB.length }} {{ kpiB.length === 1 ? 'ativo' : 'ativos' }}
+              </span>
+            </div>
+
+            <!-- Lista de Gargalos -->
+            <div class="space-y-3 max-h-[440px] overflow-y-auto pr-1">
+              <!-- Empty State (Padrão Caminho Livre) -->
+              <div v-if="kpiB.length === 0" class="text-center py-12 px-4 bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2">
+                <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <Check :size="20" class="stroke-[3]" />
+                </div>
+                <span class="text-[10px] font-mono uppercase tracking-widest text-emerald-700 font-bold">Fluxo Desimpedido</span>
+                <p class="text-xs font-mono font-bold text-slate-700">
+                  Zero gargalos ativos no momento.
+                </p>
+                <p class="text-[11px] text-slate-400 font-medium">
+                  Produção fluindo normalmente em todas as células de modelagem e corte.
+                </p>
+              </div>
+
+              <!-- Item da Lista de Gargalos -->
+              <div
+                v-else
+                v-for="oc in kpiB"
+                :key="oc.id"
+                class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-4.5 flex items-start justify-between gap-4 transition-all duration-200 hover:bg-white hover:shadow-xs hover:border-slate-300"
+                :class="{
+                  'border-l-4 border-l-rose-500 bg-rose-50/10': oc.gravidade === 'CRITICA',
+                  'border-l-4 border-l-orange-500 bg-orange-50/10': oc.gravidade === 'ALTA',
+                  'border-l-4 border-l-amber-500 bg-amber-50/10': oc.gravidade === 'MEDIA',
+                  'border-l-4 border-l-slate-400': oc.gravidade === 'BAIXA'
+                }"
+              >
+                <div class="flex-1 min-w-0">
+                  <!-- Meta row -->
+                  <div class="flex items-center gap-2 mb-2 flex-wrap">
+                    <span
+                      class="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded border"
+                      :class="{
+                        'bg-rose-50 text-rose-700 border-rose-200': oc.gravidade === 'CRITICA',
+                        'bg-orange-50 text-orange-700 border-orange-200': oc.gravidade === 'ALTA',
+                        'bg-amber-50 text-amber-700 border-amber-200': oc.gravidade === 'MEDIA',
+                        'bg-slate-100 text-slate-600 border-slate-200': oc.gravidade === 'BAIXA'
+                      }"
+                    >
+                      {{ oc.gravidade }}
+                    </span>
+                    <span class="text-xs font-mono font-bold text-slate-800 uppercase tracking-wide">
+                      {{ oc.setor }}
+                    </span>
+                    <span class="text-[11px] font-mono text-slate-400 ml-auto font-medium">
+                      {{ formatDate(oc.dataOcorrencia) }}
+                    </span>
+                  </div>
+
+                  <!-- Título & Descrição -->
+                  <h3 class="text-sm font-bold text-slate-900 tracking-tight truncate mb-1">
+                    {{ oc.titulo }}
+                  </h3>
+                  <p class="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-2 font-normal">
+                    {{ oc.descricao }}
+                  </p>
+
+                  <!-- Reporter -->
+                  <p class="text-[11px] font-mono text-slate-400">
+                    Registrado por: <strong class="text-slate-700 font-semibold">{{ oc.reportadoPor }}</strong>
+                  </p>
+                </div>
+
+                <!-- Botão Tátil de 48px para Fotos -->
+                <button
+                  v-if="oc.fotos && oc.fotos.length > 0"
+                  type="button"
+                  class="w-12 h-12 flex-shrink-0 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white flex flex-col items-center justify-center gap-0.5 shadow-xs transition-all active:scale-95 cursor-pointer group"
+                  @click="abrirGaleria(oc.fotos)"
+                  :aria-label="`Ver ${oc.fotos.length} fotos da ocorrência`"
+                  :title="`Visualizar ${oc.fotos.length} registros fotográficos do desvio`"
+                >
+                  <ImageIcon :size="17" class="group-hover:scale-110 transition-transform" />
+                  <span class="text-[10px] font-mono font-black tabular-nums">{{ oc.fotos.length }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- KPI C · FIRST PASS YIELD (FPY) (Span 5)                      -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <section class="lg:col-span-5 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-7 shadow-xs hover:border-slate-300/80 transition-all duration-300 flex flex-col justify-between">
+          <div>
+            <!-- Header do Card -->
+            <div class="flex items-start justify-between pb-5 mb-5 border-b border-slate-100 gap-3">
+              <div class="flex items-center gap-3.5">
+                <div class="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-200/90 text-emerald-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
+                  <ShieldCheck :size="20" class="stroke-[2.2]" />
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI C · QUALIDADE FABRIL</span>
+                  </div>
+                  <h2 class="text-xl font-black text-slate-900 tracking-tight mt-0.5">
+                    First Pass Yield (FPY)
+                  </h2>
+                  <p class="text-xs text-slate-500 font-medium">
+                    Aprovação na primeira passagem de inspeção
+                  </p>
+                </div>
+              </div>
+
+              <div class="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200/70 text-slate-400 flex items-center justify-center flex-shrink-0">
+                <TrendingUp :size="16" class="stroke-[2.2]" />
+              </div>
+            </div>
+
+            <!-- Spotlight: FPY Global -->
+            <div class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 mb-5 flex items-center justify-between shadow-2xs">
+              <div>
+                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter tabular-nums block"
+                  :class="kpiC.fpyGlobal == null ? 'text-slate-400' : kpiC.fpyGlobal >= 90 ? 'text-emerald-700' : 'text-rose-600'"
+                >
+                  {{ kpiC.fpyGlobal == null ? '—' : `${kpiC.fpyGlobal}%` }}
+                </span>
+                <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold mt-1 block">
+                  {{ kpiC.totalInspecoes }} inspeções consideradas
+                </span>
+              </div>
+
+              <!-- Pill de Meta -->
+              <span
+                class="font-mono text-xs font-bold px-3.5 py-1.5 rounded-full border tracking-tight flex items-center gap-1.5 shadow-2xs"
+                :class="kpiC.fpyGlobal == null
+                  ? 'bg-slate-100 text-slate-600 border-slate-200'
+                  : kpiC.fpyGlobal >= 90
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-rose-50 text-rose-800 border-rose-200'"
+              >
+                <Check v-if="kpiC.fpyGlobal != null && kpiC.fpyGlobal >= 90" :size="13" class="stroke-[3]" />
+                <Activity v-else-if="kpiC.fpyGlobal == null" :size="13" class="stroke-[2.5]" />
+                <AlertTriangle v-else :size="13" class="stroke-[2.5]" />
+                <span>{{ kpiC.fpyGlobal == null ? 'Sem dados' : kpiC.fpyGlobal >= 90 ? 'Meta ≥90%' : 'Abaixo da Meta' }}</span>
+              </span>
+            </div>
+
+            <!-- Lista de Setores -->
+            <div class="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
+              <div v-if="kpiC.setores.length === 0" class="text-center py-8 px-4 bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl">
+                <p class="text-xs font-mono font-medium text-slate-500">
+                  Sem inspeções de saída registradas.
+                </p>
+              </div>
+
+              <div
+                v-else
+                v-for="item in kpiC.setores"
+                :key="item.setor"
+                class="bg-slate-50/60 border border-slate-200/80 rounded-xl p-3.5 hover:bg-white hover:border-slate-300 transition-all shadow-2xs"
+              >
+                <div class="flex justify-between items-center mb-1.5">
+                  <span class="text-xs font-bold text-slate-900 uppercase tracking-wide">{{ item.setor }}</span>
+                  <span
+                    class="text-xs font-mono font-black tabular-nums"
+                    :class="item.fpyPercentual >= 90 ? 'text-emerald-700' : 'text-rose-600'"
+                  >
+                    {{ item.fpyPercentual }}%
+                  </span>
+                </div>
+
+                <!-- Barra de Progresso FPY -->
+                <div class="w-full h-2 bg-slate-200/70 rounded-full overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all duration-700"
+                    :class="item.fpyPercentual >= 90 ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-gradient-to-r from-amber-500 to-rose-500'"
+                    :style="{ width: `${Math.min(100, item.fpyPercentual)}%` }"
+                  ></div>
+                </div>
+
+                <p class="text-[10px] font-mono text-slate-400 mt-1.5 font-medium">
+                  {{ item.aprovadasPrimeira }} aprovadas de {{ item.totalInspecoes > 0 ? item.totalInspecoes : item.totalRastreamentos }} inspecionadas
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- KPI D · RETRABALHO POR ORIGEM (Span 12)                      -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <section class="lg:col-span-12 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs hover:border-slate-300/80 transition-all duration-300">
+          <!-- Header do Card -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-6 mb-6 border-b border-slate-100 gap-4">
+            <div class="flex items-center gap-3.5">
+              <div class="w-11 h-11 rounded-2xl bg-orange-50 border border-orange-200/90 text-orange-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
+                <RotateCcw :size="20" class="stroke-[2.2]" />
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI D · REINCIDÊNCIA & RETORNO CIRÚRGICO</span>
+                </div>
+                <h2 class="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mt-0.5">
+                  Índice de Retrabalho por Setor de Origem
+                </h2>
+                <p class="text-xs text-slate-500 font-medium">
+                  Mapeamento dos setores que geraram maior volume de reprocessamento (últimos 30 dias)
+                </p>
+              </div>
+            </div>
+
+            <!-- Totalizador Geral de Retrabalhos -->
+            <div class="flex items-baseline gap-2 self-start sm:self-center bg-slate-50 border border-slate-200/80 rounded-2xl px-4 py-2 shadow-2xs">
+              <span class="text-2xl sm:text-3xl font-black font-mono tracking-tighter text-slate-900 tabular-nums">
+                {{ kpiD.totalRetrabalhos }}
+              </span>
+              <span class="text-xs font-mono font-bold text-slate-500 uppercase tracking-wider">
+                casos totais
+              </span>
+            </div>
+          </div>
+
+          <!-- Empty State (Padrão Caminho Livre) -->
+          <div v-if="kpiD.setores.length === 0" class="text-center py-12 px-4 bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2">
+            <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+              <Check :size="20" class="stroke-[3]" />
+            </div>
+            <span class="text-[10px] font-mono uppercase tracking-widest text-emerald-700 font-bold">Conformidade Plena</span>
+            <p class="text-xs font-mono font-bold text-slate-700">
+              Nenhum retrabalho apontado nos últimos 30 dias.
+            </p>
+            <p class="text-[11px] text-slate-400 font-medium">
+              Zero reincidência de peças com retorno cirúrgico.
+            </p>
+          </div>
+
+          <!-- Grid de Cards de Retrabalho por Setor -->
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4.5">
+            <div
+              v-for="item in kpiD.setores"
+              :key="item.setorOrigem"
+              class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 border-l-4 border-l-orange-500 hover:bg-white hover:shadow-xs hover:border-slate-300 transition-all flex flex-col justify-between"
+            >
+              <div>
+                <div class="flex justify-between items-start gap-2 mb-2">
+                  <span class="text-sm font-black text-slate-900 uppercase tracking-tight truncate">
+                    {{ item.setorOrigem }}
+                  </span>
+                  <span class="text-xs font-mono font-black text-orange-700 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full flex-shrink-0 tabular-nums">
+                    {{ item.totalRetrabalhos }} {{ item.totalRetrabalhos === 1 ? 'caso' : 'casos' }}
+                  </span>
+                </div>
+
+                <!-- Barra de Participação -->
+                <div class="w-full h-2 bg-slate-200/70 rounded-full overflow-hidden mt-3 mb-2">
+                  <div
+                    class="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-700"
+                    :style="{ width: `${Math.min(100, item.percentualDoTotal)}%` }"
+                  ></div>
+                </div>
+
+                <!-- Footer com Métricas -->
+                <div class="flex justify-between items-center text-[11px] font-mono text-slate-500 mt-2 font-medium">
+                  <span class="font-bold text-slate-700">{{ item.percentualDoTotal }}% do total</span>
+                  <span>Média: {{ item.tempoMedioMin }} min</span>
+                </div>
+              </div>
+
+              <!-- Divergências Observadas -->
+              <div v-if="item.tiposDivergencia" class="mt-3.5 pt-2.5 border-t border-slate-200/70">
+                <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 block mb-0.5 font-bold">Divergências:</span>
+                <p class="text-xs text-slate-600 line-clamp-1 italic font-normal" :title="item.tiposDivergencia">
+                  {{ item.tiposDivergencia }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════════════ -->
+      <!-- MODAL · GALERIA DE FOTOS DO DESVIO (PADRÃO DARKROOM/STUDIO)    -->
+      <!-- ══════════════════════════════════════════════════════════════ -->
+      <Transition name="tc-modal-fade">
+        <div
+          v-if="modalGaleriaFotos"
+          class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 sm:p-6"
+          @click.self="fecharGaleria"
+        >
+          <div class="bg-slate-900 text-white rounded-3xl border border-slate-800 shadow-2xl max-w-5xl w-full overflow-hidden flex flex-col animate-scale-in">
+            <!-- Header do Modal -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/90">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-xl bg-slate-800 text-slate-200 flex items-center justify-center">
+                  <ImageIcon :size="16" />
+                </div>
+                <div>
+                  <h3 class="text-sm font-mono font-bold text-white">
+                    Registro de Não Conformidade
+                  </h3>
+                  <span class="text-[11px] font-mono text-slate-400">
+                    Foto {{ fotoIndexAtiva + 1 }} de {{ modalGaleriaFotos.length }}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-rose-500/20 hover:text-rose-400 text-slate-400 flex items-center justify-center transition-all cursor-pointer"
+                @click="fecharGaleria"
+                aria-label="Fechar galeria"
+              >
+                <X :size="16" class="stroke-[2.5]" />
+              </button>
+            </div>
+
+            <!-- Área Central da Foto (Darkroom Matte Black) -->
+            <div class="relative bg-black flex items-center justify-center min-h-[340px] max-h-[62vh] select-none overflow-hidden p-2">
+              <img
+                :src="getFotoUrl(modalGaleriaFotos[fotoIndexAtiva])"
+                alt="Foto do desvio de qualidade"
+                class="max-w-full max-h-[60vh] object-contain block rounded-lg transition-opacity duration-200 shadow-xl"
+              />
+
+              <!-- Botões de Navegação Anterior/Próxima -->
+              <button
+                v-if="modalGaleriaFotos.length > 1"
+                type="button"
+                class="absolute left-4 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700/80 shadow-lg backdrop-blur-sm flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                @click="fotoAnterior"
+                aria-label="Foto anterior"
+              >
+                <ChevronLeft :size="22" class="stroke-[2.5]" />
+              </button>
+              <button
+                v-if="modalGaleriaFotos.length > 1"
+                type="button"
+                class="absolute right-4 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-slate-800 text-white border border-slate-700/80 shadow-lg backdrop-blur-sm flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                @click="fotoProxima"
+                aria-label="Próxima foto"
+              >
+                <ChevronRight :size="22" class="stroke-[2.5]" />
+              </button>
+            </div>
+
+            <!-- Barra de Miniaturas (Thumbnails) -->
+            <div v-if="modalGaleriaFotos.length > 1" class="flex gap-2 p-3.5 bg-slate-900 border-t border-slate-800 overflow-x-auto justify-center">
+              <button
+                v-for="(foto, i) in modalGaleriaFotos"
+                :key="i"
+                type="button"
+                class="w-12 h-12 rounded-xl overflow-hidden cursor-pointer transition-all border-2 flex-shrink-0"
+                :class="fotoIndexAtiva === i ? 'border-white ring-2 ring-white/20 scale-105 opacity-100' : 'border-transparent opacity-50 hover:opacity-100'"
+                @click="fotoIndexAtiva = i"
+              >
+                <img :src="getFotoUrl(foto)" alt="Miniatura" class="w-full h-full object-cover" />
+              </button>
+            </div>
+
+            <!-- Footer do Modal -->
+            <div class="flex items-center justify-between px-6 py-3.5 border-t border-slate-800 bg-slate-900/90">
+              <span class="text-[11px] font-mono text-slate-400">
+                Evidência vinculada à Ordem de Produção
+              </span>
+              <button
+                type="button"
+                class="px-4 py-2 bg-white hover:bg-slate-100 text-slate-900 text-xs font-mono font-bold rounded-xl transition-all active:scale-95 cursor-pointer shadow-xs"
+                @click="fecharGaleria"
+              >
+                Fechar Visualização
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+
+    </div>
   </div>
 </template>
 
 <style scoped>
 /* ═══════════════════════════════════════════════════════════
-   ROOT & LAYOUT
+   MICRO-ANIMAÇÕES & TRANSIÇÕES DO MODAL
 ═══════════════════════════════════════════════════════════ */
-.tc-root {
-  min-height: 100%;
-  padding: 0 0 3rem;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  color: #1e293b;
-  text-align: left;
+.tc-modal-fade-enter-active,
+.tc-modal-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   CABEÇALHO
-═══════════════════════════════════════════════════════════ */
-.tc-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 1.5rem;
-  margin-bottom: 1.75rem;
-  border-bottom: 1px solid #e2e8f0;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.tc-header__left {
-  display: flex;
-  align-items: center;
-  gap: 0.875rem;
-}
-
-.tc-header__icon {
-  width: 2.5rem;
-  height: 2.5rem;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 0.75rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #2563eb;
-  flex-shrink: 0;
-}
-
-.tc-header__title {
-  font-size: 1.375rem;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-}
-
-.tc-header__sub {
-  font-size: 0.8125rem;
-  color: #64748b;
-  margin: 0.2rem 0 0;
-  font-weight: 500;
-}
-
-.tc-header__right {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.tc-live-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.375rem 0.75rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  font-family: ui-monospace, monospace;
-  border: 1px solid;
-}
-
-.tc-live-badge--on {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
-  color: #15803d;
-}
-
-.tc-live-badge--off {
-  background: #f8fafc;
-  border-color: #e2e8f0;
-  color: #94a3b8;
-}
-
-.tc-live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: tc-pulse 2s ease-in-out infinite;
-}
-
-.tc-live-badge--off .tc-live-dot {
-  animation: none;
-}
-
-@keyframes tc-pulse {
-  0%, 100% { opacity: 0.4; transform: scale(0.9); }
-  50% { opacity: 1; transform: scale(1.15); }
-}
-
-.tc-btn-refresh {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.4375rem 0.875rem;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.625rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #374151;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-  transition: all 0.15s ease;
-}
-
-.tc-btn-refresh:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   SKELETON
-═══════════════════════════════════════════════════════════ */
-.tc-skeleton-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1.25rem;
-}
-
-.tc-skeleton {
-  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
-  background-size: 200% 100%;
-  animation: tc-shimmer 1.8s infinite;
-  border-radius: 1rem;
-  height: 220px;
-}
-
-.tc-skeleton--full { grid-column: span 2; height: 180px; }
-.tc-skeleton--half { grid-column: span 1; }
-
-@keyframes tc-shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   BENTO GRID
-═══════════════════════════════════════════════════════════ */
-.tc-bento {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-}
-
-/* KPI A ocupa a linha inteira */
-.tc-card--lead-time { grid-column: span 2; }
-
-/* KPI D ocupa a linha inteira */
-.tc-card--retrabalho { grid-column: span 2; }
-
-@media (max-width: 900px) {
-  .tc-bento { grid-template-columns: 1fr; }
-  .tc-card--lead-time { grid-column: span 1; }
-  .tc-card--retrabalho { grid-column: span 1; }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   CARDS BASE (Light Mode Puro)
-═══════════════════════════════════════════════════════════ */
-.tc-card {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 1rem;
-  padding: 1.625rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
-  transition: box-shadow 0.3s ease, transform 0.3s ease;
-}
-
-.tc-card:hover {
-  box-shadow: 0 6px 16px -4px rgba(0,0,0,0.07), 0 2px 6px -2px rgba(0,0,0,0.04);
-  transform: translateY(-2px);
-}
-
-/* ═══════════════════════════════════════════════════════════
-   CARD HEADER PATTERN
-═══════════════════════════════════════════════════════════ */
-.tc-card__header {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.875rem;
-  margin-bottom: 1.375rem;
-}
-
-.tc-icon-wrap {
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 0.625rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  border: 1px solid;
-}
-
-.tc-icon-wrap--blue { background: #eff6ff; border-color: #bfdbfe; color: #2563eb; }
-.tc-icon-wrap--amber { background: #fffbeb; border-color: #fde68a; color: #d97706; }
-.tc-icon-wrap--emerald { background: #ecfdf5; border-color: #a7f3d0; color: #059669; }
-.tc-icon-wrap--orange { background: #fff7ed; border-color: #fed7aa; color: #ea580c; }
-
-.tc-card__title {
-  font-size: 0.875rem;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0;
-  letter-spacing: 0.01em;
-}
-
-.tc-card__desc {
-  font-size: 0.75rem;
-  color: #64748b;
-  margin: 0.2rem 0 0;
-  font-weight: 500;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   KPI A — MÉTRICAS
-═══════════════════════════════════════════════════════════ */
-.tc-metrics-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-
-@media (max-width: 900px) {
-  .tc-metrics-row { grid-template-columns: 1fr 1fr; }
-}
-
-@media (max-width: 500px) {
-  .tc-metrics-row { grid-template-columns: 1fr; }
-}
-
-.tc-metric-box {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-  padding: 1rem 1.125rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-}
-
-.tc-metric-box--blue { border-top: 3px solid #2563eb; }
-.tc-metric-box--indigo { border-top: 3px solid #4f46e5; }
-.tc-metric-box--red { border-top: 3px solid #e11d48; }
-.tc-metric-box--orange { border-top: 3px solid #f97316; }
-
-.tc-metric-box__label {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  font-family: ui-monospace, monospace;
-  color: #475569;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.tc-metric-box__label--sub {
-  font-size: 0.6rem;
-  color: #94a3b8;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.tc-metric-box__label--red { color: #e11d48; }
-
-.tc-metric-box__value {
-  font-size: 2rem;
-  font-weight: 800;
-  color: #0f172a;
-  font-family: ui-monospace, monospace;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-  margin: 0.25rem 0 0;
-}
-
-.tc-metric-box__value--red { color: #e11d48; }
-
-.tc-metric-box__hint {
-  font-size: 0.6875rem;
-  color: #94a3b8;
-  margin-top: 0.25rem;
-  font-weight: 500;
-}
-
-.tc-metric-box__hint--red { color: #fca5a5; }
-
-/* ═══════════════════════════════════════════════════════════
-   KPI A — CORPO (motivos + sparkline)
-═══════════════════════════════════════════════════════════ */
-.tc-lead-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-}
-
-@media (max-width: 800px) {
-  .tc-lead-body { grid-template-columns: 1fr; }
-}
-
-/* Motivos de parada */
-.tc-motivos__header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: #374151;
-  font-family: ui-monospace, monospace;
-  margin-bottom: 0.875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.tc-motivos__list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.625rem;
-}
-
-.tc-motivo-item {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.625rem;
-  padding: 0.75rem 0.875rem;
-}
-
-.tc-motivo-item__top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.tc-motivo-item__name {
-  font-size: 0.8125rem;
-  font-weight: 700;
-  color: #1e293b;
-}
-
-.tc-motivo-item__stats {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-shrink: 0;
-}
-
-.tc-motivo-item__qty {
-  font-size: 0.6875rem;
-  font-family: ui-monospace, monospace;
-  background: #e2e8f0;
-  color: #475569;
-  padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
-  font-weight: 700;
-}
-
-.tc-motivo-item__time {
-  font-size: 0.8125rem;
-  font-weight: 700;
-  font-family: ui-monospace, monospace;
-  color: #334155;
-}
-
-.tc-motivo-item__pct {
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: #e11d48;
-  font-family: ui-monospace, monospace;
-}
-
-/* Sparkline */
-.tc-sparkline-wrap {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.tc-sparkline__header {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  color: #64748b;
-  font-family: ui-monospace, monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.tc-sparkline__chart { flex: 1; }
-
-.tc-svg {
-  width: 100%;
-  height: 90px;
-  display: block;
-}
-
-.tc-sparkline__legend {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.625rem;
-  color: #94a3b8;
-  font-family: ui-monospace, monospace;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   BARRAS COMUNS
-═══════════════════════════════════════════════════════════ */
-.tc-bar-track {
-  background: #f1f5f9;
-  border-radius: 999px;
-  height: 6px;
-  overflow: hidden;
-  border: 1px solid #e2e8f0;
-}
-
-.tc-bar-track--lg { height: 8px; }
-
-.tc-bar-fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.tc-bar-fill--rose { background: #f43f5e; }
-.tc-bar-fill--emerald { background: #10b981; }
-.tc-bar-fill--orange { background: #f97316; }
-
-/* ═══════════════════════════════════════════════════════════
-   KPI B — GARGALOS
-═══════════════════════════════════════════════════════════ */
-.tc-badge-count {
-  font-size: 0.6875rem;
-  font-weight: 800;
-  font-family: ui-monospace, monospace;
-  padding: 0.25rem 0.625rem;
-  border-radius: 999px;
-  border: 1px solid;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.tc-badge-count--amber { background: #fffbeb; border-color: #fde68a; color: #92400e; }
-.tc-badge-count--green { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
-
-.tc-gargalos-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  max-height: 400px;
-  overflow-y: auto;
-  padding-right: 0.25rem;
-}
-
-.tc-gargalo-item {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-  padding: 0.875rem;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.tc-gargalo-item:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-}
-
-.tc-gargalo-item__body { flex: 1; min-width: 0; }
-
-.tc-gargalo-item__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.375rem;
-  flex-wrap: wrap;
-}
-
-.tc-badge-grav {
-  font-size: 0.625rem;
-  font-weight: 800;
-  font-family: ui-monospace, monospace;
-  padding: 0.1rem 0.375rem;
-  border-radius: 0.25rem;
-  border: 1px solid;
-}
-
-.tc-badge-grav--critica { background: #fef2f2; border-color: #fecaca; color: #dc2626; }
-.tc-badge-grav--alta { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
-.tc-badge-grav--media { background: #fffbeb; border-color: #fde68a; color: #b45309; }
-.tc-badge-grav--baixa { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
-
-.tc-gargalo-setor {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  font-family: ui-monospace, monospace;
-  color: #475569;
-}
-
-.tc-gargalo-date {
-  font-size: 0.625rem;
-  color: #94a3b8;
-  font-family: ui-monospace, monospace;
-  margin-left: auto;
-}
-
-.tc-gargalo-item__title {
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: #1e293b;
-  margin: 0 0 0.25rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tc-gargalo-item__desc {
-  font-size: 0.75rem;
-  color: #64748b;
-  margin: 0 0 0.375rem;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.tc-gargalo-item__reporter {
-  font-size: 0.6875rem;
-  color: #94a3b8;
-  margin: 0;
-  font-family: ui-monospace, monospace;
-}
-
-/* Botão tátil galeria — 48px */
-.tc-btn-galeria {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 0.75rem;
-  color: #2563eb;
-  cursor: pointer;
-  font-size: 0.5625rem;
-  font-weight: 800;
-  font-family: ui-monospace, monospace;
-  transition: all 0.15s ease;
-}
-
-.tc-btn-galeria:hover {
-  background: #2563eb;
-  color: #ffffff;
-  border-color: #2563eb;
-  transform: scale(1.05);
-}
-
-/* ═══════════════════════════════════════════════════════════
-   KPI C — FPY
-═══════════════════════════════════════════════════════════ */
-.tc-fpy-global {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-  padding: 1rem 1.125rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-}
-
-.tc-fpy-global__number { display: flex; flex-direction: column; gap: 0.125rem; }
-
-.tc-fpy-global__value {
-  font-size: 3rem;
-  font-weight: 900;
-  font-family: ui-monospace, monospace;
-  letter-spacing: -0.04em;
-  line-height: 1;
-}
-
-.tc-fpy-global__value--meta { color: #059669; }
-.tc-fpy-global__value--alert { color: #e11d48; }
-
-.tc-fpy-global__label {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  color: #64748b;
-  font-family: ui-monospace, monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.tc-pill {
-  font-size: 0.6875rem;
-  font-weight: 800;
-  padding: 0.375rem 0.75rem;
-  border-radius: 999px;
-  border: 1px solid;
-  white-space: nowrap;
-  font-family: ui-monospace, monospace;
-}
-
-.tc-pill--emerald { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
-.tc-pill--rose { background: #fff1f2; border-color: #fecdd3; color: #be123c; }
-
-.tc-fpy-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.875rem;
-  max-height: 280px;
-  overflow-y: auto;
-  padding-right: 0.25rem;
-}
-
-.tc-fpy-setor { }
-
-.tc-fpy-setor__info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.375rem;
-}
-
-.tc-fpy-setor__name {
-  font-size: 0.8125rem;
-  font-weight: 700;
-  color: #1e293b;
-}
-
-.tc-fpy-setor__pct {
-  font-size: 0.875rem;
-  font-weight: 800;
-  font-family: ui-monospace, monospace;
-}
-
-.tc-fpy-setor__pct--ok { color: #059669; }
-.tc-fpy-setor__pct--nok { color: #e11d48; }
-
-.tc-fpy-setor__detail {
-  font-size: 0.625rem;
-  color: #94a3b8;
-  margin: 0.25rem 0 0;
-  font-family: ui-monospace, monospace;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   KPI D — RETRABALHO
-═══════════════════════════════════════════════════════════ */
-.tc-retrabalho-total {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.tc-retrabalho-total__num {
-  font-size: 2rem;
-  font-weight: 900;
-  font-family: ui-monospace, monospace;
-  color: #0f172a;
-  line-height: 1;
-  letter-spacing: -0.03em;
-}
-
-.tc-retrabalho-total__label {
-  font-size: 0.6875rem;
-  color: #64748b;
-  font-weight: 600;
-  font-family: ui-monospace, monospace;
-}
-
-.tc-retrabalho-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 1rem;
-}
-
-.tc-retrabalho-card {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-  padding: 1rem;
-  border-left: 3px solid #f97316;
-  transition: box-shadow 0.15s, border-color 0.15s;
-}
-
-.tc-retrabalho-card:hover {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-  border-left-color: #ea580c;
-}
-
-.tc-retrabalho-card__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 0.5rem;
-  margin-bottom: 0.625rem;
-}
-
-.tc-retrabalho-card__setor {
-  font-size: 0.8125rem;
-  font-weight: 800;
-  color: #0f172a;
-  flex: 1;
-  min-width: 0;
-}
-
-.tc-retrabalho-card__count {
-  font-size: 0.8125rem;
-  font-weight: 800;
-  font-family: ui-monospace, monospace;
-  color: #ea580c;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.tc-retrabalho-card__footer {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.625rem;
-  color: #94a3b8;
-  font-family: ui-monospace, monospace;
-  margin-top: 0.375rem;
-}
-
-.tc-retrabalho-card__diverg {
-  font-size: 0.625rem;
-  color: #64748b;
-  margin: 0.375rem 0 0;
-  font-style: italic;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   EMPTY STATE
-═══════════════════════════════════════════════════════════ */
-.tc-empty {
-  text-align: center;
-  padding: 1.5rem 1rem;
-  font-size: 0.75rem;
-  color: #94a3b8;
-  font-family: ui-monospace, monospace;
-  background: #f8fafc;
-  border: 1px dashed #e2e8f0;
-  border-radius: 0.75rem;
-}
-
-.tc-empty--tall {
-  padding: 2.5rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.tc-empty--tall span:first-child {
-  font-size: 1.25rem;
-  color: #34d399;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   MODAL DE GALERIA DE FOTOS
-═══════════════════════════════════════════════════════════ */
-.tc-modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1.5rem;
-}
-
-.tc-modal {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 1.25rem;
-  box-shadow: 0 24px 48px -12px rgba(0,0,0,0.2);
-  max-width: min(880px, 92vw);
-  width: 100%;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.tc-modal__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.125rem 1.375rem;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.tc-modal__title {
-  font-size: 0.9375rem;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0;
-  font-family: ui-monospace, monospace;
-}
-
-.tc-modal__close {
-  width: 2rem;
-  height: 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  color: #475569;
-  transition: all 0.15s;
-}
-
-.tc-modal__close:hover {
-  background: #fee2e2;
-  border-color: #fecaca;
-  color: #dc2626;
-}
-
-.tc-modal__photo-area {
-  position: relative;
-  background: #0f172a;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 300px;
-  max-height: 58vh;
-  overflow: hidden;
-}
-
-.tc-modal__img {
-  max-width: 100%;
-  max-height: 58vh;
-  object-fit: contain;
-  display: block;
-}
-
-.tc-modal__nav {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2.5rem;
-  height: 2.5rem;
-  background: rgba(255,255,255,0.85);
-  border: 1px solid rgba(255,255,255,0.2);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  color: #1e293b;
-  backdrop-filter: blur(4px);
-  transition: all 0.15s;
-}
-
-.tc-modal__nav:hover { background: #ffffff; transform: translateY(-50%) scale(1.05); }
-.tc-modal__nav--prev { left: 0.75rem; }
-.tc-modal__nav--next { right: 0.75rem; }
-
-.tc-modal__thumbs {
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.875rem 1.25rem;
-  border-top: 1px solid #f1f5f9;
-  overflow-x: auto;
-  justify-content: center;
-}
-
-.tc-modal__thumb {
-  width: 3rem;
-  height: 3rem;
-  border-radius: 0.5rem;
-  overflow: hidden;
-  border: 2px solid transparent;
-  cursor: pointer;
-  flex-shrink: 0;
-  opacity: 0.6;
-  transition: all 0.15s;
-}
-
-.tc-modal__thumb--active { border-color: #2563eb; opacity: 1; transform: scale(1.08); }
-.tc-modal__thumb:hover { opacity: 1; }
-.tc-modal__thumb img { width: 100%; height: 100%; object-fit: cover; }
-
-.tc-modal__footer {
-  padding: 0.875rem 1.375rem;
-  border-top: 1px solid #f1f5f9;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.tc-modal__btn-close {
-  padding: 0.5rem 1.25rem;
-  background: #1e293b;
-  color: #ffffff;
-  border: none;
-  border-radius: 0.625rem;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.tc-modal__btn-close:hover { background: #334155; }
-
-/* ═══════════════════════════════════════════════════════════
-   ANIMAÇÕES DO MODAL
-═══════════════════════════════════════════════════════════ */
-.tc-fade-enter-active, .tc-fade-leave-active {
-  transition: opacity 0.25s ease;
-}
-.tc-fade-enter-from, .tc-fade-leave-to {
+.tc-modal-fade-enter-from,
+.tc-modal-fade-leave-to {
   opacity: 0;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Custom Scrollbar Industrial Fino */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 </style>

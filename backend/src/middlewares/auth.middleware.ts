@@ -81,6 +81,14 @@ export async function verificaToken(req: Request, res: Response, next: NextFunct
       return;
     }
 
+    if (!userLocal.ativo) {
+      res.status(403).json({
+        error: 'Usuário inativo.',
+        code: 'AUTH_USER_INACTIVE',
+      });
+      return;
+    }
+
     // Injeta as claims locais corretas (UUID do PostgreSQL) sobre o payload legado do Unix
     req.user = {
       ...decoded,

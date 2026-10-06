@@ -418,7 +418,7 @@ async function onInspetoraAutenticadaSucesso(inspetora: any) {
   await executarSubmissaoInspecao(inspetora)
 }
 
-async function executarSubmissaoInspecao(inspetora: any) {
+async function executarSubmissaoInspecao(_inspetora: any) {
   if (!opAgrupadaAtiva.value || !resultadoDecisao.value) return
 
   loadingSubmissao.value = true

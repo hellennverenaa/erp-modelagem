@@ -21,7 +21,8 @@ export class DashboardController {
       // ==========================================
       // KPI A: LEAD TIME ABSOLUTO + DOWNTIME + ORDENS EM ANDAMENTO
       // ==========================================
-      // Busca TODAS as ordens ativas sem filtro de data de 30 dias e sem take(30)
+      // Inclui todos os status, exceto REPROVADO. Ordens recém-criadas também
+      // devem aparecer no KPI enquanto aguardam material, conferência ou validação.
       const ordensAtivas = await AppDataSource
         .getRepository(OrdemTeste)
         .createQueryBuilder('ordem')
@@ -29,16 +30,9 @@ export class DashboardController {
         .leftJoinAndSelect('ordem.modelo', 'modelo')
         .leftJoinAndSelect('modelo.marca', 'marca')
         .where('ordem.status IN (:...statuses)', {
-          statuses: [
-            OrdemTesteStatus.EM_CORTE,
-            OrdemTesteStatus.COSTURA,
-            OrdemTesteStatus.MONTAGEM,
-            OrdemTesteStatus.LABORATORIO,
-            OrdemTesteStatus.AGUARDANDO_RESULTADO_FINAL,
-            OrdemTesteStatus.APROVACAO_CONCESSAO,
-            OrdemTesteStatus.APROVADO,
-            OrdemTesteStatus.LIBERADO_PRODUCAO,
-          ]
+          statuses: Object.values(OrdemTesteStatus).filter(
+            status => status !== OrdemTesteStatus.REPROVADO
+          )
         })
         .orderBy('ordem.dataInicio', 'DESC')
         .getMany();
@@ -261,13 +255,16 @@ export class DashboardController {
         totalInspecoes: d.total,
         totalRastreamentos: d.total,
         aprovadasPrimeira: d.aprovadas,
-        fpyPercentual: safeNum(d.total > 0 ? (d.aprovadas / d.total) * 100 : 100)
+        fpyPercentual: safeNum((d.aprovadas / d.total) * 100)
       }));
 
       fpySetores.sort((a, b) => a.fpyPercentual - b.fpyPercentual);
 
       const kpiC = {
-        fpyGlobal: safeNum(totalInspGlobal > 0 ? (aprovadasGlobal / totalInspGlobal) * 100 : 100),
+        fpyGlobal: totalInspGlobal > 0
+          ? safeNum((aprovadasGlobal / totalInspGlobal) * 100)
+          : null,
+        totalInspecoes: totalInspGlobal,
         setores: fpySetores
       };
 

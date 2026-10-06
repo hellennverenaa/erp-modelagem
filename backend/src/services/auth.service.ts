@@ -65,78 +65,51 @@ export class AuthService {
    * Aplica diretrizes de api-security-best-practices (não logar credenciais em texto claro)
    * e debug_issue (instrumentação detalhada inspecionando error.response.data e error.message).
    * 
-   * Inclui bypass de desenvolvimento: se process.env.NODE_ENV indicar ambiente dev e o
-   * container legado retornar 500 ou falha de rede, o sistema ativa fallback local com
-   * isolamento multi-tenant (planta_id).
+   * Repassa as credenciais ao serviço legado e falha de forma explícita quando ele
+   * estiver indisponível. Não emite sessões locais de fallback.
    */
   public static async autenticarLegado(usuario: string, senha: string): Promise<any> {
     const authServiceUrl = this.getAuthServiceUrl();
 
     try {
-      console.log(`[AuthService] Enviando requisição de login para ${authServiceUrl}/auth/login (usuário: "${usuario}")`);
       const response = await axios.post(
         `${authServiceUrl}/auth/login`,
         { usuario, senha },
         { timeout: 5000 }
       );
 
-      console.log('[AuthService] ✅ Resposta bem-sucedida do SSO Unix:', JSON.stringify(response.data, null, 2));
+      console.log('[AuthService] Autenticação concluída pelo serviço legado.');
       return response.data;
     } catch (error: any) {
       const axiosError = error as AxiosError;
       const status = axiosError.response?.status;
       const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout');
 
-      // ═══ Log Detalhado de Diagnóstico (debug_issue / Systematic Debugging) ═══
-      console.error('════════════════════════════════════════════════════════════════');
-      console.error('[AuthService] ❌ Falha na comunicação com o serviço legado dass_auth_service:');
-      console.error(`  - URL Requisitada: ${authServiceUrl}/auth/login`);
-      console.error(`  - Usuário Solicitante: ${usuario}`);
-      console.error(`  - Mensagem do Erro (error.message): ${axiosError.message}`);
-      console.error(`  - Código do Erro (error.code): ${axiosError.code || 'N/A'}`);
+      console.error('[AuthService] Falha na comunicação com o serviço legado.', {
+        status: status || null,
+        code: axiosError.code || null,
+      });
 
-      if (axiosError.response) {
-        console.error(`  - Status HTTP Retornado: ${status}`);
-        console.error(`  - Headers da Resposta:`, JSON.stringify(axiosError.response.headers, null, 2));
-        console.error(
-          `  - Dados da Resposta (error.response.data):`,
-          typeof axiosError.response.data === 'object'
-            ? JSON.stringify(axiosError.response.data, null, 2)
-            : axiosError.response.data
-        );
-      } else if (axiosError.request) {
-        console.error('  - Nenhuma resposta recebida do serviço legado (timeout ou serviço inacessível na rede).');
-      } else {
-        console.error(`  - Erro na configuração da requisição: ${axiosError.message}`);
-      }
-      console.error('════════════════════════════════════════════════════════════════');
-
-      // ═══ BYPASS DE DESENVOLVIMENTO (Fallback para desbloqueio local) ═══
-      const isDevelopment = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV || process.env.NODE_ENV !== 'production';
-      if (isDevelopment) {
-        console.warn('⚠️ [AuthService] [DEV BYPASS ATIVO] Ambiente de desenvolvimento detectado.');
-        console.warn(`⚠️ [AuthService] [DEV BYPASS ATIVO] Fallback ativado para "${usuario}". Gerando token JWT mock com contexto multi-tenant (planta_id).`);
-        return {
-          isMockBypass: true,
-          usuario
-        };
-      }
-
-      // ═══ Tratamento de Erros Seguro em Produção (api-security-best-practices) ═══
-      if (status === 401 || isTimeout) {
-        console.warn('[AuthService] Tentativa de login recusada pelo DASS: Credenciais inválidas ou tempo de resposta esgotado.');
+      if (status === 401 || status === 403) {
         throw new AuthError(
-          'Credenciais inválidas ou serviço de autenticação temporariamente indisponível.',
+          'Credenciais inválidas.',
           401,
           'AUTH_UNAUTHORIZED'
+        );
+      }
+
+      if (isTimeout || !axiosError.response) {
+        throw new AuthError(
+          'Serviço de autenticação temporariamente indisponível.',
+          503,
+          'AUTH_SERVICE_UNAVAILABLE'
         );
       }
 
       throw new AuthError(
         'Erro de comunicação com o serviço de autenticação legado.',
         502,
-        'AUTH_COMMUNICATION_ERROR',
-        axiosError.response?.data
+        'AUTH_COMMUNICATION_ERROR'
       );
     }
   }
@@ -158,119 +131,24 @@ export class AuthService {
   }
 
   /**
-   * Processa o login completo: autentica no serviço legado Unix (ou bypass em dev),
+   * Processa o login completo por meio do serviço legado Unix,
    * decodifica o JWT, normaliza chaves de crachá/RFID e efetua o Upsert no banco PostgreSQL.
    */
   public static async processarLogin(usuario: string, senha: string): Promise<SsoLoginResult> {
-    // 1. Autentica no serviço legado ou ativa bypass de desenvolvimento
+    if (!AppDataSource.isInitialized) {
+      throw new AuthError(
+        'Banco de dados indisponível. Aguarde a inicialização do backend e tente novamente.',
+        503,
+        'DATABASE_UNAVAILABLE'
+      );
+    }
+
+    // 1. Autentica no serviço legado
     const legacyResponse = await this.autenticarLegado(usuario, senha);
 
     const usuarioRepository = AppDataSource.getRepository(Usuario);
     const perfilRepository = AppDataSource.getRepository(Perfil);
     const plantaRepository = AppDataSource.getRepository(Planta);
-
-    // ═══ TRATAMENTO DO BYPASS DE DESENVOLVIMENTO ═══
-    if (legacyResponse?.isMockBypass) {
-      // 1.1 Garante planta ativa para isolamento multi-tenant (Shared Database / Shared Schema)
-      let planta = await plantaRepository.findOne({ where: { ativo: true } });
-      if (!planta) {
-        planta = plantaRepository.create({
-          nome: 'Santo Estêvão (Unidade Piloto)',
-          endereco: 'Rodovia BR-116, Km 450',
-          cidade: 'Santo Estêvão',
-          estado: 'BA',
-          ativo: true
-        });
-        planta = await plantaRepository.save(planta);
-      }
-
-      // 1.2 Determina perfil do usuário
-      const perfilNome = usuario.toLowerCase().includes('admin') ? 'ADMIN' : 'OPERADOR';
-      let perfil = await perfilRepository.findOne({ where: { nome: perfilNome } });
-      if (!perfil) {
-        perfil = perfilRepository.create({
-          nome: perfilNome,
-          descricao: `Perfil ${perfilNome} gerado para ambiente de desenvolvimento`,
-          permissoes: {}
-        });
-        perfil = await perfilRepository.save(perfil);
-      }
-
-      // 1.3 Busca ou cria usuário local no PostgreSQL
-      let userLocal = await usuarioRepository.findOne({
-        where: { usuario },
-        relations: { perfil: true, planta: true }
-      });
-
-      if (!userLocal) {
-        userLocal = usuarioRepository.create({
-          usuario,
-          nomeCompleto: usuario.toLowerCase().includes('admin')
-            ? 'Administrador do Sistema (Dev Bypass)'
-            : `Operador ${usuario} (Dev Bypass)`,
-          email: `${usuario.toLowerCase().replace(/[^a-z0-9]/g, '.')}@empresa.com`,
-          cargo: perfilNome,
-          senhaHash: 'EXTERNAL_AUTH_ONLY',
-          perfil,
-          planta,
-          ativo: true,
-          ultimoAcesso: new Date()
-        });
-        userLocal = await usuarioRepository.save(userLocal);
-      } else {
-        userLocal.ultimoAcesso = new Date();
-        if (!userLocal.plantaId && planta) {
-          userLocal.planta = planta;
-        }
-        userLocal = await usuarioRepository.save(userLocal);
-      }
-
-      // 1.4 Gera token JWT mock assinado contendo planta_id para isolamento Multi-Tenant
-      const jwtSecret = process.env.JWT_SECRET || 'erp_modelagem_jwt_secret_dev';
-      const mockToken = jwt.sign(
-        {
-          userId: userLocal.id,
-          usuario: userLocal.usuario,
-          username: userLocal.usuario,
-          nomeCompleto: userLocal.nomeCompleto,
-          nome: userLocal.nomeCompleto,
-          cargo: userLocal.cargo,
-          perfilId: userLocal.perfilId,
-          perfilNome: userLocal.perfil?.nome || perfilNome,
-          plantaId: userLocal.plantaId || planta.id,
-          planta_id: userLocal.plantaId || planta.id, // 🔑 Discriminador obrigatório de Multi-Tenant
-          iss: 'erp-modelagem',
-          aud: 'erp-modelagem-users'
-        },
-        jwtSecret,
-        { expiresIn: '8h' }
-      );
-
-      return {
-        token: mockToken,
-        usuario: {
-          id: userLocal.id,
-          nomeCompleto: userLocal.nomeCompleto,
-          usuario: userLocal.usuario,
-          cargo: userLocal.cargo,
-          email: userLocal.email,
-          rfid: userLocal.rfid,
-          codigoBarrasCracha: userLocal.codigoBarrasCracha,
-          codigoCrachao: userLocal.codigoCrachao,
-          codigoCracha: userLocal.codigoCracha,
-          ativo: userLocal.ativo,
-          perfilId: userLocal.perfilId,
-          perfilNome: userLocal.perfil?.nome || perfilNome,
-          permissoes: userLocal.perfil?.permissoes || {},
-          setorId: userLocal.setorId,
-          plantaId: userLocal.plantaId || planta.id,
-          gestorId: userLocal.gestorId,
-          ultimoAcesso: userLocal.ultimoAcesso?.toISOString(),
-          createdAt: userLocal.createdAt.toISOString(),
-          updatedAt: userLocal.updatedAt.toISOString()
-        }
-      };
-    }
 
     // ═══ FLUXO COM RESPOSTA DO SERVIÇO LEGADO ═══
     // 2. Extração dinâmica do token suportando diferentes aninhamentos de payload
@@ -288,8 +166,17 @@ export class AuthService {
       );
     }
 
-    // 3. Decodificação das claims do token JWT Unix
-    const decoded = jwt.decode(token) as any;
+    // 3. Validar a assinatura e decodificar as claims do token JWT Unix.
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || '', { clockTolerance: 120 });
+    } catch {
+      throw new AuthError(
+        'O serviço de autenticação retornou um token inválido.',
+        401,
+        'AUTH_TOKEN_INVALID'
+      );
+    }
     const unixNome = decoded?.nome || legacyResponse?.data?.nome || 'Usuário ERP';
     const unixUsuario = decoded?.usuario || legacyResponse?.data?.usuario || usuario;
     const unixFuncao = decoded?.funcao || 'Operador';
@@ -342,6 +229,10 @@ export class AuthService {
       where: { usuario: unixUsuario },
       relations: { perfil: true }
     });
+
+    if (userLocal && !userLocal.ativo) {
+      throw new AuthError('Usuário inativo.', 403, 'AUTH_USER_INACTIVE');
+    }
 
     if (userLocal) {
       userLocal.nomeCompleto = unixNome;

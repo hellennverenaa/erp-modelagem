@@ -64,13 +64,10 @@ export class AuthController {
   };
 
   public refresh = async (_req: Request, res: Response): Promise<Response> => {
-    try {
-      return res.json({
-        token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.newMockToken...'
-      });
-    } catch (error) {
-      return res.status(500).json({ error: 'Erro no refresh token' });
-    }
+    return res.status(501).json({
+      error: 'Renovação de sessão não está configurada no serviço legado.',
+      code: 'AUTH_REFRESH_UNAVAILABLE'
+    });
   };
 
   public logout = async (_req: Request, res: Response): Promise<Response> => {

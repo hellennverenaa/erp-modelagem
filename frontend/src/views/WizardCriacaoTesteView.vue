@@ -12,12 +12,10 @@ import {
   AlertCircle,
   Barcode,
   Printer,
-  Plus,
   Trash2,
   Scissors,
   Search,
-  Calendar,
-  Clock
+  Calendar
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'

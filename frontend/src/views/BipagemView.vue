@@ -49,6 +49,7 @@ interface OrdemTeste {
 
 interface ItemChecklistUI {
   id: string
+  templateItemId?: string | null
   catalogItemId: string | null
   numeroItem?: number | string
   descricao: string
@@ -603,7 +604,7 @@ async function executarBipagemComOperador(acao: 'entrada' | 'saida', gestor: any
       operadorSaidaId: acao === 'saida' ? operadorIdValido : undefined,
     }
 
-    const res = await api.post(endpoint, payload)
+    await api.post(endpoint, payload)
 
     const acaoTexto = acao === 'entrada' ? 'Entrada' : 'Saída'
     const opNome = ordemAtiva.value.codigoBarras || 'OP'
@@ -707,7 +708,7 @@ async function processarLeituraRfid() {
         codigoCrachao: cracha
       }
 
-      const res = await api.post(endpoint, payload)
+      await api.post(endpoint, payload)
       
       const acaoTexto = acao === 'entrada' ? 'Entrada' : 'Saída'
       const opNome = ordemAtiva.value?.codigoBarras || 'OP'
