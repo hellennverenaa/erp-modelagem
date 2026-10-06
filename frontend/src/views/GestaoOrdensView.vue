@@ -30,8 +30,7 @@ import {
   Lock,
   ShieldCheck,
   History,
-  User,
-  Cpu
+  User
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -131,6 +130,7 @@ interface RastreamentoHistorico {
   operadorEntrada: OperadorInfo | null
   operadorSaida: OperadorInfo | null
   estacao?: EstacaoInfo | null
+  itens?: RastreamentoHistorico[]
 }
 
 interface HistoricoResponse {
@@ -596,7 +596,17 @@ async function openTimeline(ordem: OrdemTeste) {
   loadingTimeline.value = true
   try {
     const { data } = await api.get<HistoricoResponse>(`/rastreamentos/historico/${ordem.id}`)
-    timelineData.value = data.historico ?? []
+    const raw = data.historico ?? []
+    const grouped: RastreamentoHistorico[] = []
+    for (const r of raw) {
+      const g = grouped.find(x => x.setorId === r.setorId)
+      if (g && g.itens) {
+        g.itens.push(r)
+      } else {
+        grouped.push({ ...r, itens: [r] })
+      }
+    }
+    timelineData.value = grouped
   } catch {
     addToast('error', 'Erro ao carregar histórico de rastreamento.')
     showTimeline.value = false
@@ -860,21 +870,6 @@ function formatPecaRemanejada(dadosAnt: Record<string, any> | null, dadosNov: Re
   const origem = dadosAnt?.maquinaNome || dadosAnt?.setorCorteOpcaoId || 'Sem máquina'
   const destino = dadosNov?.maquinaNome || dadosNov?.setorCorteOpcaoId || 'Sem máquina'
   return `Peça ${String(pecaNome).toUpperCase()} remanejada do subsetor ${origem} para ${destino}`
-}
-
-function formatAuditJson(data: Record<string, any> | null): string {
-  if (!data) return '-'
-  if (typeof data !== 'object') return String(data)
-  const keys = Object.keys(data)
-  if (keys.length === 0) return '-'
-  return keys.map(k => {
-    const nomeAmigavel = getSetorNome(k)
-    const v = data[k]
-    if (typeof v === 'object' && v !== null) {
-      return `${nomeAmigavel}: ${JSON.stringify(v)}`
-    }
-    return `${nomeAmigavel}: ${v} min`
-  }).join('\n')
 }
 
 async function salvarManutencao() {
@@ -1635,9 +1630,13 @@ onMounted(async () => {
                     </div>
 
                     <!-- Tipo de lote -->
-                    <div class="tl-lote-tag">
-                      <ChevronRight :size="10" aria-hidden="true" />
-                      {{ item.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste' : 'Lote Principal' }}
+                    <div class="tl-lote-tag flex gap-2 flex-wrap">
+                      <div v-for="subItem in item.itens" :key="subItem.id" class="flex items-center gap-1">
+                        <ChevronRight :size="10" aria-hidden="true" />
+                        <span :class="subItem.tipoLote === 'CAIXA_TESTE' ? 'text-amber-600 font-bold' : 'text-blue-600 font-bold'">
+                          {{ subItem.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste (' + getRastreamentoStatus(subItem.status).label + ')' : 'Lote Principal (' + getRastreamentoStatus(subItem.status).label + ')' }}
+                        </span>
+                      </div>
                     </div>
 
                     <!-- Máquina / Estação Utilizada -->

@@ -1,3 +1,4 @@
+import { IsNull } from "typeorm";
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { AppDataSource } from '../config/database';
@@ -9,7 +10,33 @@ import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
+import { Usuario } from '../entities/Usuario';
+import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { webSocketService } from '../services/websocket.service';
+
+const isUuidString = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+async function resolveLocalOperadorId(userObj: any): Promise<string | null> {
+  if (!userObj) return null;
+  const usuarioRepo = AppDataSource.getRepository(Usuario);
+  const candidate = userObj.userId || userObj.id || userObj.usuario || userObj.username;
+  if (!candidate || typeof candidate !== 'string') return null;
+
+  if (isUuidString(candidate)) {
+    const found = await usuarioRepo.findOne({ where: { id: candidate } });
+    if (found) return found.id;
+  }
+
+  const foundByUsuario = await usuarioRepo.findOne({ where: { usuario: candidate } });
+  if (foundByUsuario) return foundByUsuario.id;
+
+  if (userObj.email && typeof userObj.email === 'string') {
+    const foundByEmail = await usuarioRepo.findOne({ where: { email: userObj.email } });
+    if (foundByEmail) return foundByEmail.id;
+  }
+
+  return null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RastreamentosController — Motor do ERP (Bipagem de Entrada/Saída)
@@ -27,8 +54,10 @@ const biparEntradaSchema = z.object({
   ordemTesteId: z.string().uuid({ message: 'ordemTesteId deve ser um UUID válido.' }),
   setorId:      z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
   tipoLote:     z.nativeEnum(TipoLote),
+  status:       z.nativeEnum(RastreamentoStatus).optional(),
   operadorId:   z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
   operadorEntradaId: z.string().uuid({ message: 'operadorEntradaId deve ser um UUID válido.' }).optional().nullable(),
+  codigoCrachao: z.string().optional().nullable(),
   pecaId:       z.string().uuid().optional().nullable(),
   estacaoId:    z.string().uuid().optional().nullable(),
 });
@@ -39,6 +68,7 @@ const biparSaidaSchema = z.object({
   tipoLote:       z.nativeEnum(TipoLote).optional().default(TipoLote.LOTE_PRINCIPAL),
   operadorId:     z.string().uuid({ message: 'operadorId deve ser um UUID válido.' }).optional().nullable(),
   operadorSaidaId: z.string().uuid({ message: 'operadorSaidaId deve ser um UUID válido.' }).optional().nullable(),
+  codigoCrachao:  z.string().optional().nullable(),
   pecaId:         z.string().uuid().optional().nullable(),
 });
 
@@ -46,12 +76,11 @@ const biparSaidaSchema = z.object({
 // Esses são os `valor` armazenados na tabela config_opcoes, categoria 'setor_tipo'.
 // Os setores de Handoff Automático (Categoria A) são definidos pelo campo config_opcoes.valor
 const SETORES_HANDOFF_AUTOMATICO_VALORES = [
-  'ALMOXARIFADO',
+  'ALMOXARIFADO_MODELAGEM',
   'NAVALHA',
   'TELAS',
-  'RECEBIMENTO_CORTE',
-  'SEPARACAO_CORTE',
-  'DUBLAGEM_CORTE',
+  'CORTE_RECEBIMENTO',
+  'CORTE_DUBLAGEM',
 ];
 
 export class RastreamentosController {
@@ -71,26 +100,100 @@ export class RastreamentosController {
       });
     }
 
-    const { ordemTesteId, setorId, tipoLote, pecaId, estacaoId } = parseResult.data;
-    const operadorId = req.user?.userId;
+    const { ordemTesteId, setorId, tipoLote, pecaId, estacaoId, codigoCrachao } = parseResult.data;
+    let operadorId = req.user?.userId;
 
     if (!operadorId) {
       return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHENTICATED' });
     }
 
+    const localOperadorId = await resolveLocalOperadorId(req.user);
+    if (localOperadorId) {
+      operadorId = localOperadorId;
+    }
+
     try {
-      // 1.0. Trava de Nascimento da Caixa Teste: impede entrada de CAIXA_TESTE em setores iniciais
+      const usuarioRepo = AppDataSource.getRepository(Usuario);
+      let operadorReal: Usuario | null = null;
+      
+      if (codigoCrachao) {
+        // ─── DEBUG DE RECONHECIMENTO RFID (biparEntrada) ───
+        const rawLen = codigoCrachao.length;
+        const hasCarriageReturn = /\r/.test(codigoCrachao);
+        const hasNewline = /\n/.test(codigoCrachao);
+        const hasTab = /\t/.test(codigoCrachao);
+        const hasLeadingSpaces = codigoCrachao !== codigoCrachao.trimStart();
+        const hasTrailingSpaces = codigoCrachao !== codigoCrachao.trimEnd();
+        console.log('[RFID biparEntrada] ═══ DEBUG CRACHAO ═══');
+        console.log('[RFID biparEntrada] Valor bruto (repr):', JSON.stringify(codigoCrachao));
+        console.log('[RFID biparEntrada] Tamanho bruto (chars):', rawLen);
+        console.log('[RFID biparEntrada] Tem \\r:', hasCarriageReturn, '| \\n:', hasNewline, '| \\t:', hasTab);
+        console.log('[RFID biparEntrada] Espaço no inicio:', hasLeadingSpaces, '| no fim:', hasTrailingSpaces);
+        // ───
+        const crachaoNormalizado = Usuario.normalizarCodigoCrachao(codigoCrachao);
+        console.log('[RFID biparEntrada] Pós-normalizacao (repr):', JSON.stringify(crachaoNormalizado), '| Tamanho:', crachaoNormalizado.length);
+        
+        // Busca híbrida cobrindo todas as possíveis colunas de hardware
+        operadorReal = await usuarioRepo.findOne({
+          where: [
+            { codigoCracha: crachaoNormalizado },
+            { rfid: crachaoNormalizado },
+            { codigoCrachao: crachaoNormalizado },
+            { codigoBarrasCracha: crachaoNormalizado }
+          ]
+        });
+        
+        console.log('[RFID biparEntrada] Usuário encontrado:', operadorReal ? operadorReal.email : 'NÃO ENCONTRADO');
+        
+        if (!operadorReal) {
+          return res.status(404).json({
+            error: 'Crachá não cadastrado no sistema.',
+            code: 'CRACHA_NAO_ENCONTRADO'
+          });
+        }
+        operadorId = operadorReal.id;
+      } else {
+        operadorReal = await usuarioRepo.findOne({ where: { id: operadorId } });
+      }
+
+      if (operadorReal && operadorReal.perfilId) {
+        const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
+        const permissao = await perfilPermissaoRepo.findOne({
+          where: { perfilId: operadorReal.perfilId, setorId: setorId, permitido: true }
+        });
+        if (!permissao) {
+          return res.status(403).json({
+            error: 'Acesso Negado: O perfil deste operador não possui autorização de trabalho para o setor selecionado.',
+            code: 'OPERADOR_NAO_AUTORIZADO'
+          });
+        }
+      }
+
+      const setorRepo = AppDataSource.getRepository(Setor);
+      const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+      const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
+      let tipoOpcaoValor: string | null = null;
+
+      if (setorInfo?.tipoOpcaoId) {
+        const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
+        if (tipoOpcao) tipoOpcaoValor = tipoOpcao.valor;
+      }
+
       if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
-        const setorRepo = AppDataSource.getRepository(Setor);
-        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
-        const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
-        if (setorInfo?.tipoOpcaoId) {
-          const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
-          if (tipoOpcao && SETORES_HANDOFF_AUTOMATICO_VALORES.includes(tipoOpcao.valor)) {
-            return res.status(400).json({
-              error: 'A Caixa Teste só pode dar entrada a partir das máquinas de Corte Automático (Ponte, Lectra, etc.).',
-              code: 'CAIXA_TESTE_NOT_ALLOWED_IN_INITIAL_SECTOR'
-            });
+        // Trava Monolítica do Corte Expandida
+        if (tipoOpcaoValor) {
+          const setoresMonoliticos = [
+            'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
+            'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
+            'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
+            'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
+          ];
+          
+          if (setoresMonoliticos.includes(tipoOpcaoValor)) {
+             return res.status(400).json({
+                error: 'Neste setor, a bipagem é monolítica e deve ser realizada exclusivamente como Lote Principal. A Caixa Teste só corre de forma independente a partir das etapas pós-corte (ex: Serigrafia).',
+                code: 'FASE_MONOLITICA_CAIXA_TESTE_BLOQUEADA'
+             });
           }
         }
       }
@@ -121,59 +224,90 @@ export class RastreamentosController {
         });
       }
 
+      const inputStatus = parseResult.data.status;
+      const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+
+      if (inputStatus !== RastreamentoStatus.EM_RETRABALHO) {
+        const queryBuilder = rastreamentoRepo.createQueryBuilder('r')
+          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId', { modeloId: ordem.modeloId })
+          .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
+          .andWhere('r.tipoLote = :tipoLote', { tipoLote })
+          .andWhere('r.dataEntrada IS NOT NULL')
+          .andWhere('rm.ordem > :ordemAtual', { ordemAtual: pertenceARota.ordem });
+
+        if (pecaId) {
+          queryBuilder.andWhere('r.pecaId = :pecaId', { pecaId });
+        } else {
+          queryBuilder.andWhere('r.pecaId IS NULL');
+        }
+
+        const retrocesso = await queryBuilder.getOne();
+        if (retrocesso) {
+          return res.status(400).json({
+            error: 'Bipagem rejeitada: Este lote já avançou para etapas subsequentes na rota de produção deste modelo.',
+            code: 'RETROCESSO_BLOQUEADO'
+          });
+        }
+      }
+
       // 1.2.1. Trava Estrita de Sequência (Anti-Teletransporte)
       if (pertenceARota.ordem > 1) {
-        // Encontra a etapa imediatamente anterior na rota desse mesmo modelo
-        const rotaAnterior = await rotaRepo.findOne({
-          where: {
-            modeloId: ordem.modeloId,
-            ordem: pertenceARota.ordem - 1,
-          },
-        });
+        const isCaixaTeste = tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE';
+        let isInicioCorteOuEtapa5 = pertenceARota.ordem === 5;
+        
+        // Verifica se é um dos subsetores iniciais do corte para garantir o bypass
+        const allowedInitialSectors = ['CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM'];
+        if (tipoOpcaoValor && allowedInitialSectors.includes(tipoOpcaoValor)) {
+          isInicioCorteOuEtapa5 = true;
+        }
 
-        if (rotaAnterior) {
-          const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
-          
-          // Verifica se a saída do setor anterior foi concluída
-          const queryAnterior = checkRastreamentoRepo.createQueryBuilder('r')
-            .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
-            .andWhere('r.setorId = :setorId', { setorId: rotaAnterior.setorId })
-            .andWhere('r.status = :status', { status: RastreamentoStatus.CONCLUIDO })
-            .andWhere('r.dataSaida IS NOT NULL')
-            .andWhere('r.tipoLote = :tipoLote', { tipoLote });
+        // Bypass da Trava de Sequência para nascimento da Caixa Teste nas máquinas de corte e subsetores iniciais
+        if (isCaixaTeste && isInicioCorteOuEtapa5) {
+          // Bypass de sequência permitido para Caixa Teste no início do Corte Automático ou subsetores permitidos
+        } else {
+          // Encontra a etapa imediatamente anterior na rota desse mesmo modelo
+          const rotaAnterior = await rotaRepo.findOne({
+            where: {
+              modeloId: ordem.modeloId,
+              ordem: pertenceARota.ordem - 1,
+            },
+          });
 
-          if (pecaId) {
-            queryAnterior.andWhere('r.pecaId = :pecaId', { pecaId });
-          } else {
-            queryAnterior.andWhere('r.pecaId IS NULL');
-          }
-
-          const rastreamentoAnterior = await queryAnterior.getOne();
-
-          if (!rastreamentoAnterior) {
-            return res.status(403).json({
-              error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
-              code: 'SEQUENCIA_INVALIDA',
+          if (rotaAnterior) {
+            const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+            
+            // Verifica se a saída do setor anterior foi concluída
+            const rastreamentoAnterior = await checkRastreamentoRepo.findOne({
+              where: {
+                ordemTesteId,
+                setorId: rotaAnterior.setorId,
+                status: RastreamentoStatus.CONCLUIDO,
+                tipoLote,
+                ...(pecaId ? { pecaId } : { pecaId: IsNull() })
+              },
+              order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
             });
+
+            if (!rastreamentoAnterior || !rastreamentoAnterior.dataSaida) {
+              return res.status(403).json({
+                error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
+                code: 'SEQUENCIA_INVALIDA',
+              });
+            }
           }
         }
       }
 
-      const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);
-
       // 1.3. Trava de Duplicidade e Idempotência de Entrada
-      const queryExistente = rastreamentoRepo.createQueryBuilder('r')
-        .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
-        .andWhere('r.setorId = :setorId', { setorId })
-        .andWhere('r.tipoLote = :tipoLote', { tipoLote });
-      
-      if (pecaId) {
-        queryExistente.andWhere('r.pecaId = :pecaId', { pecaId });
-      } else {
-        queryExistente.andWhere('r.pecaId IS NULL');
-      }
-
-      const registroExistente = await queryExistente.getOne();
+      const registroExistente = await rastreamentoRepo.findOne({
+        where: {
+          ordemTesteId,
+          setorId,
+          tipoLote,
+          ...(pecaId ? { pecaId } : { pecaId: IsNull() })
+        },
+        order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
+      });
       if (registroExistente) {
         // Bloqueio de Múltiplas Entradas Ativas (Idempotência / HTTP 409)
         if (registroExistente.status === RastreamentoStatus.CONCLUIDO) {
@@ -198,11 +332,17 @@ export class RastreamentosController {
         registroExistente.status = RastreamentoStatus.EM_PROCESSO;
 
         const salvo = await rastreamentoRepo.save(registroExistente);
-        webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
+        const salvoPopulado = await rastreamentoRepo.findOne({
+          where: { id: salvo.id },
+          relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+        }) || salvo;
+
+        webSocketService.emit('peca:avanco', { action: 'entrada', data: salvoPopulado });
+        webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvoPopulado });
 
         return res.status(200).json({
           message: 'Bipagem de entrada registrada com sucesso.',
-          rastreamento: salvo,
+          rastreamento: salvoPopulado,
         });
       }
 
@@ -219,9 +359,14 @@ export class RastreamentosController {
       });
 
       const salvo = await rastreamentoRepo.save(novoRastreamento);
+      const salvoPopulado = await rastreamentoRepo.findOne({
+        where: { id: salvo.id },
+        relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+      }) || salvo;
 
       // Emitir avanço via WebSocket
-      webSocketService.emit('peca:avanco', { action: 'entrada', data: salvo });
+      webSocketService.emit('peca:avanco', { action: 'entrada', data: salvoPopulado });
+      webSocketService.emit('rastreamento:atualizado', { action: 'entrada', data: salvoPopulado });
 
       return res.status(201).json({
         message: 'Bipagem de entrada registrada com sucesso.',
@@ -254,13 +399,96 @@ export class RastreamentosController {
     }
 
     const { ordemTesteId, setorId, tipoLote, pecaId, operadorId: bodyOperadorId, operadorSaidaId } = parseResult.data;
-    const operadorId = bodyOperadorId || operadorSaidaId || req.user?.userId;
+    let operadorId = bodyOperadorId || operadorSaidaId || req.user?.userId;
 
     if (!operadorId) {
       return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHENTICATED' });
     }
 
+    const localOperadorId = await resolveLocalOperadorId(req.user);
+    if (localOperadorId) {
+      operadorId = localOperadorId;
+    }
+
     try {
+      const { codigoCrachao } = parseResult.data;
+      const usuarioRepo = AppDataSource.getRepository(Usuario);
+      let operadorReal: Usuario | null = null;
+      
+      if (codigoCrachao) {
+        // ─── DEBUG DE RECONHECIMENTO RFID (biparSaida) ───
+        const rawLen = codigoCrachao.length;
+        const hasCarriageReturn = /\r/.test(codigoCrachao);
+        const hasNewline = /\n/.test(codigoCrachao);
+        const hasLeadingSpaces = codigoCrachao !== codigoCrachao.trimStart();
+        const hasTrailingSpaces = codigoCrachao !== codigoCrachao.trimEnd();
+        console.log('[RFID biparSaida] ═══ DEBUG CRACHAO ═══');
+        console.log('[RFID biparSaida] Valor bruto (repr):', JSON.stringify(codigoCrachao));
+        console.log('[RFID biparSaida] Tamanho bruto (chars):', rawLen);
+        console.log('[RFID biparSaida] Tem \\r:', hasCarriageReturn, '| \\n:', hasNewline);
+        console.log('[RFID biparSaida] Espaço no inicio:', hasLeadingSpaces, '| no fim:', hasTrailingSpaces);
+        // ───
+        const crachaoNormalizado = Usuario.normalizarCodigoCrachao(codigoCrachao);
+        console.log('[RFID biparSaida] Pós-normalizacao (repr):', JSON.stringify(crachaoNormalizado), '| Tamanho:', crachaoNormalizado.length);
+        
+        // Busca híbrida cobrindo todas as possíveis colunas de hardware
+        operadorReal = await usuarioRepo.findOne({
+          where: [
+            { codigoCracha: crachaoNormalizado },
+            { rfid: crachaoNormalizado },
+            { codigoCrachao: crachaoNormalizado },
+            { codigoBarrasCracha: crachaoNormalizado }
+          ]
+        });
+        
+        console.log('[RFID biparSaida] Usuário encontrado:', operadorReal ? operadorReal.email : 'NÃO ENCONTRADO');
+        
+        if (!operadorReal) {
+          return res.status(404).json({
+            error: 'Crachá não cadastrado no sistema.',
+            code: 'CRACHA_NAO_ENCONTRADO'
+          });
+        }
+        operadorId = operadorReal.id;
+      } else {
+        operadorReal = await usuarioRepo.findOne({ where: { id: operadorId } });
+      }
+
+      if (operadorReal && operadorReal.perfilId) {
+        const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
+        const permissao = await perfilPermissaoRepo.findOne({
+          where: { perfilId: operadorReal.perfilId, setorId: setorId, permitido: true }
+        });
+        if (!permissao) {
+          return res.status(403).json({
+            error: 'Acesso Negado: O perfil deste operador não possui autorização de trabalho para o setor selecionado.',
+            code: 'OPERADOR_NAO_AUTORIZADO'
+          });
+        }
+      }
+      if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
+        const setorRepo = AppDataSource.getRepository(Setor);
+        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
+        const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
+        if (setorInfo?.tipoOpcaoId) {
+          const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
+          if (tipoOpcao) {
+            const setoresMonoliticos = [
+              'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
+              'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
+              'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
+              'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
+            ];
+            if (setoresMonoliticos.includes(tipoOpcao.valor)) {
+               return res.status(400).json({
+                  error: 'Neste setor, a bipagem é monolítica e deve ser realizada exclusivamente como Lote Principal. A Caixa Teste só corre de forma independente a partir das etapas pós-corte (ex: Serigrafia).',
+                  code: 'FASE_MONOLITICA_CAIXA_TESTE_BLOQUEADA'
+               });
+            }
+          }
+        }
+      }
+
       const rastreamentoRepo  = AppDataSource.getRepository(Rastreamento);
       const checklistRepo     = AppDataSource.getRepository(Checklist);
       const inspecaoRepo      = AppDataSource.getRepository(Inspecao);
@@ -333,6 +561,7 @@ export class RastreamentosController {
           ...(pecaId ? { pecaId } : {}),
           status: RastreamentoStatus.CONCLUIDO,
         },
+        order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
       });
 
       if (rastreamentoConcluido) {
@@ -351,6 +580,7 @@ export class RastreamentosController {
           ...(pecaId ? { pecaId } : {}),
           status: RastreamentoStatus.EM_PROCESSO,
         },
+        order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
       });
 
       // Trava Lógica de Saída sem Entrada
@@ -454,44 +684,63 @@ export class RastreamentosController {
       }
       // ── FIM DO GATE ──────────────────────────────────────────────────────
 
-      // 3. CÁLCULO DE SLA DINÂMICO
-      // tempoPermanenciaMin = (dataSaida - dataEntrada) - tempo pausado por ocorrências (interrompeSla=true)
+      // 3. CÁLCULO DE SLA DINÂMICO COM DESCONTO DE OCORRÊNCIAS
       const agora = new Date();
       const dataEntrada = rastreamento.dataEntrada!;
+      const dataEntradaMs = dataEntrada.getTime();
+      const agoraMs = agora.getTime();
 
-      // Tempo bruto em minutos
-      const tempoTotalMs  = agora.getTime() - dataEntrada.getTime();
-      const tempoTotalMin = Math.floor(tempoTotalMs / 60_000);
+      // Diferença bruta em minutos
+      const diferencaBrutaMin = Math.floor(Math.max(0, agoraMs - dataEntradaMs) / 60_000);
 
-      // Soma o tempo das ocorrências que interrompem SLA (com resolução registrada)
+      // Busca todas as ocorrências de produção que interrompem SLA nesta OP e Setor
       const ocorrencias = await ocorrenciaRepo
         .createQueryBuilder('oc')
-        .where('oc.rastreamentoId = :rastreamentoId', { rastreamentoId: rastreamento.id })
+        .where('(oc.rastreamentoId = :rastreamentoId OR (oc.ordemTesteId = :ordemTesteId AND oc.setorId = :setorId))', {
+          rastreamentoId: rastreamento.id,
+          ordemTesteId: rastreamento.ordemTesteId,
+          setorId: rastreamento.setorId
+        })
         .andWhere('oc.interrompeSla = true')
-        .andWhere('oc.dataResolucao IS NOT NULL')
         .getMany();
 
-      let tempoPausadoMs = 0;
+      let totalMsPausados = 0;
       for (const oc of ocorrencias) {
-        if (oc.dataResolucao) {
-          tempoPausadoMs +=
-            oc.dataResolucao.getTime() - oc.dataOcorrencia.getTime();
+        const occStartMs = new Date(oc.dataOcorrencia).getTime();
+        // Se a ocorrência ainda não possui dataResolucao preenchida, assume a dataSaida (agoraMs) como limite final
+        const occEndMs = oc.dataResolucao ? new Date(oc.dataResolucao).getTime() : agoraMs;
+
+        // Medição do tempo de interseção real de pausa estritamente entre dataEntrada e dataSaida
+        const startIntersecao = Math.max(dataEntradaMs, occStartMs);
+        const endIntersecao = Math.min(agoraMs, occEndMs);
+
+        if (endIntersecao > startIntersecao) {
+          totalMsPausados += (endIntersecao - startIntersecao);
         }
       }
-      const tempoPausadoMin   = Math.floor(tempoPausadoMs / 60_000);
-      const tempoPermanenciaMin = Math.max(0, tempoTotalMin - tempoPausadoMin);
+
+      const tempoTotalMin = diferencaBrutaMin;
+      const tempoPausadoMin = Math.floor(totalMsPausados / 60_000);
+      // Preservação de Integridade: Não desconte o tempoPausadoMin de tempoPermanenciaMin
+      const tempoPermanenciaMin = tempoTotalMin;
 
       // 4. Atualiza o rastreamento com dados de saída
       rastreamento.dataSaida          = agora;
       rastreamento.operadorSaidaId    = operadorId;
       rastreamento.inspecaoSaidaId    = foundInspecaoId;
       rastreamento.tempoPermanenciaMin = tempoPermanenciaMin;
+      rastreamento.tempoPausadoMin    = tempoPausadoMin;
       rastreamento.status             = RastreamentoStatus.CONCLUIDO;
 
       const atualizado = await rastreamentoRepo.save(rastreamento);
+      const atualizadoPopulado = await rastreamentoRepo.findOne({
+        where: { id: atualizado.id },
+        relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+      }) || atualizado;
 
       // Emitir avanço via WebSocket
-      webSocketService.emit('peca:avanco', { action: 'saida', data: atualizado });
+      webSocketService.emit('peca:avanco', { action: 'saida', data: atualizadoPopulado });
+      webSocketService.emit('rastreamento:atualizado', { action: 'saida', data: atualizadoPopulado });
 
       // 5. Handoff Automático (se aplicável)
       // Se for um setor de Handoff Automático (Categoria A), transfere automaticamente para o próximo setor lógico da rota
@@ -552,7 +801,7 @@ export class RastreamentosController {
                   
                   return res.status(200).json({
                     message: 'Bipagem de saída registrada com sucesso. Aguardando a conclusão dos demais setores paralelos.',
-                    rastreamento: atualizado,
+                    rastreamento: atualizadoPopulado,
                     sla: {
                       tempoTotalMin,
                       tempoPausadoMin,
@@ -601,7 +850,13 @@ export class RastreamentosController {
                       status:           RastreamentoStatus.EM_PROCESSO,
                     });
                     const salvoHandoff = await rastreamentoRepo.save(proximoRastreamento);
-                    webSocketService.emit('peca:avanco', { action: 'handoff', data: salvoHandoff });
+                    const salvoHandoffPopulado = await rastreamentoRepo.findOne({
+                      where: { id: salvoHandoff.id },
+                      relations: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
+                    }) || salvoHandoff;
+
+                    webSocketService.emit('peca:avanco', { action: 'handoff', data: salvoHandoffPopulado });
+                    webSocketService.emit('rastreamento:atualizado', { action: 'handoff', data: salvoHandoffPopulado });
                     console.log(`[Handoff Automático] Peça transferida automaticamente de ${setorId} para ${proxima.setorId}`);
                   } else {
                     console.log(`[Handoff Automático] Evitada duplicidade. Entrada para o setor ${proxima.setorId} já existe.`);
@@ -679,6 +934,8 @@ export class RastreamentosController {
           }
           return {
             ...r,
+            operadorEntradaNome: r.operadorEntrada?.nomeCompleto || null,
+            operadorSaidaNome: r.operadorSaida?.nomeCompleto || null,
             setor: {
               ...r.setor,
               tipoSetor,

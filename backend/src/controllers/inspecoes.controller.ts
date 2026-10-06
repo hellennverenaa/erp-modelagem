@@ -43,16 +43,16 @@ export class InspecoesController {
   public getPendentes = async (_req: Request, res: Response): Promise<Response> => {
     try {
       const SETORES_EXCLUIDOS = [
-        'ALMOXARIFADO',
+        'ALMOXARIFADO_MODELAGEM',
         'NAVALHA',
         'TELAS',
         'CORTE RECEBIMENTO',
         'CORTE SEPARAÇÃO',
         'CORTE SEPARACAO',
         'CORTE DUBLAGEM',
-        'RECEBIMENTO_CORTE',
-        'SEPARACAO_CORTE',
-        'DUBLAGEM_CORTE',
+        'CORTE_RECEBIMENTO',
+        'CORTE_RECEBIMENTO',
+        'CORTE_DUBLAGEM',
       ];
 
       const rastreamentoRepo = AppDataSource.getRepository(Rastreamento);

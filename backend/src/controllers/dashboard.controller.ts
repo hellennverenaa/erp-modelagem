@@ -1,102 +1,114 @@
 import { Request, Response } from 'express';
-import { In, MoreThanOrEqual } from 'typeorm';
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
-import { Rastreamento } from '../entities/Rastreamento';
 import { OcorrenciaProducao, StatusOcorrencia } from '../entities/OcorrenciaProducao';
 import { Inspecao, TipoInspecao, ResultadoInspecao } from '../entities/Inspecao';
 import { Retrabalho } from '../entities/Retrabalho';
 import { Anexo } from '../entities/Anexo';
 
+/** Retorna 0 se o valor for null/undefined/NaN */
+function safeNum(val: number | null | undefined, decimals = 2): number {
+  if (val == null || isNaN(val as number)) return 0;
+  return Number((val as number).toFixed(decimals));
+}
+
 export class DashboardController {
   public getKpis = async (_req: Request, res: Response): Promise<Response> => {
     try {
       const agora = new Date();
-      const trintaDiasAtras = new Date();
-      trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
 
       // ==========================================
-      // KPI A: LEAD TIME
+      // KPI A: LEAD TIME ABSOLUTO + DOWNTIME + ORDENS EM ANDAMENTO
       // ==========================================
-      const ordensLeadTime = await AppDataSource.getRepository(OrdemTeste).find({
-        where: {
-          status: In([
-            OrdemTesteStatus.LABORATORIO,
-            OrdemTesteStatus.AGUARDANDO_RESULTADO_FINAL,
-            OrdemTesteStatus.APROVACAO_CONCESSAO,
-            OrdemTesteStatus.APROVADO,
-            OrdemTesteStatus.LIBERADO_PRODUCAO
-          ])
-        },
-        relations: {
-          modelo: { marca: true },
-          rastreamentos: true
-        },
-        order: { dataInicio: 'DESC' },
-        take: 30
-      });
+      // Inclui todos os status, exceto REPROVADO. Ordens recém-criadas também
+      // devem aparecer no KPI enquanto aguardam material, conferência ou validação.
+      const ordensAtivas = await AppDataSource
+        .getRepository(OrdemTeste)
+        .createQueryBuilder('ordem')
+        .leftJoinAndSelect('ordem.rastreamentos', 'rastreamento')
+        .leftJoinAndSelect('ordem.modelo', 'modelo')
+        .leftJoinAndSelect('modelo.marca', 'marca')
+        .where('ordem.status IN (:...statuses)', {
+          statuses: Object.values(OrdemTesteStatus).filter(
+            status => status !== OrdemTesteStatus.REPROVADO
+          )
+        })
+        .orderBy('ordem.dataInicio', 'DESC')
+        .getMany();
 
       const leadTimeResultados: {
         codigoBarras: string;
         tipoLote: string;
         leadTimeHoras: number;
+        downtimeHoras: number;
         modelo: string;
         marca: string;
         dataInicio: Date;
       }[] = [];
 
-      for (const ordem of ordensLeadTime) {
-        const trackingsByLote: Record<string, Rastreamento[]> = {
+      for (const ordem of ordensAtivas) {
+        const rastreamentos = ordem.rastreamentos ?? [];
+        
+        // Regra Especial: Ordem no chão de fábrica mas que ainda não teve nenhuma bipagem
+        if (rastreamentos.length === 0) {
+            const tempoDecorridoMin = Math.max(0, Math.floor((agora.getTime() - (ordem.dataInicio?.getTime() || agora.getTime())) / 60000));
+            leadTimeResultados.push({
+                codigoBarras: ordem.codigoBarras,
+                tipoLote: 'LOTE_PRINCIPAL', // Fallback assumido
+                leadTimeHoras: safeNum(tempoDecorridoMin / 60),
+                downtimeHoras: 0,
+                modelo: ordem.modelo?.nome ?? 'N/A',
+                marca: ordem.modelo?.marca?.nome ?? 'N/A',
+                dataInicio: ordem.dataInicio
+            });
+            continue; // Já adicionou a ordem, vai para a próxima
+        }
+
+        const byLote: Record<string, typeof rastreamentos> = {
           CAIXA_TESTE: [],
           LOTE_PRINCIPAL: []
         };
 
-        for (const r of ordem.rastreamentos) {
-          if (r.tipoLote === 'CAIXA_TESTE') {
-            trackingsByLote.CAIXA_TESTE.push(r);
-          } else {
-            trackingsByLote.LOTE_PRINCIPAL.push(r);
-          }
+        for (const r of rastreamentos) {
+          if (r.tipoLote === 'CAIXA_TESTE') byLote.CAIXA_TESTE.push(r);
+          else byLote.LOTE_PRINCIPAL.push(r);
         }
 
-        for (const [tipo, trackings] of Object.entries(trackingsByLote)) {
+        for (const [tipo, trackings] of Object.entries(byLote)) {
           if (trackings.length === 0) continue;
 
-          let totalMinutos = 0;
+          let totalMinAbsoluto = 0;
+          let totalDowntimeMin = 0;
+
           for (const r of trackings) {
             if (r.dataSaida) {
-              totalMinutos += r.tempoPermanenciaMin || 0;
+              totalMinAbsoluto += r.tempoPermanenciaMin ?? 0;
             } else {
-              const dataEntrada = r.dataEntrada || r.createdAt;
-              const timeSpentMs = agora.getTime() - dataEntrada.getTime();
-              const timeSpentMin = Math.floor(timeSpentMs / 60000);
+              const entrada = r.dataEntrada ?? r.createdAt;
+              totalMinAbsoluto += Math.max(0, Math.floor((agora.getTime() - entrada.getTime()) / 60000));
+            }
 
-              const occurrences = await AppDataSource.getRepository(OcorrenciaProducao).find({
-                where: {
-                  rastreamentoId: r.id,
-                  interrompeSla: true
-                }
-              });
+            const occurrences = await AppDataSource
+              .getRepository(OcorrenciaProducao)
+              .createQueryBuilder('oc')
+              .where('oc.rastreamentoId = :rid', { rid: r.id })
+              .andWhere('oc.interrompeSla = :sla', { sla: true })
+              .getMany();
 
-              let pausedMs = 0;
-              for (const oc of occurrences) {
-                const end = oc.dataResolucao ? oc.dataResolucao.getTime() : agora.getTime();
-                pausedMs += end - oc.dataOcorrencia.getTime();
-              }
-
-              const pausedMin = Math.floor(pausedMs / 60000);
-              const activeMin = Math.max(0, timeSpentMin - pausedMin);
-              totalMinutos += activeMin;
+            for (const oc of occurrences) {
+              const end = oc.dataResolucao?.getTime() ?? agora.getTime();
+              totalDowntimeMin += Math.max(0, Math.floor((end - oc.dataOcorrencia.getTime()) / 60000));
             }
           }
 
-          const leadTimeHoras = Number((totalMinutos / 60).toFixed(2));
           leadTimeResultados.push({
             codigoBarras: ordem.codigoBarras,
             tipoLote: tipo,
-            leadTimeHoras,
-            modelo: ordem.modelo?.nome || 'N/A',
-            marca: ordem.modelo?.marca?.nome || 'N/A',
+            leadTimeHoras: safeNum(totalMinAbsoluto / 60),
+            downtimeHoras: safeNum(totalDowntimeMin / 60),
+            modelo: ordem.modelo?.nome ?? 'N/A',
+            marca: ordem.modelo?.marca?.nome ?? 'N/A',
             dataInicio: ordem.dataInicio
           });
         }
@@ -104,68 +116,106 @@ export class DashboardController {
 
       leadTimeResultados.sort((a, b) => b.dataInicio.getTime() - a.dataInicio.getTime());
 
-      const caixaTesteList = leadTimeResultados.filter(r => r.tipoLote === 'CAIXA_TESTE');
-      const lotePrincipalList = leadTimeResultados.filter(r => r.tipoLote === 'LOTE_PRINCIPAL');
+      const ctList = leadTimeResultados.filter(r => r.tipoLote === 'CAIXA_TESTE');
+      const lpList = leadTimeResultados.filter(r => r.tipoLote === 'LOTE_PRINCIPAL');
 
-      const avg5CaixaTeste = caixaTesteList.slice(0, 5).reduce((acc, curr) => acc + curr.leadTimeHoras, 0) / Math.max(1, Math.min(5, caixaTesteList.length));
-      const avg5LotePrincipal = lotePrincipalList.slice(0, 5).reduce((acc, curr) => acc + curr.leadTimeHoras, 0) / Math.max(1, Math.min(5, lotePrincipalList.length));
+      const avgCT = ctList.length > 0
+        ? ctList.slice(0, 5).reduce((s, c) => s + c.leadTimeHoras, 0) / Math.min(5, ctList.length)
+        : 0;
+
+      const avgLP = lpList.length > 0
+        ? lpList.slice(0, 5).reduce((s, c) => s + c.leadTimeHoras, 0) / Math.min(5, lpList.length)
+        : 0;
+
+      // Downtime global de TODA a base ativa
+      const ocDowntime = await AppDataSource
+        .getRepository(OcorrenciaProducao)
+        .createQueryBuilder('oc')
+        .where('oc.interrompeSla = :sla', { sla: true })
+        .getMany();
+
+      let downtimeTotalMinGlobal = 0;
+      const motivosMap: Record<string, { minutos: number; quantidade: number }> = {};
+
+      const tipoRotulos: Record<string, string> = {
+        GARGALO_MAQUINA: 'Quebra / Parada de Máquina',
+        FALTA_MATERIAL: 'Falta de Insumos / Materiais',
+        PROBLEMA_QUALIDADE: 'Divergência de Qualidade',
+        BLOQUEIO_PROCESSO: 'Bloqueio de Processo',
+        ACIDENTE_TRABALHO: 'Acidente de Trabalho',
+        OUTRO: 'Outros Motivos'
+      };
+
+      for (const oc of ocDowntime) {
+        const end = oc.dataResolucao?.getTime() ?? agora.getTime();
+        const min = Math.max(0, Math.floor((end - oc.dataOcorrencia.getTime()) / 60000));
+        downtimeTotalMinGlobal += min;
+
+        const nomeMotivo = tipoRotulos[oc.tipoOcorrencia] ?? oc.titulo ?? 'Outros Motivos';
+        if (!motivosMap[nomeMotivo]) motivosMap[nomeMotivo] = { minutos: 0, quantidade: 0 };
+        motivosMap[nomeMotivo].minutos += min;
+        motivosMap[nomeMotivo].quantidade += 1;
+      }
+
+      const motivosParada = Object.entries(motivosMap).map(([motivo, d]) => ({
+        motivo,
+        minutos: d.minutos,
+        horas: safeNum(d.minutos / 60, 1),
+        quantidade: d.quantidade,
+        percentual: safeNum(downtimeTotalMinGlobal > 0 ? (d.minutos / downtimeTotalMinGlobal) * 100 : 0, 1)
+      }));
+      motivosParada.sort((a, b) => b.minutos - a.minutos);
 
       const kpiA = {
-        mediaCaixaTeste: Number(avg5CaixaTeste.toFixed(2)),
-        mediaLotePrincipal: Number(avg5LotePrincipal.toFixed(2)),
+        totalOrdensAtivas: ordensAtivas.length, // Propriedade nova solicitada
+        mediaCaixaTeste: safeNum(avgCT),
+        mediaLotePrincipal: safeNum(avgLP),
+        downtimeTotalMin: downtimeTotalMinGlobal,
+        downtimeTotalHoras: safeNum(downtimeTotalMinGlobal / 60, 1),
+        motivosParada,
         grafico: leadTimeResultados.slice(0, 10)
       };
 
       // ==========================================
       // KPI B: MAPA DE GARGALOS
       // ==========================================
-      const ocorrencias = await AppDataSource.getRepository(OcorrenciaProducao).find({
-        where: {
-          status: In([StatusOcorrencia.ABERTA, StatusOcorrencia.EM_ANALISE])
-        },
-        relations: {
-          setor: true,
-          reportadoPor: true,
-          ordemTeste: {
-            modelo: true
-          }
-        }
-      });
+      const ocorrencias = await AppDataSource
+        .getRepository(OcorrenciaProducao)
+        .createQueryBuilder('oc')
+        .leftJoinAndSelect('oc.setor', 'setor')
+        .leftJoinAndSelect('oc.reportadoPor', 'reporter')
+        .leftJoinAndSelect('oc.ordemTeste', 'ordem')
+        .where('oc.status IN (:...statuses)', {
+          statuses: [StatusOcorrencia.ABERTA, StatusOcorrencia.EM_ANALISE]
+        })
+        .orderBy('oc.dataOcorrencia', 'DESC')
+        .getMany();
 
-      const gravityOrder: Record<string, number> = {
-        CRITICA: 1,
-        ALTA: 2,
-        MEDIA: 3,
-        BAIXA: 4
-      };
-
+      const gravityOrder: Record<string, number> = { CRITICA: 1, ALTA: 2, MEDIA: 3, BAIXA: 4 };
       ocorrencias.sort((a, b) => {
-        const gA = gravityOrder[a.gravidade] || 99;
-        const gB = gravityOrder[b.gravidade] || 99;
-        if (gA !== gB) return gA - gB;
-        return b.dataOcorrencia.getTime() - a.dataOcorrencia.getTime();
+        const diff = (gravityOrder[a.gravidade] ?? 99) - (gravityOrder[b.gravidade] ?? 99);
+        return diff !== 0 ? diff : b.dataOcorrencia.getTime() - a.dataOcorrencia.getTime();
       });
 
       const oIds = ocorrencias.map(o => o.id);
-      const anexos = oIds.length > 0 ? await AppDataSource.getRepository(Anexo).find({
-        where: {
-          entidadeTipo: 'ocorrencias_producao',
-          entidadeId: In(oIds)
-        }
-      }) : [];
+      const anexos = oIds.length > 0
+        ? await AppDataSource.getRepository(Anexo).find({
+            where: { entidadeTipo: 'ocorrencias_producao', entidadeId: In(oIds) }
+          })
+        : [];
 
       const kpiB = ocorrencias.map(o => {
         const oAnexos = anexos.filter(a => a.entidadeId === o.id);
         return {
           id: o.id,
-          titulo: o.titulo,
-          descricao: o.descricao,
+          titulo: o.titulo ?? '',
+          descricao: o.descricao ?? '',
           tipoOcorrencia: o.tipoOcorrencia,
           gravidade: o.gravidade,
           status: o.status,
           dataOcorrencia: o.dataOcorrencia,
-          setor: o.setor?.nome || 'N/A',
-          reportadoPor: o.reportadoPor?.nomeCompleto || 'N/A',
+          setor: o.setor?.nome ?? 'N/A',
+          reportadoPor: o.reportadoPor?.nomeCompleto ?? 'N/A',
           totalFotos: oAnexos.length,
           fotos: oAnexos.map(a => a.caminhoArquivo)
         };
@@ -174,126 +224,102 @@ export class DashboardController {
       // ==========================================
       // KPI C: FPY
       // ==========================================
-      const inspecoes = await AppDataSource.getRepository(Inspecao).find({
-        where: {
-          tipoInspecao: TipoInspecao.SAIDA_SETOR,
-          dataInspecao: MoreThanOrEqual(trintaDiasAtras)
-        },
-        relations: {
-          setor: true
-        }
-      });
+      const inspecoes = await AppDataSource
+        .getRepository(Inspecao)
+        .createQueryBuilder('insp')
+        .leftJoinAndSelect('insp.setor', 'setor')
+        .where('insp.tipoInspecao = :tipo', { tipo: TipoInspecao.SAIDA_SETOR })
+        .getMany(); // Sem filtro de data
 
       const fpyPorSetor: Record<string, { total: number; aprovadas: number }> = {};
-      let totalGlobal = 0;
+      let totalInspGlobal = 0;
       let aprovadasGlobal = 0;
 
       for (const insp of inspecoes) {
-        const setorNome = insp.setor?.nome || 'SETOR DESCONHECIDO';
-        if (!fpyPorSetor[setorNome]) {
-          fpyPorSetor[setorNome] = { total: 0, aprovadas: 0 };
-        }
+        const setor = insp.setor?.nome ?? 'SETOR DESCONHECIDO';
+        if (!fpyPorSetor[setor]) fpyPorSetor[setor] = { total: 0, aprovadas: 0 };
+        fpyPorSetor[setor].total += 1;
+        totalInspGlobal += 1;
 
-        fpyPorSetor[setorNome].total += 1;
-        totalGlobal += 1;
-
-        if (insp.resultado === ResultadoInspecao.APROVADO || insp.resultado === ResultadoInspecao.APROVADO_CONCESSAO) {
-          fpyPorSetor[setorNome].aprovadas += 1;
+        if (
+          insp.resultado === ResultadoInspecao.APROVADO ||
+          insp.resultado === ResultadoInspecao.APROVADO_CONCESSAO
+        ) {
+          fpyPorSetor[setor].aprovadas += 1;
           aprovadasGlobal += 1;
         }
       }
 
-      const fpySetores = Object.entries(fpyPorSetor).map(([setor, dados]) => {
-        const fpy = dados.total > 0 ? (dados.aprovadas / dados.total) * 100 : 100;
-        return {
-          setor,
-          totalInspecoes: dados.total,
-          aprovadasPrimeira: dados.aprovadas,
-          fpyPercentual: Number(fpy.toFixed(2))
-        };
-      });
+      const fpySetores = Object.entries(fpyPorSetor).map(([setor, d]) => ({
+        setor,
+        totalInspecoes: d.total,
+        totalRastreamentos: d.total,
+        aprovadasPrimeira: d.aprovadas,
+        fpyPercentual: safeNum((d.aprovadas / d.total) * 100)
+      }));
 
-      const fpyGlobalVal = totalGlobal > 0 ? (aprovadasGlobal / totalGlobal) * 100 : 100;
+      fpySetores.sort((a, b) => a.fpyPercentual - b.fpyPercentual);
 
       const kpiC = {
-        fpyGlobal: Number(fpyGlobalVal.toFixed(2)),
+        fpyGlobal: totalInspGlobal > 0
+          ? safeNum((aprovadasGlobal / totalInspGlobal) * 100)
+          : null,
+        totalInspecoes: totalInspGlobal,
         setores: fpySetores
       };
 
       // ==========================================
-      // KPI D: INDICE DE RETRABALHO
+      // KPI D: RETRABALHO
       // ==========================================
-      const retrabalhos = await AppDataSource.getRepository(Retrabalho).find({
-        where: {
-          createdAt: MoreThanOrEqual(trintaDiasAtras)
-        },
-        relations: {
-          setorOrigem: true,
-          divergencia: true
-        }
-      });
+      const retrabalhos = await AppDataSource
+        .getRepository(Retrabalho)
+        .createQueryBuilder('rt')
+        .leftJoinAndSelect('rt.setorOrigem', 'setorOrigem')
+        .leftJoinAndSelect('rt.divergencia', 'divergencia')
+        .getMany(); // Sem filtro de data
 
-      const retrabalhoPorSetor: Record<string, {
-        total: number;
-        tempos: number[];
-        divergencias: Set<string>;
-      }> = {};
-
-      let totalRetrabalhosGlobal = 0;
+      const rtPorSetor: Record<string, { total: number; tempos: number[]; divs: Set<string> }> = {};
+      let totalRtGlobal = 0;
 
       for (const rt of retrabalhos) {
-        const setorNome = rt.setorOrigem?.nome || 'SETOR DESCONHECIDO';
-        if (!retrabalhoPorSetor[setorNome]) {
-          retrabalhoPorSetor[setorNome] = {
-            total: 0,
-            tempos: [],
-            divergencias: new Set<string>()
-          };
-        }
+        const setor = rt.setorOrigem?.nome ?? 'SETOR DESCONHECIDO';
+        if (!rtPorSetor[setor]) rtPorSetor[setor] = { total: 0, tempos: [], divs: new Set() };
 
-        retrabalhoPorSetor[setorNome].total += 1;
-        totalRetrabalhosGlobal += 1;
+        rtPorSetor[setor].total += 1;
+        totalRtGlobal += 1;
 
         if (rt.dataInicio && rt.dataFim) {
-          const diffMs = rt.dataFim.getTime() - rt.dataInicio.getTime();
-          const diffMin = Math.floor(diffMs / 60000);
-          retrabalhoPorSetor[setorNome].tempos.push(diffMin);
+          rtPorSetor[setor].tempos.push(
+            Math.max(0, Math.floor((rt.dataFim.getTime() - rt.dataInicio.getTime()) / 60000))
+          );
         }
 
         if (rt.divergencia?.tipoDivergencia) {
-          retrabalhoPorSetor[setorNome].divergencias.add(rt.divergencia.tipoDivergencia);
+          rtPorSetor[setor].divs.add(rt.divergencia.tipoDivergencia);
         }
       }
 
-      const retrabalhoSetores = Object.entries(retrabalhoPorSetor).map(([setor, dados]) => {
-        const avgTime = dados.tempos.length > 0
-          ? Math.round(dados.tempos.reduce((sum, val) => sum + val, 0) / dados.tempos.length)
+      const retrabalhoSetores = Object.entries(rtPorSetor).map(([setor, d]) => {
+        const avgTime = d.tempos.length > 0
+          ? Math.round(d.tempos.reduce((s, v) => s + v, 0) / d.tempos.length)
           : 0;
-
-        const percent = totalRetrabalhosGlobal > 0 ? (dados.total / totalRetrabalhosGlobal) * 100 : 0;
-
         return {
           setorOrigem: setor,
-          totalRetrabalhos: dados.total,
+          totalRetrabalhos: d.total,
           tempoMedioMin: avgTime,
-          tiposDivergencia: Array.from(dados.divergencias).join(', '),
-          percentualDoTotal: Number(percent.toFixed(2))
+          tiposDivergencia: Array.from(d.divs).join(', ') || 'Não especificada',
+          percentualDoTotal: safeNum(totalRtGlobal > 0 ? (d.total / totalRtGlobal) * 100 : 0)
         };
       });
 
       retrabalhoSetores.sort((a, b) => b.totalRetrabalhos - a.totalRetrabalhos);
 
       const kpiD = {
-        totalRetrabalhos: totalRetrabalhosGlobal,
+        totalRetrabalhos: totalRtGlobal,
         setores: retrabalhoSetores
       };
 
-      return res.json({
-        kpiA,
-        kpiB,
-        kpiC,
-        kpiD
-      });
+      return res.json({ kpiA, kpiB, kpiC, kpiD });
 
     } catch (error: any) {
       console.error('[DashboardController] Erro ao carregar KPIs:', error);

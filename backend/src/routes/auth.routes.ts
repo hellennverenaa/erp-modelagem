@@ -46,8 +46,8 @@ router.post('/login', authController.login);
  * @swagger
  * /api/auth/refresh:
  *   post:
- *     summary: Renova o token de acesso JWT expirado
- *     description: Recebe o refresh token no corpo e gera um novo token de acesso JWT.
+ *     summary: Renovação de sessão
+ *     description: A renovação depende de suporte do serviço legado e ainda não está disponível.
  *     tags:
  *       - auth
  *     requestBody:
@@ -73,8 +73,8 @@ router.post('/login', authController.login);
  *                 token:
  *                   type: string
  *                   example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.newAccess..."
- *       401:
- *         description: Refresh token expirado ou inválido
+ *       501:
+ *         description: Renovação não configurada no serviço legado
  *       500:
  *         description: Erro interno do servidor
  */

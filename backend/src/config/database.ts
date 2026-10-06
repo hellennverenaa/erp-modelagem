@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import * as dotenv from 'dotenv';
+import * as path from 'path';
 import { Planta } from '../entities/Planta';
 import { Setor } from '../entities/Setor';
 import { EstacaoTrabalho } from '../entities/EstacaoTrabalho';
@@ -38,18 +39,37 @@ import { CatalogoItemChecklist } from '../entities/CatalogoItemChecklist';
 import { EtapaCortePeca } from '../entities/EtapaCortePeca';
 
 // Carrega as variáveis de ambiente do arquivo .env
-dotenv.config();
+dotenv.config({
+  path: process.env.DOTENV_CONFIG_PATH || path.resolve(__dirname, '../../.env'),
+});
+
+const databaseUrl = process.env.DATABASE_URL;
+const appSchema = process.env.DB_SCHEMA || 'erp_modelagem';
+let connectionUrl: string | undefined;
+
+if (databaseUrl) {
+  const parsedUrl = new URL(databaseUrl);
+  parsedUrl.searchParams.delete('schema');
+  connectionUrl = parsedUrl.toString();
+}
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  username: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME || 'erp_modelagem',
-  schema: process.env.DB_SCHEMA || 'public',
-  // Sincronização automática em ambiente de desenvolvimento (útil para testes iniciais)
-  synchronize: process.env.NODE_ENV === 'development',
+  ...(connectionUrl
+    ? { url: connectionUrl }
+    : {
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT || '5432', 10),
+        username: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASS,
+        database: process.env.DB_NAME || 'postgres',
+      }),
+  schema: appSchema,
+  // Mantém funções/extensões do ERP resolvidas primeiro no próprio schema.
+  extra: {
+    options: `-c search_path=${appSchema},public`,
+  },
+  synchronize: false,
   logging: ["error"],
   entities: [
     Planta,

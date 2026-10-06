@@ -30,6 +30,10 @@ function isUuid(val: any): boolean {
   return typeof val === 'string' && uuidRegex.test(val);
 }
 
+function isAdminProfile(req: Request): boolean {
+  return req.user?.perfilNome?.trim().toUpperCase() === 'ADMIN';
+}
+
 const updateManutencaoSchema = z.object({
   dataPrevistaProducao: z.string().optional().nullable(),
   slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
@@ -44,14 +48,20 @@ export class LotesController {
    * GET /api/lotes ou /api/ordens-teste
    * Lista todas as ordens de teste cadastradas no sistema.
    */
-  public getLotes = async (_req: Request, res: Response): Promise<Response> => {
+  public getLotes = async (req: Request, res: Response): Promise<Response> => {
     try {
+      if (!isAdminProfile(req) && !req.user?.plantaId) {
+        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      }
+
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const lotes = await loteRepo.find({
+        where: isAdminProfile(req) ? undefined : { plantaId: req.user!.plantaId },
         relations: {
           modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
           planta: true,
-          criadoPor: true
+          criadoPor: true,
+          rastreamentos: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
         },
         order: { createdAt: 'DESC' }
       });
@@ -75,7 +85,7 @@ export class LotesController {
       const id = req.params.id as string;
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const lote = await loteRepo.findOne({
-        where: { id },
+        where: isAdminProfile(req) ? { id } : { id, plantaId: req.user!.plantaId },
         relations: {
           modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
           planta: true,
@@ -156,6 +166,13 @@ export class LotesController {
         slasPorSetor
       } = parseResult.data;
 
+      if (!isAdminProfile(req) && plantaId !== req.user.plantaId) {
+        return res.status(403).json({
+          error: 'Não é permitido criar uma ordem em outra planta.',
+          code: 'PLANTA_FORBIDDEN'
+        });
+      }
+
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
 
       const ordemExistente = await loteRepo.findOne({ where: { modeloId } });
@@ -179,7 +196,7 @@ export class LotesController {
 
       const lote = loteRepo.create({
         modeloId,
-        plantaId,
+        plantaId: isAdminProfile(req) ? plantaId : req.user.plantaId,
         criadoPorId: req.user!.userId,
         codigoBarras: `OT-${Date.now()}`,
         dataInicio: new Date(),
@@ -227,7 +244,7 @@ export class LotesController {
 
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       let lote = await loteRepo.findOne({
-        where: { id }
+        where: isAdminProfile(req) ? { id } : { id, plantaId: req.user!.plantaId }
       });
 
       if (!lote) {
@@ -285,7 +302,7 @@ export class LotesController {
       const pecaRepo = AppDataSource.getRepository(Peca);
 
       let lote = await loteRepo.findOne({
-        where: { id },
+        where: isAdminProfile(req) ? { id } : { id, plantaId: req.user!.plantaId },
         relations: { modelo: { pecas: true, rotas: { setor: true } }, planta: true }
       });
 
@@ -509,6 +526,16 @@ export class LotesController {
   public getAuditoria = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { id } = req.params;
+      if (!isAdminProfile(req)) {
+        const lote = await AppDataSource.getRepository(OrdemTeste).findOne({
+          where: { id: String(id), plantaId: req.user!.plantaId },
+          select: { id: true }
+        });
+        if (!lote) {
+          return res.status(404).json({ error: 'Ordem de teste não encontrada.', code: 'LOTE_NOT_FOUND' });
+        }
+      }
+
       const auditRepo = AppDataSource.getRepository(AuditLog);
       const logs = await auditRepo.find({
         where: { entidadeId: String(id) },

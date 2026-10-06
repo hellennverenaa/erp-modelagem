@@ -33,6 +33,25 @@ const createModeloSchema = z.object({
   ).optional(),
 });
 
+const createMarcaSchema = z.object({
+  nome: z.string().trim().min(1, 'O nome da marca é obrigatório.').max(100, 'O nome da marca deve ter no máximo 100 caracteres.'),
+});
+
+const updateMarcaSchema = z.object({
+  nome: z.string().trim().min(1, 'O nome da marca é obrigatório.').max(100, 'O nome da marca deve ter no máximo 100 caracteres.').optional(),
+  ativo: z.boolean().optional(),
+}).refine((data) => data.nome !== undefined || data.ativo !== undefined, {
+  message: 'Informe o nome ou o status da marca para atualizar.',
+});
+
+function normalizarNomeMarca(nome: string): string {
+  return nome.trim().replace(/\s+/g, ' ');
+}
+
+function nomesDeMarcaIguais(a: string, b: string): boolean {
+  return normalizarNomeMarca(a).toLocaleLowerCase('pt-BR') === normalizarNomeMarca(b).toLocaleLowerCase('pt-BR');
+}
+
 export class AdminController {
   /**
    * Lista todos os perfis cadastrados no sistema.
@@ -61,6 +80,7 @@ export class AdminController {
       const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
 
       const setores = await setorRepo.find({
+        where: { ativo: true },
         order: { ordemFluxo: 'ASC' }
       });
 
@@ -244,6 +264,95 @@ export class AdminController {
     } catch (error) {
       console.error('[AdminController] Erro ao listar marcas:', error);
       return res.status(500).json({ error: 'Erro ao listar marcas' });
+    }
+  }
+
+  /** Lista marcas ativas e inativas para a tela administrativa. */
+  public async getTodasMarcas(_req: Request, res: Response): Promise<Response> {
+    try {
+      const marcas = await AppDataSource.getRepository(Marca).find({
+        order: { nome: 'ASC' },
+      });
+      return res.json(marcas);
+    } catch (error) {
+      console.error('[AdminController] Erro ao listar marcas para administração:', error);
+      return res.status(500).json({ error: 'Erro ao carregar marcas.' });
+    }
+  }
+
+  /** Cria uma marca no schema da aplicação. */
+  public async createMarca(req: Request, res: Response): Promise<Response> {
+    const parsed = createMarcaSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Dados inválidos.',
+        code: 'MARCA_VALIDATION_ERROR',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const nome = normalizarNomeMarca(parsed.data.nome);
+      const marcaRepo = AppDataSource.getRepository(Marca);
+      const existentes = await marcaRepo.find({ select: { id: true, nome: true } });
+      if (existentes.some((marca) => nomesDeMarcaIguais(marca.nome, nome))) {
+        return res.status(409).json({
+          error: 'Já existe uma marca com esse nome.',
+          code: 'MARCA_DUPLICATE_NAME',
+        });
+      }
+
+      const marca = await marcaRepo.save(marcaRepo.create({ nome, ativo: true }));
+      return res.status(201).json(marca);
+    } catch (error) {
+      console.error('[AdminController] Erro ao criar marca:', error);
+      return res.status(500).json({ error: 'Erro ao cadastrar marca.' });
+    }
+  }
+
+  /** Renomeia ou ativa/desativa uma marca sem apagar referências históricas. */
+  public async updateMarca(req: Request, res: Response): Promise<Response> {
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) {
+      return res.status(400).json({ error: 'Identificador de marca inválido.', code: 'MARCA_ID_INVALID' });
+    }
+
+    const parsed = updateMarcaSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Dados inválidos.',
+        code: 'MARCA_VALIDATION_ERROR',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const marcaRepo = AppDataSource.getRepository(Marca);
+      const marca = await marcaRepo.findOne({ where: { id: id.data } });
+      if (!marca) {
+        return res.status(404).json({ error: 'Marca não encontrada.', code: 'MARCA_NOT_FOUND' });
+      }
+
+      if (parsed.data.nome !== undefined) {
+        const nome = normalizarNomeMarca(parsed.data.nome);
+        const existentes = await marcaRepo.find({ select: { id: true, nome: true } });
+        if (existentes.some((outra) => outra.id !== marca.id && nomesDeMarcaIguais(outra.nome, nome))) {
+          return res.status(409).json({
+            error: 'Já existe uma marca com esse nome.',
+            code: 'MARCA_DUPLICATE_NAME',
+          });
+        }
+        marca.nome = nome;
+      }
+
+      if (parsed.data.ativo !== undefined) {
+        marca.ativo = parsed.data.ativo;
+      }
+
+      return res.json(await marcaRepo.save(marca));
+    } catch (error) {
+      console.error('[AdminController] Erro ao atualizar marca:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar marca.' });
     }
   }
 

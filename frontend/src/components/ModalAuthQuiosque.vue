@@ -6,7 +6,6 @@ import {
   Loader2,
   AlertCircle,
   QrCode,
-  CheckCircle2,
   KeyRound
 } from '@lucide/vue'
 import api from '../api/axios'

@@ -79,3 +79,17 @@ export function verificarPermissaoSetor(
     }
   };
 }
+
+export function exigirAdministrador(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
+    return;
+  }
+
+  if (req.user.perfilNome?.trim().toUpperCase() !== 'ADMIN') {
+    res.status(403).json({ error: 'Acesso restrito ao perfil ADMIN.', code: 'RBAC_ADMIN_REQUIRED' });
+    return;
+  }
+
+  next();
+}

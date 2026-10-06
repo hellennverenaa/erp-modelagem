@@ -2,6 +2,8 @@ import { MigrationInterface, QueryRunner, Table, TableColumn, TableForeignKey } 
 
 export class ModuloEngenhariaECrachao1781642600000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
+    const schema = process.env.DB_SCHEMA || 'erp_modelagem';
+    const quotedSchema = `"${schema.replace(/"/g, '""')}"`;
     // 1. Adicionar coluna codigo_crachao em usuarios (se ainda não existir)
     const usuariosTable = await queryRunner.getTable('usuarios');
     if (usuariosTable && !usuariosTable.findColumnByName('codigo_crachao')) {
@@ -144,8 +146,8 @@ export class ModuloEngenhariaECrachao1781642600000 implements MigrationInterface
 
     // 4. Criar enum e tabela etapa_corte_pecas
     await queryRunner.query(
-      `DO $$ BEGIN
-        CREATE TYPE "etapa_corte_pecas_resultado_conformidade_enum" AS ENUM('OK', 'NAO_OK');
+        `DO $$ BEGIN
+        CREATE TYPE ${quotedSchema}."etapa_corte_pecas_resultado_conformidade_enum" AS ENUM('OK', 'NAO_OK');
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$;`
@@ -172,7 +174,7 @@ export class ModuloEngenhariaECrachao1781642600000 implements MigrationInterface
           },
           {
             name: 'resultado_conformidade',
-            type: 'etapa_corte_pecas_resultado_conformidade_enum',
+            type: `${schema}.etapa_corte_pecas_resultado_conformidade_enum`,
             isNullable: false,
           },
           {
@@ -217,8 +219,10 @@ export class ModuloEngenhariaECrachao1781642600000 implements MigrationInterface
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    const schema = process.env.DB_SCHEMA || 'erp_modelagem';
+    const quotedSchema = `"${schema.replace(/"/g, '""')}"`;
     await queryRunner.dropTable('etapa_corte_pecas');
-    await queryRunner.query(`DROP TYPE IF EXISTS "etapa_corte_pecas_resultado_conformidade_enum"`);
+    await queryRunner.query(`DROP TYPE IF EXISTS ${quotedSchema}."etapa_corte_pecas_resultado_conformidade_enum"`);
     await queryRunner.dropTable('catalogo_itens_checklist');
     await queryRunner.dropTable('catalogo_pecas');
     

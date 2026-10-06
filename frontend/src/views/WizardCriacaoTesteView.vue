@@ -12,21 +12,21 @@ import {
   AlertCircle,
   Barcode,
   Printer,
-  Plus,
   Trash2,
   Scissors,
   Search,
-  Calendar,
-  Clock
+  Calendar
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
 import RouteBuilder from '../components/RouteBuilder.vue'
+import BrandManagerModal from '../components/BrandManagerModal.vue'
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
 interface Marca {
   id: string
   nome: string
+  ativo: boolean
 }
 
 interface Planta {
@@ -73,6 +73,7 @@ const currentStep = ref(1)
 const marcas = ref<Marca[]>([])
 const plantas = ref<Planta[]>([])
 const loadingInit = ref(true)
+const showBrandManager = ref(false)
 
 // Passo 1: Modelo
 const formModelo = ref({
@@ -146,6 +147,29 @@ function addToast(type: 'success' | 'error', message: string) {
   setTimeout(() => {
     toasts.value = toasts.value.filter(t => t.id !== id)
   }, 4000)
+}
+
+async function handleMarcaCreated(marca: Marca) {
+  try {
+    const { data } = await api.get<Marca[]>('/admin/marcas')
+    marcas.value = data || []
+    formModelo.value.marcaId = marca.id
+    addToast('success', `Marca "${marca.nome}" cadastrada e selecionada.`)
+  } catch {
+    addToast('error', 'A marca foi cadastrada, mas não foi possível atualizar a lista.')
+  }
+}
+
+async function handleMarcaUpdated(marca: Marca) {
+  try {
+    const { data } = await api.get<Marca[]>('/admin/marcas')
+    marcas.value = data || []
+    if (!marca.ativo && formModelo.value.marcaId === marca.id) {
+      formModelo.value.marcaId = ''
+    }
+  } catch {
+    addToast('error', 'Não foi possível atualizar a lista de marcas.')
+  }
 }
 
 // ─── Ciclo de Vida ──────────────────────────────────────────────────────────
@@ -555,9 +579,14 @@ function resetWizard() {
         <form @submit.prevent="submitModelo" class="wiz-form">
           <div class="form-grid">
             <div class="form-group">
-              <label for="marcaId" class="form-label">Marca <span class="required">*</span></label>
+              <div class="brand-label-row">
+                <label for="marcaId" class="form-label">Marca <span class="required">*</span></label>
+                <button type="button" class="brand-manage-button" @click="showBrandManager = true">
+                  Gerenciar marcas
+                </button>
+              </div>
               <select id="marcaId" v-model="formModelo.marcaId" class="form-select" required>
-                <option value="">Selecione a Marca...</option>
+                <option value="">{{ marcas.length ? 'Selecione a Marca...' : 'Nenhuma marca ativa cadastrada' }}</option>
                 <option v-for="m in marcas" :key="m.id" :value="m.id">{{ m.nome }}</option>
               </select>
             </div>
@@ -856,6 +885,13 @@ function resetWizard() {
         </form>
       </div>
     </div>
+
+    <BrandManagerModal
+      v-if="showBrandManager"
+      @close="showBrandManager = false"
+      @created="handleMarcaCreated"
+      @updated="handleMarcaUpdated"
+    />
   </div>
 </template>
 
@@ -867,6 +903,9 @@ function resetWizard() {
   max-width: 72rem;
   margin: 0 auto;
 }
+.brand-label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.brand-manage-button { padding: 0.1rem 0; border: 0; background: transparent; color: #334155; font: inherit; font-size: 0.7rem; font-weight: 700; cursor: pointer; }
+.brand-manage-button:hover { color: #0f172a; text-decoration: underline; }
 
 /* Stepper Header */
 .wiz-stepper-header {

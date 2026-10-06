@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller';
+import { exigirAdministrador } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const adminController = new AdminController();
@@ -30,7 +31,7 @@ const adminController = new AdminController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/usuarios', adminController.getUsuarios);
+router.get('/usuarios', exigirAdministrador, adminController.getUsuarios);
 
 /**
  * @swagger
@@ -70,7 +71,7 @@ router.get('/setores', adminController.getSetores);
  * @swagger
  * /api/admin/config-opcoes:
  *   get:
- *     summary: "Lista config_opcoes filtradas por categoria (ex: setor_tipo)
+ *     summary: "Lista config_opcoes filtradas por categoria (ex: setor_tipo)"
  *     tags: [Admin]
  *     security:
  *       - bearerAuth: []
@@ -138,6 +139,14 @@ router.get('/plantas', adminController.getPlantas);
 router.get('/marcas', adminController.getMarcas);
 
 /**
+ * Operações administrativas do catálogo de marcas. Escritas são restritas
+ * ao perfil ADMIN e a desativação mantém referências históricas preservadas.
+ */
+router.get('/marcas/gerenciamento', exigirAdministrador, adminController.getTodasMarcas);
+router.post('/marcas', exigirAdministrador, adminController.createMarca);
+router.patch('/marcas/:id', exigirAdministrador, adminController.updateMarca);
+
+/**
  * @swagger
  * /api/admin/modelos/catalogo:
  *   get:
@@ -181,7 +190,7 @@ router.get('/modelos/catalogo', adminController.getAllModelos);
  *       409:
  *         description: Código de produto já existe
  */
-router.post('/modelos', adminController.createModelo);
+router.post('/modelos', exigirAdministrador, adminController.createModelo);
 
 
 /**
@@ -226,7 +235,7 @@ router.post('/modelos', adminController.createModelo);
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/permissoes/:perfilId', adminController.getPermissoes);
+router.get('/permissoes/:perfilId', exigirAdministrador, adminController.getPermissoes);
 
 /**
  * @swagger
@@ -290,7 +299,7 @@ router.get('/permissoes/:perfilId', adminController.getPermissoes);
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/permissoes', adminController.updatePermissoes);
+router.put('/permissoes', exigirAdministrador, adminController.updatePermissoes);
 
 /**
  * @swagger
@@ -337,6 +346,6 @@ router.put('/permissoes', adminController.updatePermissoes);
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/usuarios/:id/perfil', adminController.updateUsuarioPerfil);
+router.put('/usuarios/:id/perfil', exigirAdministrador, adminController.updateUsuarioPerfil);
 
 export default router;
