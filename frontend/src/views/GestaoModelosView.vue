@@ -20,11 +20,13 @@ import {
   Trash2
 } from '@lucide/vue'
 import api from '../api/axios'
+import BrandManagerModal from '../components/BrandManagerModal.vue'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 interface Marca {
   id: string
   nome: string
+  ativo: boolean
 }
 
 interface PecaInfo {
@@ -81,6 +83,7 @@ const marcas  = ref<Marca[]>([])
 const loading       = ref(true)
 const loadingCreate = ref(false)
 const showModal     = ref(false)
+const showBrandManager = ref(false)
 const modalStep     = ref(1) // 1: Modelo, 2: Peças
 const searchQuery   = ref('')
 const toasts        = ref<Toast[]>([])
@@ -178,6 +181,19 @@ async function fetchMarcas() {
     marcas.value = data
   } catch {
     addToast('error', 'Erro ao carregar marcas.')
+  }
+}
+
+async function handleMarcaCreated(marca: Marca) {
+  await fetchMarcas()
+  form.value.marcaId = marca.id
+  addToast('success', `Marca "${marca.nome}" cadastrada e selecionada.`)
+}
+
+async function handleMarcaUpdated(marca: Marca) {
+  await fetchMarcas()
+  if (!marca.ativo && form.value.marcaId === marca.id) {
+    form.value.marcaId = ''
   }
 }
 
@@ -537,9 +553,20 @@ onUnmounted(() => {
 
               <!-- Marca -->
               <div class="form-field">
-                <label for="sel-marca" class="form-label">
-                  Marca <span class="required-star" aria-hidden="true">*</span>
-                </label>
+                <div class="form-label-row">
+                  <label for="sel-marca" class="form-label">
+                    Marca <span class="required-star" aria-hidden="true">*</span>
+                  </label>
+                  <button
+                    id="btn-gerenciar-marcas"
+                    type="button"
+                    class="brand-manage-link"
+                    @click="showBrandManager = true"
+                  >
+                    <Tag :size="13" aria-hidden="true" />
+                    <span>Gerenciar marcas</span>
+                  </button>
+                </div>
                 <div class="select-wrap">
                   <select
                     id="sel-marca"
@@ -547,7 +574,9 @@ onUnmounted(() => {
                     class="form-select"
                     :class="{ 'form-select--error': formErrors.marcaId }"
                   >
-                    <option value="" disabled>Selecione uma marca...</option>
+                    <option value="" disabled>
+                      {{ marcas.length ? 'Selecione uma marca...' : 'Nenhuma marca ativa cadastrada' }}
+                    </option>
                     <option v-for="m in marcas" :key="m.id" :value="m.id">{{ m.nome }}</option>
                   </select>
                   <ChevronDown :size="14" class="select-chevron" aria-hidden="true" />
@@ -765,6 +794,13 @@ onUnmounted(() => {
         </div>
       </Transition>
     </Teleport>
+
+    <BrandManagerModal
+      v-if="showBrandManager"
+      @close="showBrandManager = false"
+      @created="handleMarcaCreated"
+      @updated="handleMarcaUpdated"
+    />
 
   </div>
 </template>
@@ -1111,6 +1147,9 @@ onUnmounted(() => {
 }
 .form-field { display: flex; flex-direction: column; gap: 0.375rem; }
 .form-label { font-size: 0.8125rem; font-weight: 700; color: #334155; display: flex; align-items: center; gap: 0.25rem; }
+.form-label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.brand-manage-link { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0; border: 0; background: transparent; color: #334155; font: inherit; font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+.brand-manage-link:hover { color: #0f172a; text-decoration: underline; }
 .required-star { color: #0f172a; font-weight: 900; }
 .optional-tag { font-size: 0.7rem; font-weight: 500; color: #94a3b8; background: #f1f5f9; padding: 0.05rem 0.4rem; border-radius: 0.25rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .field-hint { font-size: 0.75rem; color: #64748b; margin-top: 0.15rem; }

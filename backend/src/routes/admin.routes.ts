@@ -139,6 +139,14 @@ router.get('/plantas', adminController.getPlantas);
 router.get('/marcas', adminController.getMarcas);
 
 /**
+ * Operações administrativas do catálogo de marcas. Escritas são restritas
+ * ao perfil ADMIN e a desativação mantém referências históricas preservadas.
+ */
+router.get('/marcas/gerenciamento', exigirAdministrador, adminController.getTodasMarcas);
+router.post('/marcas', exigirAdministrador, adminController.createMarca);
+router.patch('/marcas/:id', exigirAdministrador, adminController.updateMarca);
+
+/**
  * @swagger
  * /api/admin/modelos/catalogo:
  *   get:
