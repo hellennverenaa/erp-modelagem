@@ -37,6 +37,19 @@ const createMarcaSchema = z.object({
   nome: z.string().trim().min(1, 'O nome da marca é obrigatório.').max(100, 'O nome da marca deve ter no máximo 100 caracteres.'),
 });
 
+const createPerfilSchema = z.object({
+  nome: z.string().trim().min(2, 'Informe um nome com pelo menos 2 caracteres.').max(50),
+  descricao: z.string().trim().max(500).optional().nullable(),
+});
+
+const updatePerfilSchema = z.object({
+  nome: z.string().trim().min(2, 'Informe um nome com pelo menos 2 caracteres.').max(50).optional(),
+  descricao: z.string().trim().max(500).optional().nullable(),
+  ativo: z.boolean().optional(),
+}).refine((data) => data.nome !== undefined || data.descricao !== undefined || data.ativo !== undefined, {
+  message: 'Informe ao menos um campo para atualizar.',
+});
+
 const updateMarcaSchema = z.object({
   nome: z.string().trim().min(1, 'O nome da marca é obrigatório.').max(100, 'O nome da marca deve ter no máximo 100 caracteres.').optional(),
   ativo: z.boolean().optional(),
@@ -66,6 +79,114 @@ export class AdminController {
     } catch (error) {
       console.error('[AdminController] Erro ao listar perfis:', error);
       return res.status(500).json({ error: 'Erro ao listar perfis' });
+    }
+  }
+
+  /** Cria um perfil de acesso sem associá-lo a um cargo. */
+  public async createPerfil(req: Request, res: Response): Promise<Response> {
+    const parsed = createPerfilSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Dados inválidos para o perfil.',
+        code: 'PERFIL_VALIDATION_ERROR',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const perfilRepo = AppDataSource.getRepository(Perfil);
+      const nome = parsed.data.nome.replace(/\s+/g, ' ').toLocaleUpperCase('pt-BR');
+      if (nome === 'ADMIN') {
+        return res.status(409).json({
+          error: 'O nome ADMIN é reservado ao perfil administrativo do sistema.',
+          code: 'PERFIL_SYSTEM_NAME_RESERVED',
+        });
+      }
+      const existente = await perfilRepo.findOne({ where: { nome } });
+      if (existente) {
+        return res.status(409).json({
+          error: 'Já existe um perfil com esse nome.',
+          code: 'PERFIL_DUPLICATE_NAME',
+        });
+      }
+
+      const perfil = perfilRepo.create({
+        nome,
+        descricao: parsed.data.descricao?.trim() || null,
+        permissoes: {},
+        ativo: true,
+      });
+      return res.status(201).json(await perfilRepo.save(perfil));
+    } catch (error) {
+      console.error('[AdminController] Erro ao criar perfil:', error);
+      return res.status(500).json({ error: 'Erro ao criar perfil.' });
+    }
+  }
+
+  /** Atualiza dados do perfil ou o desativa sem apagar seu histórico. */
+  public async updatePerfil(req: Request, res: Response): Promise<Response> {
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) {
+      return res.status(400).json({ error: 'Identificador de perfil inválido.', code: 'PERFIL_ID_INVALID' });
+    }
+
+    const parsed = updatePerfilSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Dados inválidos para o perfil.',
+        code: 'PERFIL_VALIDATION_ERROR',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const perfilRepo = AppDataSource.getRepository(Perfil);
+      const perfil = await perfilRepo.findOne({ where: { id: id.data } });
+      if (!perfil) {
+        return res.status(404).json({ error: 'Perfil não encontrado.', code: 'PERFIL_NOT_FOUND' });
+      }
+
+      if (['ADMIN', 'VISUALIZADOR'].includes(perfil.nome) && (
+        (parsed.data.nome !== undefined && parsed.data.nome.trim().toLocaleUpperCase('pt-BR') !== perfil.nome) ||
+        parsed.data.ativo === false
+      )) {
+        return res.status(409).json({
+          error: `O perfil ${perfil.nome} é protegido e não pode ser renomeado ou desativado.`,
+          code: 'PERFIL_SYSTEM_PROTECTED',
+        });
+      }
+
+      if (parsed.data.nome !== undefined) {
+        const nome = parsed.data.nome.replace(/\s+/g, ' ').toLocaleUpperCase('pt-BR');
+        const duplicado = await perfilRepo.findOne({ where: { nome } });
+        if (duplicado && duplicado.id !== perfil.id) {
+          return res.status(409).json({ error: 'Já existe um perfil com esse nome.', code: 'PERFIL_DUPLICATE_NAME' });
+        }
+        perfil.nome = nome;
+      }
+
+      if (parsed.data.descricao !== undefined) {
+        perfil.descricao = parsed.data.descricao?.trim() || null;
+      }
+
+      if (parsed.data.ativo === false) {
+        const usuariosAssociados = await AppDataSource.getRepository(Usuario).count({ where: { perfilId: perfil.id } });
+        if (usuariosAssociados > 0) {
+          return res.status(409).json({
+            error: 'Reatribua os usuários deste perfil antes de desativá-lo.',
+            code: 'PERFIL_HAS_USERS',
+          });
+        }
+      }
+
+      if (parsed.data.ativo !== undefined) {
+        perfil.ativo = parsed.data.ativo;
+      }
+
+      return res.json(await perfilRepo.save(perfil));
+    } catch (error) {
+      console.error('[AdminController] Erro ao atualizar perfil:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar perfil.' });
     }
   }
 

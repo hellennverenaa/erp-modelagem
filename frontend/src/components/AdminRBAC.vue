@@ -39,6 +39,7 @@ interface Perfil {
   id: string
   nome: string
   descricao: string | null
+  ativo: boolean
 }
 
 interface Sector {
@@ -70,6 +71,10 @@ const permissions = ref<Permission[]>([])
 
 const selectedPerfilId = ref<string>('')
 const filterText = ref<string>('')
+const showPerfilModal = ref(false)
+const editingPerfilId = ref<string | null>(null)
+const savingPerfil = ref(false)
+const formPerfil = ref({ nome: '', descricao: '' })
 
 // Loaders
 const loadingUsers = ref(false)
@@ -111,11 +116,72 @@ async function fetchMetadata() {
     profiles.value = profilesRes.data
     sectors.value = sectorsRes.data
 
-    if (profiles.value.length > 0) {
-      selectedPerfilId.value = profiles.value[0].id
+    if (!profiles.value.some(profile => profile.id === selectedPerfilId.value && profile.ativo)) {
+      selectedPerfilId.value = profiles.value.find(profile => profile.ativo)?.id || ''
     }
   } catch (error) {
     showToast('Erro ao carregar perfis e setores.', 'error')
+  }
+}
+
+function abrirNovoPerfil() {
+  editingPerfilId.value = null
+  formPerfil.value = { nome: '', descricao: '' }
+  showPerfilModal.value = true
+}
+
+function editarPerfil(perfil: Perfil) {
+  editingPerfilId.value = perfil.id
+  formPerfil.value = { nome: perfil.nome, descricao: perfil.descricao || '' }
+  showPerfilModal.value = true
+}
+
+async function salvarPerfil() {
+  const nome = formPerfil.value.nome.trim()
+  if (nome.length < 2) {
+    showToast('Informe um nome de perfil com pelo menos 2 caracteres.', 'error')
+    return
+  }
+
+  savingPerfil.value = true
+  try {
+    const payload = { nome, descricao: formPerfil.value.descricao.trim() || null }
+    const response = editingPerfilId.value
+      ? await api.patch(`/admin/perfis/${editingPerfilId.value}`, payload)
+      : await api.post('/admin/perfis', payload)
+
+    const perfilSalvo = response.data as Perfil
+    const isEditing = editingPerfilId.value !== null
+    showPerfilModal.value = false
+    await fetchMetadata()
+    selectedPerfilId.value = perfilSalvo.id
+    showToast(isEditing ? 'Perfil atualizado.' : 'Perfil criado.')
+  } catch (error: any) {
+    showToast(error.response?.data?.error || 'Não foi possível salvar o perfil.', 'error')
+  } finally {
+    savingPerfil.value = false
+  }
+}
+
+async function alternarStatusPerfil(perfil: Perfil) {
+  const ativo = !perfil.ativo
+  if (!ativo && ['ADMIN', 'VISUALIZADOR'].includes(perfil.nome)) {
+    showToast(`O perfil ${perfil.nome} é protegido.`, 'error')
+    return
+  }
+  if (!ativo && !window.confirm(`Desativar o perfil ${perfil.nome}? Usuários vinculados precisam ser reatribuídos antes.`)) {
+    return
+  }
+
+  try {
+    await api.patch(`/admin/perfis/${perfil.id}`, { ativo })
+    await fetchMetadata()
+    if (!ativo && selectedPerfilId.value === perfil.id) {
+      selectedPerfilId.value = profiles.value.find(item => item.ativo)?.id || ''
+    }
+    showToast(ativo ? 'Perfil reativado.' : 'Perfil desativado.')
+  } catch (error: any) {
+    showToast(error.response?.data?.error || 'Não foi possível alterar o status do perfil.', 'error')
   }
 }
 
@@ -407,7 +473,7 @@ onMounted(() => {
                           @change="alterarPerfilColaborador(user.id, $event)"
                           :disabled="updatingUserProfile[user.id]"
                         >
-                          <option v-for="prof in profiles" :key="prof.id" :value="prof.id">
+                          <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
                             {{ prof.nome }}
                           </option>
                         </select>
@@ -452,13 +518,44 @@ onMounted(() => {
       <Transition name="fade-slide">
         <div v-if="activeTab === 'permissoes'" class="tab-panel" role="tabpanel">
           <div class="matrix-setup">
+            <div class="panel-card config-card">
+              <div class="profile-manager-header">
+                <div>
+                  <h3 class="section-title">Perfis de acesso</h3>
+                  <p class="field-hint-text">Perfis são conjuntos de permissões e não dependem do cargo cadastrado.</p>
+                </div>
+                <button type="button" class="btn-save" @click="abrirNovoPerfil">Novo perfil</button>
+              </div>
+              <div class="profile-list">
+                <div v-for="profile in profiles" :key="profile.id" class="profile-row">
+                  <div class="profile-row-info">
+                    <strong>{{ profile.nome }}</strong>
+                    <span>{{ profile.descricao || 'Sem descrição' }}</span>
+                  </div>
+                  <span :class="['status-pill', profile.ativo ? 'status-pill--active' : 'status-pill--inactive']">
+                    {{ profile.ativo ? 'Ativo' : 'Inativo' }}
+                  </span>
+                  <button type="button" class="btn-edit-user" @click="editarPerfil(profile)">Editar</button>
+                  <button
+                    type="button"
+                    class="btn-edit-user"
+                    :disabled="['ADMIN', 'VISUALIZADOR'].includes(profile.nome) && profile.ativo"
+                    @click="alternarStatusPerfil(profile)"
+                  >
+                    {{ profile.ativo ? 'Desativar' : 'Reativar' }}
+                  </button>
+                </div>
+                <p v-if="profiles.length === 0" class="field-hint-text">Nenhum perfil cadastrado.</p>
+              </div>
+            </div>
+
             <!-- Filter Options Card -->
             <div class="panel-card config-card">
               <div class="dropdown-group">
                 <label for="perfil-select" class="dropdown-label">Perfil de Usuário</label>
                 <div class="select-wrapper">
                   <select id="perfil-select" v-model="selectedPerfilId" class="perfil-select">
-                    <option v-for="prof in profiles" :key="prof.id" :value="prof.id">
+                    <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
                       {{ prof.nome }} — {{ prof.descricao || 'Sem descrição' }}
                     </option>
                   </select>
@@ -579,7 +676,7 @@ onMounted(() => {
                 <label for="modal-perfil" class="input-label-tag">Perfil de Acesso</label>
                 <div class="select-wrapper">
                   <select id="modal-perfil" v-model="formUsuario.perfilId" class="modal-select-input" required>
-                    <option v-for="prof in profiles" :key="prof.id" :value="prof.id">
+                    <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
                       {{ prof.nome }}
                     </option>
                   </select>
@@ -614,6 +711,33 @@ onMounted(() => {
       </div>
     </Transition>
 
+    <Transition name="fade-slide">
+      <div v-if="showPerfilModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="perfil-modal-title">
+        <div class="modal-window">
+          <header class="modal-header">
+            <h2 id="perfil-modal-title" class="modal-title-text">{{ editingPerfilId ? 'Editar perfil' : 'Novo perfil de acesso' }}</h2>
+            <button type="button" class="btn-close-modal" @click="showPerfilModal = false" aria-label="Fechar modal">&times;</button>
+          </header>
+          <form class="modal-body-content" @submit.prevent="salvarPerfil">
+            <div class="form-input-group">
+              <label for="perfil-nome" class="input-label-tag">Nome do perfil</label>
+              <input id="perfil-nome" v-model="formPerfil.nome" class="modal-select-input" maxlength="50" required />
+            </div>
+            <div class="form-input-group">
+              <label for="perfil-descricao" class="input-label-tag">Descrição</label>
+              <textarea id="perfil-descricao" v-model="formPerfil.descricao" class="modal-select-input" maxlength="500" rows="3"></textarea>
+            </div>
+            <div class="modal-actions-row">
+              <button type="button" class="btn-cancel" @click="showPerfilModal = false">Cancelar</button>
+              <button type="submit" class="btn-save" :disabled="savingPerfil">
+                {{ savingPerfil ? 'Salvando…' : 'Salvar perfil' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </Transition>
+
     <!-- TOAST NOTIFICATION CONTAINER -->
     <div class="toast-container" aria-live="polite">
       <TransitionGroup name="toast-anim">
@@ -640,6 +764,55 @@ onMounted(() => {
   flex-direction: column;
   gap: 1.5rem;
   width: 100%;
+}
+
+.profile-manager-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.profile-list {
+  display: grid;
+  gap: 0.625rem;
+  margin-top: 1rem;
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.625rem;
+  background: #fff;
+}
+
+.profile-row-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.profile-row-info span {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 640px) {
+  .profile-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .profile-row-info {
+    flex-basis: 100%;
+  }
 }
 
 /* ═══════════════════════════════════════

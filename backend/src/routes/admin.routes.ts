@@ -48,7 +48,65 @@ router.get('/usuarios', exigirAdministrador, adminController.getUsuarios);
  *       401:
  *         description: Não autorizado
  */
-router.get('/perfis', adminController.getPerfis);
+router.get('/perfis', exigirAdministrador, adminController.getPerfis);
+
+/**
+ * @swagger
+ * /api/admin/perfis:
+ *   post:
+ *     summary: Cria um perfil de acesso
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [nome]
+ *             properties:
+ *               nome: { type: string, example: "OPERACAO_CORTE" }
+ *               descricao: { type: string, nullable: true }
+ *     responses:
+ *       201: { description: Perfil criado }
+ *       400: { description: Dados inválidos }
+ *       403: { description: Acesso restrito a administradores }
+ *       409: { description: Nome duplicado ou reservado }
+ */
+router.post('/perfis', exigirAdministrador, adminController.createPerfil);
+
+/**
+ * @swagger
+ * /api/admin/perfis/{id}:
+ *   patch:
+ *     summary: Edita ou desativa um perfil de acesso
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               nome: { type: string }
+ *               descricao: { type: string, nullable: true }
+ *               ativo: { type: boolean }
+ *     responses:
+ *       200: { description: Perfil atualizado }
+ *       400: { description: Dados inválidos }
+ *       403: { description: Acesso restrito a administradores }
+ *       404: { description: Perfil não encontrado }
+ *       409: { description: Perfil protegido, nome duplicado ou usuários vinculados }
+ */
+router.patch('/perfis/:id', exigirAdministrador, adminController.updatePerfil);
 
 /**
  * @swagger
