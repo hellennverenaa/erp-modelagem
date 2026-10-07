@@ -15,7 +15,8 @@ const itemRotaSchema = z.object({
 });
 
 const salvarRotaSchema = z.object({
-  rota: z.array(itemRotaSchema)
+  // Uma rota vazia apagaria a configuração existente na transação abaixo.
+  rota: z.array(itemRotaSchema).min(1, { message: 'A rota deve conter ao menos um setor.' })
 });
 
 export class RotasController {

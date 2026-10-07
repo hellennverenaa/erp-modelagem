@@ -178,7 +178,11 @@ export class AuthService {
       );
     }
     const unixNome = decoded?.nome || legacyResponse?.data?.nome || 'Usuário ERP';
-    const unixUsuario = decoded?.usuario || legacyResponse?.data?.usuario || usuario;
+    // O SSO pode variar a capitalização do identificador. A identidade local
+    // do ERP é canônica e case-insensitive para impedir usuários duplicados.
+    const unixUsuario = String(
+      decoded?.usuario || legacyResponse?.data?.usuario || usuario
+    ).trim().toLowerCase();
     const unixFuncao = decoded?.funcao || 'Operador';
 
     // 4. Extração agnóstica das chaves duplas de crachá (RFID e Código de Barras)
@@ -225,10 +229,12 @@ export class AuthService {
     }
 
     // 6. Upsert no banco de dados local (PostgreSQL)
-    let userLocal = await usuarioRepository.findOne({
-      where: { usuario: unixUsuario },
-      relations: { perfil: true }
-    });
+    let userLocal = await usuarioRepository
+      .createQueryBuilder('usuario')
+      .leftJoinAndSelect('usuario.perfil', 'perfil')
+      .where('LOWER(usuario.usuario) = :usuario', { usuario: unixUsuario })
+      .orderBy('usuario.created_at', 'ASC')
+      .getOne();
 
     if (userLocal && !userLocal.ativo) {
       throw new AuthError('Usuário inativo.', 403, 'AUTH_USER_INACTIVE');

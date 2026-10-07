@@ -40,6 +40,8 @@ app.use('/api/', globalLimiter);
 // Auth: 5 tentativas / 15 min para login (brute-force protection)
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/auth/login', authLimiter);
+app.use('/auth/register', authLimiter);
 // Heavy: 10 operações / 1 hora para relatórios e dossiês
 app.use('/api/relatorios/', heavyLimiter);
 app.use('/api/dossies/', heavyLimiter);
@@ -83,6 +85,8 @@ app.use('/uploads', (_req, res, next) => {
 }, express.static(path.join(__dirname, '../uploads')));
 
 app.use('/api', apiRoutes);
+// O gateway remove /api/erp-modelagem antes de encaminhar ao ERP.
+app.use('/', apiRoutes);
 
 // ═══ CAMADA 8: TRATAMENTO DE ERROS CENTRALIZADO ═══
 app.use(errorHandler);
