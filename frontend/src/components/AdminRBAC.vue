@@ -93,6 +93,7 @@ const formPerfil = ref({ nome: '', descricao: '' })
 // Loaders
 const loadingUsers = ref(false)
 const loadingRBAC = ref(false)
+const permissionLoadError = ref('')
 const updatingPermissions = ref<Record<string, boolean>>({})
 const updatingUserProfile = ref<Record<string, boolean>>({})
 
@@ -115,7 +116,7 @@ async function fetchUsers() {
     const { data } = await api.get('/admin/usuarios')
     users.value = data
   } catch (error: any) {
-    showToast('Falha ao carregar lista de usuários.', 'error')
+    showToast(error.response?.data?.error || 'Falha ao carregar lista de usuários.', 'error')
   } finally {
     loadingUsers.value = false
   }
@@ -133,8 +134,8 @@ async function fetchMetadata() {
     if (!profiles.value.some(profile => profile.id === selectedPerfilId.value && profile.ativo)) {
       selectedPerfilId.value = profiles.value.find(profile => profile.ativo)?.id || ''
     }
-  } catch (error) {
-    showToast('Erro ao carregar perfis e setores.', 'error')
+  } catch (error: any) {
+    showToast(error.response?.data?.error || 'Erro ao carregar perfis e setores.', 'error')
   }
 }
 
@@ -202,11 +203,13 @@ async function alternarStatusPerfil(perfil: Perfil) {
 async function fetchPermissions() {
   if (!selectedPerfilId.value) return
   loadingRBAC.value = true
+  permissionLoadError.value = ''
   try {
     const { data } = await api.get(`/admin/permissoes/${selectedPerfilId.value}`)
     permissions.value = data
-  } catch (error) {
-    showToast('Erro ao obter matriz de acessos.', 'error')
+  } catch (error: any) {
+    permissionLoadError.value = error.response?.data?.error || 'Erro ao obter matriz de acessos.'
+    showToast(permissionLoadError.value, 'error')
   } finally {
     loadingRBAC.value = false
   }
@@ -329,8 +332,8 @@ async function togglePermission(setorId: string | null, acao: string) {
     const actionLabel = getActionLabel(acao)
     const sectorName = setorId ? sectors.value.find(s => s.id === setorId)?.nome : 'Geral/Global'
     showToast(`Permissão "${actionLabel}" (${sectorName}) atualizada com sucesso.`)
-  } catch (error) {
-    showToast('Falha ao salvar alteração de permissão.', 'error')
+  } catch (error: any) {
+    showToast(error.response?.data?.error || 'Falha ao salvar alteração de permissão.', 'error')
   } finally {
     updatingPermissions.value[key] = false
   }
@@ -569,7 +572,7 @@ onMounted(() => {
                 <label for="perfil-select" class="dropdown-label">Perfil de Usuário</label>
                 <div class="select-wrapper">
                   <select id="perfil-select" v-model="selectedPerfilId" class="perfil-select">
-                    <option v-for="prof in profiles.filter(item => item.ativo && (item.nome !== 'ADMIN_AUTOMACAO' || selectedUser?.perfil?.nome === item.nome))" :key="prof.id" :value="prof.id">
+                    <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
                       {{ prof.nome }} — {{ prof.descricao || 'Sem descrição' }}
                     </option>
                   </select>
@@ -581,6 +584,10 @@ onMounted(() => {
             <div v-if="loadingRBAC" class="loading-state card-loading">
               <RefreshCw :size="32" class="spin-anim loading-spinner" />
               <span>Buscando matriz de permissões do perfil selecionado...</span>
+            </div>
+
+            <div v-else-if="permissionLoadError" class="field-hint-text" role="alert">
+              {{ permissionLoadError }}
             </div>
 
             <div v-else class="matrix-layout">

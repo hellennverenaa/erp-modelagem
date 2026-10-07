@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
-import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
+import { PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware de RBAC Dinâmico — Zero Hardcode
@@ -101,10 +101,7 @@ export function exigirAdminAutomacao(req: Request, res: Response, next: NextFunc
     return;
   }
 
-  if (
-    req.user.perfilNome?.trim().toUpperCase() !== PERFIL_ADMIN_AUTOMACAO ||
-    !ehUsuarioAdminAutomacao(req.user.usuario || req.user.username)
-  ) {
+  if (req.user.perfilNome?.trim().toUpperCase() !== PERFIL_ADMIN_AUTOMACAO) {
     res.status(403).json({
       error: 'Acesso restrito à equipe autorizada de automação.',
       code: 'RBAC_AUTOMACAO_REQUIRED',
