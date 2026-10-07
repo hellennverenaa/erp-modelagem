@@ -19,6 +19,15 @@ export function getApiOrigin(): string {
   }
 }
 
+export function getApiSocketPath(): string {
+  try {
+    const prefix = new URL(apiBaseUrl, window.location.origin).pathname.replace(/\/+$/, '')
+    return `${prefix}/socket.io`
+  } catch {
+    return '/api/erp-modelagem/socket.io'
+  }
+}
+
 // Tokens temporários antigos não são JWTs e devem ser removidos para evitar
 // que a aplicação continue enviando Bearer dev-login-bypass-token.
 if (localStorage.getItem('erp_token') === 'dev-login-bypass-token') {

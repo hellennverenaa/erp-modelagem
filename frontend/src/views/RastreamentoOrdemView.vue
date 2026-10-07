@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { io, Socket } from 'socket.io-client'
-import api, { getApiOrigin } from '../api/axios'
+import api, { getApiOrigin, getApiSocketPath } from '../api/axios'
 import { gsap } from 'gsap'
 import {
   ArrowLeft,
@@ -474,6 +474,7 @@ function initWebSocket() {
   const token = localStorage.getItem('erp_token') || localStorage.getItem('token') || ''
 
   socket = io(socketUrl, {
+    path: getApiSocketPath(),
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { io } from 'socket.io-client'
-import api, { getApiOrigin } from '../api/axios'
+import api, { getApiOrigin, getApiSocketPath } from '../api/axios'
 import {
   Clock,
   AlertTriangle,
@@ -201,6 +201,7 @@ function initWebSocket() {
   const token = localStorage.getItem('erp_token') || localStorage.getItem('token') || ''
 
   socket = io(socketUrl, {
+    path: getApiSocketPath(),
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1500,
