@@ -22,7 +22,7 @@ const router = createRouter({
             const userRaw = localStorage.getItem('erp_user')
             const user = userRaw ? JSON.parse(userRaw) : null
             const perfil = user?.perfilNome?.toUpperCase() || ''
-            if (perfil === 'ADMIN') return '/dashboard/rbac'
+            if (perfil === 'ADMIN_AUTOMACAO') return '/dashboard/rbac'
             return '/dashboard/ordens'
           }
         },
@@ -111,7 +111,7 @@ router.beforeEach((to, _from, next) => {
     }
 
     // Validação estrita de RBAC de rotas
-    if (to.name === 'rbac' && perfil !== 'ADMIN') {
+    if (to.name === 'rbac' && perfil !== 'ADMIN_AUTOMACAO') {
       next({ name: 'acesso-negado' })
       return
     }

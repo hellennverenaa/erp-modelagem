@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { AppDataSource } from '../config/database';
 import { Usuario } from '../entities/Usuario';
 import { Perfil } from '../entities/Perfil';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 import { Planta } from '../entities/Planta';
 
 export interface SsoLoginResult {
@@ -241,6 +242,13 @@ export class AuthService {
     }
 
     if (userLocal) {
+      if (ehUsuarioAdminAutomacao(unixUsuario)) {
+        const perfilAdminAutomacao = await perfilRepository.findOne({
+          where: { nome: PERFIL_ADMIN_AUTOMACAO, ativo: true },
+        });
+        if (perfilAdminAutomacao) userLocal.perfil = perfilAdminAutomacao;
+      }
+
       userLocal.nomeCompleto = unixNome;
       if (unixEmail) userLocal.email = unixEmail;
       userLocal.cargo = unixFuncao;
@@ -259,8 +267,14 @@ export class AuthService {
           relations: { perfil: true }
         })) || userLocal;
     } else {
-      let perfil = await perfilRepository.findOne({ where: { nome: 'OPERADOR' } });
+      const nomePerfilInicial = ehUsuarioAdminAutomacao(unixUsuario)
+        ? PERFIL_ADMIN_AUTOMACAO
+        : 'OPERADOR';
+      let perfil = await perfilRepository.findOne({ where: { nome: nomePerfilInicial, ativo: true } });
       if (!perfil) {
+        if (nomePerfilInicial === PERFIL_ADMIN_AUTOMACAO) {
+          throw new AuthError('Perfil da equipe de automação não foi provisionado.', 500, 'AUTH_RBAC_PROFILE_MISSING');
+        }
         perfil = perfilRepository.create({
           nome: 'OPERADOR',
           descricao: 'Perfil padrão de operador de fábrica',

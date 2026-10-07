@@ -24,6 +24,11 @@ const isAdmin = computed(() => {
   return perfil === 'ADMIN'
 })
 
+const isAdminAutomacao = computed(() => {
+  if (!user.value) return false
+  return user.value.perfilNome?.trim().toUpperCase() === 'ADMIN_AUTOMACAO'
+})
+
 const isModelista = computed(() => {
   if (!user.value) return false
   const perfil = user.value.perfilNome?.toUpperCase() || ''
@@ -68,6 +73,7 @@ export const authStore = {
   user,
   isAuthenticated,
   isAdmin,
+  isAdminAutomacao,
   isModelista,
   isGerente,
   isOperador,

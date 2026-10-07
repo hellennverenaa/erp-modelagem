@@ -11,6 +11,7 @@ import { Marca } from '../entities/Marca';
 import { IsNull } from 'typeorm';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Peca } from '../entities/Peca';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 
 // ─── Schema de validação para criação de Modelo ─────────────────────────────
 const createModeloSchema = z.object({
@@ -96,9 +97,9 @@ export class AdminController {
     try {
       const perfilRepo = AppDataSource.getRepository(Perfil);
       const nome = parsed.data.nome.replace(/\s+/g, ' ').toLocaleUpperCase('pt-BR');
-      if (nome === 'ADMIN') {
+      if (['ADMIN', 'ADMIN_AUTOMACAO'].includes(nome)) {
         return res.status(409).json({
-          error: 'O nome ADMIN é reservado ao perfil administrativo do sistema.',
+          error: 'Esse nome é reservado a um perfil de sistema.',
           code: 'PERFIL_SYSTEM_NAME_RESERVED',
         });
       }
@@ -146,7 +147,7 @@ export class AdminController {
         return res.status(404).json({ error: 'Perfil não encontrado.', code: 'PERFIL_NOT_FOUND' });
       }
 
-      if (['ADMIN', 'VISUALIZADOR'].includes(perfil.nome) && (
+      if (['ADMIN', 'VISUALIZADOR', PERFIL_ADMIN_AUTOMACAO].includes(perfil.nome) && (
         (parsed.data.nome !== undefined && parsed.data.nome.trim().toLocaleUpperCase('pt-BR') !== perfil.nome) ||
         parsed.data.ativo === false
       )) {
@@ -613,6 +614,17 @@ export class AdminController {
       const novoPerfil = await perfilRepo.findOne({ where: { id: perfilId } });
       if (!novoPerfil) {
         return res.status(404).json({ error: 'Perfil não encontrado.' });
+      }
+
+      const usuarioAdminAutomacao = ehUsuarioAdminAutomacao(user.usuario);
+      if (
+        (novoPerfil.nome === PERFIL_ADMIN_AUTOMACAO && !usuarioAdminAutomacao) ||
+        (usuarioAdminAutomacao && novoPerfil.nome !== PERFIL_ADMIN_AUTOMACAO)
+      ) {
+        return res.status(403).json({
+          error: 'O perfil ADMIN_AUTOMACAO só pode ser provisionado para as contas autorizadas.',
+          code: 'RBAC_AUTOMACAO_ASSIGNMENT_RESTRICTED',
+        });
       }
 
       user.perfil = novoPerfil;

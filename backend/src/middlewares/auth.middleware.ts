@@ -95,6 +95,7 @@ export async function verificaToken(req: Request, res: Response, next: NextFunct
     req.user = {
       ...decoded,
       userId: userLocal.id,
+      usuario: userLocal.usuario,
       perfilId: userLocal.perfilId,
       perfilNome: userLocal.perfil?.nome || decoded.perfilNome || '',
       plantaId: userLocal.plantaId,

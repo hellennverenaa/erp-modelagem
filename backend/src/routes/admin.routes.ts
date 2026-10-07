@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller';
-import { exigirAdministrador } from '../middlewares/rbac.middleware';
+import { exigirAdministrador, exigirAdminAutomacao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const adminController = new AdminController();
@@ -31,7 +31,7 @@ const adminController = new AdminController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/usuarios', exigirAdministrador, adminController.getUsuarios);
+router.get('/usuarios', exigirAdminAutomacao, adminController.getUsuarios);
 
 /**
  * @swagger
@@ -48,7 +48,7 @@ router.get('/usuarios', exigirAdministrador, adminController.getUsuarios);
  *       401:
  *         description: Não autorizado
  */
-router.get('/perfis', exigirAdministrador, adminController.getPerfis);
+router.get('/perfis', exigirAdminAutomacao, adminController.getPerfis);
 
 /**
  * @swagger
@@ -74,7 +74,7 @@ router.get('/perfis', exigirAdministrador, adminController.getPerfis);
  *       403: { description: Acesso restrito a administradores }
  *       409: { description: Nome duplicado ou reservado }
  */
-router.post('/perfis', exigirAdministrador, adminController.createPerfil);
+router.post('/perfis', exigirAdminAutomacao, adminController.createPerfil);
 
 /**
  * @swagger
@@ -106,7 +106,7 @@ router.post('/perfis', exigirAdministrador, adminController.createPerfil);
  *       404: { description: Perfil não encontrado }
  *       409: { description: Perfil protegido, nome duplicado ou usuários vinculados }
  */
-router.patch('/perfis/:id', exigirAdministrador, adminController.updatePerfil);
+router.patch('/perfis/:id', exigirAdminAutomacao, adminController.updatePerfil);
 
 /**
  * @swagger
@@ -293,7 +293,7 @@ router.post('/modelos', exigirAdministrador, adminController.createModelo);
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/permissoes/:perfilId', exigirAdministrador, adminController.getPermissoes);
+router.get('/permissoes/:perfilId', exigirAdminAutomacao, adminController.getPermissoes);
 
 /**
  * @swagger
@@ -357,7 +357,7 @@ router.get('/permissoes/:perfilId', exigirAdministrador, adminController.getPerm
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/permissoes', exigirAdministrador, adminController.updatePermissoes);
+router.put('/permissoes', exigirAdminAutomacao, adminController.updatePermissoes);
 
 /**
  * @swagger
@@ -404,6 +404,6 @@ router.put('/permissoes', exigirAdministrador, adminController.updatePermissoes)
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/usuarios/:id/perfil', exigirAdministrador, adminController.updateUsuarioPerfil);
+router.put('/usuarios/:id/perfil', exigirAdminAutomacao, adminController.updateUsuarioPerfil);
 
 export default router;

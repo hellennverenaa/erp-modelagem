@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware de RBAC Dinâmico — Zero Hardcode
@@ -88,6 +89,26 @@ export function exigirAdministrador(req: Request, res: Response, next: NextFunct
 
   if (req.user.perfilNome?.trim().toUpperCase() !== 'ADMIN') {
     res.status(403).json({ error: 'Acesso restrito ao perfil ADMIN.', code: 'RBAC_ADMIN_REQUIRED' });
+    return;
+  }
+
+  next();
+}
+
+export function exigirAdminAutomacao(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
+    return;
+  }
+
+  if (
+    req.user.perfilNome?.trim().toUpperCase() !== PERFIL_ADMIN_AUTOMACAO ||
+    !ehUsuarioAdminAutomacao(req.user.usuario || req.user.username)
+  ) {
+    res.status(403).json({
+      error: 'Acesso restrito à equipe autorizada de automação.',
+      code: 'RBAC_AUTOMACAO_REQUIRED',
+    });
     return;
   }
 

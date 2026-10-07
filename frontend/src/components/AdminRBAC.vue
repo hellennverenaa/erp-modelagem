@@ -62,6 +62,20 @@ interface Toast {
   type: 'success' | 'error'
 }
 
+const contasAdminAutomacao = new Set([
+  'hellen.magalhaes',
+  'jose.falcao',
+  'leone.santana',
+])
+
+function isContaAdminAutomacao(usuario: string) {
+  return contasAdminAutomacao.has(usuario.trim().toLowerCase())
+}
+
+function isPerfilSistema(nome: string) {
+  return ['ADMIN', 'VISUALIZADOR', 'ADMIN_AUTOMACAO'].includes(nome)
+}
+
 // State
 const activeTab = ref<'usuarios' | 'permissoes'>('usuarios')
 const users = ref<User[]>([])
@@ -165,7 +179,7 @@ async function salvarPerfil() {
 
 async function alternarStatusPerfil(perfil: Perfil) {
   const ativo = !perfil.ativo
-  if (!ativo && ['ADMIN', 'VISUALIZADOR'].includes(perfil.nome)) {
+  if (!ativo && isPerfilSistema(perfil.nome)) {
     showToast(`O perfil ${perfil.nome} é protegido.`, 'error')
     return
   }
@@ -471,9 +485,9 @@ onMounted(() => {
                           :value="user.perfil?.id"
                           class="table-select-profile"
                           @change="alterarPerfilColaborador(user.id, $event)"
-                          :disabled="updatingUserProfile[user.id]"
+                          :disabled="updatingUserProfile[user.id] || isContaAdminAutomacao(user.usuario)"
                         >
-                          <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
+                          <option v-for="prof in profiles.filter(item => item.ativo && (item.nome !== 'ADMIN_AUTOMACAO' || user.perfil?.nome === item.nome))" :key="prof.id" :value="prof.id">
                             {{ prof.nome }}
                           </option>
                         </select>
@@ -539,7 +553,7 @@ onMounted(() => {
                   <button
                     type="button"
                     class="btn-edit-user"
-                    :disabled="['ADMIN', 'VISUALIZADOR'].includes(profile.nome) && profile.ativo"
+                    :disabled="isPerfilSistema(profile.nome) && profile.ativo"
                     @click="alternarStatusPerfil(profile)"
                   >
                     {{ profile.ativo ? 'Desativar' : 'Reativar' }}
@@ -555,7 +569,7 @@ onMounted(() => {
                 <label for="perfil-select" class="dropdown-label">Perfil de Usuário</label>
                 <div class="select-wrapper">
                   <select id="perfil-select" v-model="selectedPerfilId" class="perfil-select">
-                    <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
+                    <option v-for="prof in profiles.filter(item => item.ativo && (item.nome !== 'ADMIN_AUTOMACAO' || selectedUser?.perfil?.nome === item.nome))" :key="prof.id" :value="prof.id">
                       {{ prof.nome }} — {{ prof.descricao || 'Sem descrição' }}
                     </option>
                   </select>
@@ -721,7 +735,14 @@ onMounted(() => {
           <form class="modal-body-content" @submit.prevent="salvarPerfil">
             <div class="form-input-group">
               <label for="perfil-nome" class="input-label-tag">Nome do perfil</label>
-              <input id="perfil-nome" v-model="formPerfil.nome" class="modal-select-input" maxlength="50" required />
+                  <input
+                    id="perfil-nome"
+                    v-model="formPerfil.nome"
+                    class="modal-select-input"
+                    maxlength="50"
+                    :disabled="!!editingPerfilId && isPerfilSistema(formPerfil.nome)"
+                    required
+                  />
             </div>
             <div class="form-input-group">
               <label for="perfil-descricao" class="input-label-tag">Descrição</label>

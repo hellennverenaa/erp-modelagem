@@ -42,9 +42,9 @@ const visibleNavItems = computed(() => {
       const perfil = authStore.user.value?.perfilNome?.toUpperCase() || ''
       return authStore.isAdmin.value || authStore.isGerente.value || perfil === 'SUPERVISOR_SETOR'
     }
-    // Permissões RBAC é exclusivo para ADMIN
+    // Gestão de perfis RBAC é exclusiva para a equipe de automação
     if (item.to === '/dashboard/rbac') {
-      return authStore.isAdmin.value
+      return authStore.isAdminAutomacao.value
     }
     // Construtor de Rota é acessível por ADMIN, MODELISTA ou GERENTE
     if (item.to === '/dashboard/rotas') {
