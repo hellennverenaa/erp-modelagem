@@ -8,10 +8,24 @@ import { Setor } from '../entities/Setor';
 import { Modelo } from '../entities/Modelo';
 import { Planta } from '../entities/Planta';
 import { Marca } from '../entities/Marca';
-import { IsNull } from 'typeorm';
+import { EntityManager, In, IsNull } from 'typeorm';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Peca } from '../entities/Peca';
 import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
+import { carregarCatalogoRbac } from '../services/rbac-catalog.service';
+import { AuditLog } from '../entities/AuditLog';
+
+async function auditarRbac(manager: EntityManager, req: Request, acao: string, entidadeTipo: string, entidadeId: string, anteriores: Record<string, unknown> | null, novos: Record<string, unknown> | null) {
+  await manager.getRepository(AuditLog).save(manager.getRepository(AuditLog).create({
+    usuarioId: req.user?.userId || null,
+    acao,
+    entidadeTipo,
+    entidadeId,
+    dadosAnteriores: anteriores,
+    dadosNovos: novos,
+    ipAddress: req.ip || null,
+  }));
+}
 
 // ─── Schema de validação para criação de Modelo ─────────────────────────────
 const createModeloSchema = z.object({
@@ -117,7 +131,12 @@ export class AdminController {
         permissoes: {},
         ativo: true,
       });
-      return res.status(201).json(await perfilRepo.save(perfil));
+      const salvo = await AppDataSource.transaction(async (manager) => {
+        const criado = await manager.getRepository(Perfil).save(perfil);
+        await auditarRbac(manager, req, 'RBAC_PERFIL_CRIADO', 'perfis', criado.id, null, { nome: criado.nome, descricao: criado.descricao, ativo: criado.ativo });
+        return criado;
+      });
+      return res.status(201).json(salvo);
     } catch (error) {
       console.error('[AdminController] Erro ao criar perfil:', error);
       return res.status(500).json({ error: 'Erro ao criar perfil.' });
@@ -157,8 +176,15 @@ export class AdminController {
         });
       }
 
+      const anteriores = { nome: perfil.nome, descricao: perfil.descricao, ativo: perfil.ativo };
       if (parsed.data.nome !== undefined) {
         const nome = parsed.data.nome.replace(/\s+/g, ' ').toLocaleUpperCase('pt-BR');
+        if (['ADMIN', 'ADMIN_AUTOMACAO', 'VISUALIZADOR'].includes(nome) && nome !== perfil.nome) {
+          return res.status(409).json({
+            error: 'Esse nome é reservado a um perfil de sistema.',
+            code: 'PERFIL_SYSTEM_NAME_RESERVED',
+          });
+        }
         const duplicado = await perfilRepo.findOne({ where: { nome } });
         if (duplicado && duplicado.id !== perfil.id) {
           return res.status(409).json({ error: 'Já existe um perfil com esse nome.', code: 'PERFIL_DUPLICATE_NAME' });
@@ -184,7 +210,15 @@ export class AdminController {
         perfil.ativo = parsed.data.ativo;
       }
 
-      return res.json(await perfilRepo.save(perfil));
+      const salvo = await AppDataSource.transaction(async (manager) => {
+        const atualizado = await manager.getRepository(Perfil).save(perfil);
+        const novos = { nome: atualizado.nome, descricao: atualizado.descricao, ativo: atualizado.ativo };
+        if (JSON.stringify(anteriores) !== JSON.stringify(novos)) {
+          await auditarRbac(manager, req, 'RBAC_PERFIL_ATUALIZADO', 'perfis', atualizado.id, anteriores, novos);
+        }
+        return atualizado;
+      });
+      return res.json(salvo);
     } catch (error) {
       console.error('[AdminController] Erro ao atualizar perfil:', error);
       return res.status(500).json({ error: 'Erro ao atualizar perfil.' });
@@ -299,6 +333,28 @@ export class AdminController {
     } catch (error) {
       console.error('[AdminController] Erro ao listar catálogo de modelos:', error);
       return res.status(500).json({ error: 'Erro ao listar catálogo de modelos' });
+    }
+  }
+
+  /** Obtém os dados completos de um modelo usados na manutenção de uma ordem. */
+  public async getModeloPorId(req: Request, res: Response): Promise<Response> {
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) {
+      return res.status(400).json({ error: 'Identificador de modelo inválido.', code: 'MODELO_ID_INVALID' });
+    }
+
+    try {
+      const modelo = await AppDataSource.getRepository(Modelo).findOne({
+        where: { id: id.data },
+        relations: { marca: true, pecas: { setorCorteOpcao: true }, rotas: { setor: true } },
+      });
+      if (!modelo) {
+        return res.status(404).json({ error: 'Modelo não encontrado.', code: 'MODELO_NOT_FOUND' });
+      }
+      return res.json(modelo);
+    } catch (error) {
+      console.error('[AdminController] Erro ao buscar modelo por identificador:', error);
+      return res.status(500).json({ error: 'Erro ao buscar modelo.' });
     }
   }
 
@@ -502,10 +558,28 @@ export class AdminController {
     try {
       const userRepo = AppDataSource.getRepository(Usuario);
       const users = await userRepo.find({
-        relations: { perfil: true, planta: true },
+        relations: { perfil: true, setor: true, planta: true },
         order: { nomeCompleto: 'ASC' }
       });
-      return res.json(users);
+      return res.json(users.map((user) => ({
+        id: user.id,
+        nomeCompleto: user.nomeCompleto,
+        usuario: user.usuario,
+        cargo: user.cargo,
+        email: user.email,
+        ativo: user.ativo,
+        ultimoAcesso: user.ultimoAcesso,
+        perfilId: user.perfilId,
+        perfil: user.perfil ? {
+          id: user.perfil.id,
+          nome: user.perfil.nome,
+          descricao: user.perfil.descricao,
+        } : null,
+        setorId: user.setorId,
+        setor: user.setor ? { id: user.setor.id, nome: user.setor.nome } : null,
+        plantaId: user.plantaId,
+        planta: user.planta ? { id: user.planta.id, nome: user.planta.nome } : null,
+      })));
     } catch (error) {
       console.error('[AdminController] Erro ao listar usuários:', error);
       return res.status(500).json({ error: 'Erro ao listar usuários' });
@@ -530,58 +604,189 @@ export class AdminController {
     }
   }
 
+  /** Catálogo de telas e ações exibidas na matriz RBAC. */
+  public async getCatalogoPermissoes(_req: Request, res: Response): Promise<Response> {
+    try {
+      return res.json(await carregarCatalogoRbac());
+    } catch (error) {
+      console.error('[AdminController] Erro ao carregar catálogo RBAC:', error);
+      return res.status(500).json({ error: 'Erro ao carregar catálogo de permissões.' });
+    }
+  }
+
+  public async getAuditoriaRbac(req: Request, res: Response): Promise<Response> {
+    try {
+      const offset = Math.max(0, Math.min(Number(req.query.offset) || 0, 100000));
+      const limit = Math.max(1, Math.min(Number(req.query.limit) || 30, 100));
+      const [rows, total] = await AppDataSource.getRepository(AuditLog).createQueryBuilder('audit')
+        .leftJoinAndSelect('audit.usuario', 'usuario')
+        .where('left(audit.acao, 5) = :prefix', { prefix: 'RBAC_' })
+        .orderBy('audit.createdAt', 'DESC').addOrderBy('audit.id', 'DESC')
+        .skip(offset).take(limit).getManyAndCount();
+      return res.json({ total, items: rows.map((row) => ({
+        id: row.id, acao: row.acao, entidadeTipo: row.entidadeTipo, entidadeId: row.entidadeId,
+        dadosAnteriores: row.dadosAnteriores, dadosNovos: row.dadosNovos, createdAt: row.createdAt,
+        usuario: row.usuario ? { nomeCompleto: row.usuario.nomeCompleto, usuario: row.usuario.usuario } : null,
+      })) });
+    } catch (error) {
+      console.error('[AdminController] Erro ao carregar auditoria RBAC:', error);
+      return res.status(500).json({ error: 'Erro ao carregar auditoria de acessos.' });
+    }
+  }
+
   /**
    * Altera dinamicamente as permissões RBAC de um ou mais perfis (Upsert).
    */
   public async updatePermissoes(req: Request, res: Response): Promise<Response> {
+    const rawItems = Array.isArray(req.body) ? req.body : [req.body];
+    if (rawItems.length === 0 || rawItems.length > 500) {
+      return res.status(400).json({ error: 'Envie entre 1 e 500 permissões por atualização.', code: 'RBAC_BATCH_SIZE_INVALID' });
+    }
+
+    let catalogo;
     try {
-      const body = req.body;
-      const items = Array.isArray(body) ? body : [body];
+      catalogo = await carregarCatalogoRbac();
+    } catch (error) {
+      console.error('[AdminController] Erro ao carregar catálogo RBAC:', error);
+      return res.status(500).json({ error: 'Erro ao validar catálogo de permissões.' });
+    }
+    const screenKeys = new Set(catalogo.screens.flatMap(({ viewPermission, editPermission }) => [viewPermission, editPermission].filter(Boolean) as string[]));
+    const globalKeys = new Set(catalogo.globalActions.map(({ acao }) => acao));
+    const sectorKeys = new Set(catalogo.sectorActions.map(({ acao }) => acao));
+    const normalizedItems = new Map<string, { perfilId: string; setorId: string | null; acao: string; permitido: boolean }>();
 
-      const permissaoRepo = AppDataSource.getRepository(PerfilPermissao);
-      const savedItems: PerfilPermissao[] = [];
-
-      for (const item of items) {
-        const { perfilId, setorId, acao, permitido } = item;
-
-        if (!perfilId || !acao) {
-          return res.status(400).json({ error: 'perfilId e acao são obrigatórios em cada item.' });
-        }
-
-        // Normalização defensiva de setorId contra strings inválidas ou serialização incorreta
-        const normalizedSetorId = (setorId === 'null' || setorId === 'undefined' || setorId === '' || !setorId)
-          ? null
-          : setorId;
-
-        // Busca se o registro correspondente já existe
-        let perm = await permissaoRepo.findOne({
-          where: {
-            perfilId,
-            setorId: normalizedSetorId ? normalizedSetorId : IsNull(),
-            acao
-          }
-        });
-
-        if (perm) {
-          perm.permitido = permitido !== undefined ? permitido : true;
-          // Garante a passagem do null primitivo do JavaScript e não do IsNull() do TypeORM ao salvar
-          perm.setorId = normalizedSetorId;
-          perm = await permissaoRepo.save(perm);
-        } else {
-          perm = permissaoRepo.create({
-            perfilId,
-            setorId: normalizedSetorId,
-            acao,
-            permitido: permitido !== undefined ? permitido : true
-          });
-          perm = await permissaoRepo.save(perm);
-        }
-
-        savedItems.push(perm);
+    for (const item of rawItems) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return res.status(400).json({ error: 'Cada permissão deve ser um objeto válido.', code: 'RBAC_PERMISSION_INVALID' });
       }
 
+      const perfilId = z.string().uuid().safeParse(item.perfilId);
+      const acao = typeof item.acao === 'string' ? item.acao.trim() : '';
+      const permitido = item.permitido;
+      const setorRaw = item.setorId;
+      const setorId = setorRaw === null || setorRaw === undefined || setorRaw === '' || setorRaw === 'null' || setorRaw === 'undefined'
+        ? null
+        : z.string().uuid().safeParse(setorRaw);
+
+      if (!perfilId.success || ![...screenKeys, ...globalKeys, ...sectorKeys].includes(acao) || typeof permitido !== 'boolean' || (setorId !== null && !setorId.success)) {
+        return res.status(400).json({ error: 'Dados inválidos para a permissão.', code: 'RBAC_PERMISSION_INVALID' });
+      }
+      if ((screenKeys.has(acao) || globalKeys.has(acao)) && setorId !== null || sectorKeys.has(acao) && setorId === null) {
+        return res.status(400).json({ error: 'Escopo de setor inválido para esta permissão.', code: 'RBAC_PERMISSION_SCOPE_INVALID' });
+      }
+
+      const normalized = {
+        perfilId: perfilId.data,
+        setorId: setorId === null ? null : setorId.data,
+        acao,
+        permitido,
+      };
+      normalizedItems.set(`${normalized.perfilId}|${normalized.setorId || ''}|${normalized.acao}`, normalized);
+    }
+
+    try {
+      const savedItems = await AppDataSource.transaction(async (manager) => {
+        const items = [...normalizedItems.values()];
+        const byPermissionKey = new Map(items.map((item) => [
+          `${item.perfilId}|${item.setorId || ''}|${item.acao}`,
+          item,
+        ]));
+
+        for (const screen of catalogo.screens) {
+          if (!screen.editPermission) continue;
+          for (const item of items) {
+            if (item.setorId !== null) continue;
+            if (item.acao === screen.editPermission && item.permitido) {
+              const viewKey = `${item.perfilId}||${screen.viewPermission}`;
+              const explicitView = byPermissionKey.get(viewKey);
+              if (explicitView?.permitido === false) {
+                throw Object.assign(new Error('A permissão de edição exige acesso de visualização à mesma tela.'), {
+                  statusCode: 400,
+                  code: 'RBAC_EDIT_REQUIRES_VIEW',
+                });
+              }
+              if (!explicitView) {
+                const viewPermission = {
+                  perfilId: item.perfilId,
+                  setorId: null,
+                  acao: screen.viewPermission,
+                  permitido: true,
+                };
+                byPermissionKey.set(viewKey, viewPermission);
+              }
+            }
+
+            if (item.acao === screen.viewPermission && !item.permitido) {
+              const editKey = `${item.perfilId}||${screen.editPermission}`;
+              const explicitEdit = byPermissionKey.get(editKey);
+              if (explicitEdit?.permitido === true) {
+                throw Object.assign(new Error('Não é possível remover a visualização enquanto a edição estiver habilitada.'), {
+                  statusCode: 400,
+                  code: 'RBAC_VIEW_REQUIRED_FOR_EDIT',
+                });
+              }
+              byPermissionKey.set(editKey, {
+                perfilId: item.perfilId,
+                setorId: null,
+                acao: screen.editPermission,
+                permitido: false,
+              });
+            }
+          }
+        }
+
+        const itemsToSave = [...byPermissionKey.values()];
+        const profileIds = [...new Set(itemsToSave.map(({ perfilId }) => perfilId))];
+        const profiles = await manager.getRepository(Perfil).findBy({ id: In(profileIds), ativo: true });
+        if (profiles.length !== profileIds.length) {
+          throw Object.assign(new Error('Um ou mais perfis não existem ou estão inativos.'), { statusCode: 404, code: 'PERFIL_NOT_FOUND' });
+        }
+
+        const sectorIds = [...new Set(itemsToSave.map(({ setorId }) => setorId).filter((id): id is string => !!id))];
+        if (sectorIds.length > 0) {
+          const sectors = await manager.getRepository(Setor).findBy({ id: In(sectorIds), ativo: true });
+          if (sectors.length !== sectorIds.length) {
+            throw Object.assign(new Error('Um ou mais setores não existem ou estão inativos.'), { statusCode: 404, code: 'SETOR_NOT_FOUND' });
+          }
+        }
+
+        const permissionRepo = manager.getRepository(PerfilPermissao);
+        const saved: PerfilPermissao[] = [];
+        for (const item of itemsToSave) {
+          let permission = await permissionRepo.findOne({
+            where: {
+              perfilId: item.perfilId,
+              setorId: item.setorId === null ? IsNull() : item.setorId,
+              acao: item.acao,
+            },
+          });
+          const antes = permission ? { permitido: permission.permitido } : null;
+          if (permission) {
+            permission.permitido = item.permitido;
+          } else {
+            permission = permissionRepo.create(item);
+          }
+          if (antes?.permitido !== item.permitido) {
+            const salvo = await permissionRepo.save(permission);
+            await auditarRbac(manager, req, 'RBAC_PERMISSAO_ALTERADA', 'perfil_permissoes', salvo.id, antes, {
+              perfilId: salvo.perfilId, setorId: salvo.setorId, acao: salvo.acao, permitido: salvo.permitido,
+            });
+            saved.push(salvo);
+          } else {
+            saved.push(permission);
+          }
+        }
+        return saved;
+      });
+
       return res.json(savedItems);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.statusCode === 404) {
+        return res.status(404).json({ error: error.message, code: error.code });
+      }
+      if (error?.statusCode === 400) {
+        return res.status(400).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController.updatePermissoes] Erro crítico ao atualizar permissões:', error);
       return res.status(500).json({ error: 'Erro ao atualizar permissões no banco de dados.' });
     }
@@ -611,9 +816,14 @@ export class AdminController {
         return res.status(404).json({ error: 'Usuário não encontrado.' });
       }
 
-      const novoPerfil = await perfilRepo.findOne({ where: { id: perfilId } });
+      const perfilIdValidado = z.string().uuid().safeParse(perfilId);
+      if (!perfilIdValidado.success) {
+        return res.status(400).json({ error: 'Identificador de perfil inválido.', code: 'PERFIL_ID_INVALID' });
+      }
+
+      const novoPerfil = await perfilRepo.findOne({ where: { id: perfilIdValidado.data, ativo: true } });
       if (!novoPerfil) {
-        return res.status(404).json({ error: 'Perfil não encontrado.' });
+        return res.status(404).json({ error: 'Perfil não encontrado ou inativo.', code: 'PERFIL_NOT_FOUND' });
       }
 
       const usuarioAdminAutomacao = ehUsuarioAdminAutomacao(user.usuario);
@@ -627,26 +837,47 @@ export class AdminController {
         });
       }
 
+      const anteriores = { perfilId: user.perfilId, setorId: user.setorId };
       user.perfil = novoPerfil;
       user.perfilId = novoPerfil.id;
 
-      if (setorId) {
-        const setorRepo = AppDataSource.getRepository(Setor);
-        const setor = await setorRepo.findOne({ where: { id: setorId } });
-        if (setor) {
+      if (setorId !== undefined) {
+        if (setorId === null || setorId === '') {
+          user.setor = null;
+          user.setorId = null;
+        } else {
+          const setorIdValidado = z.string().uuid().safeParse(setorId);
+          if (!setorIdValidado.success) {
+            return res.status(400).json({ error: 'Identificador de setor inválido.', code: 'SETOR_ID_INVALID' });
+          }
+          const setorRepo = AppDataSource.getRepository(Setor);
+          const setor = await setorRepo.findOne({ where: { id: setorIdValidado.data, ativo: true } });
+          if (!setor) {
+            return res.status(404).json({ error: 'Setor não encontrado ou inativo.', code: 'SETOR_NOT_FOUND' });
+          }
           user.setor = setor;
           user.setorId = setor.id;
         }
-      } else {
-        user.setor = null;
-        user.setorId = null;
       }
       
-      const salvo = await userRepo.save(user);
+      const salvo = await AppDataSource.transaction(async (manager) => {
+        const atualizado = await manager.getRepository(Usuario).save(user);
+        const novos = { perfilId: atualizado.perfilId, setorId: atualizado.setorId };
+        if (JSON.stringify(anteriores) !== JSON.stringify(novos)) {
+          await auditarRbac(manager, req, 'RBAC_USUARIO_ATUALIZADO', 'usuarios', atualizado.id, anteriores, novos);
+        }
+        return atualizado;
+      });
 
       return res.json({
         message: 'Perfil do usuário atualizado com sucesso.',
-        usuario: salvo
+        usuario: {
+          id: salvo.id,
+          nomeCompleto: salvo.nomeCompleto,
+          usuario: salvo.usuario,
+          perfilId: salvo.perfilId,
+          setorId: salvo.setorId,
+        },
       });
     } catch (error) {
       console.error('[AdminController] Erro ao atualizar perfil do usuário:', error);

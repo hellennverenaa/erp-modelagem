@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller';
-import { exigirAdministrador, exigirAdminAutomacao } from '../middlewares/rbac.middleware';
+import { exigirAlgumaPermissao, exigirAlgumaPermissaoOuAdminAutomacao, exigirAdminAutomacao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const adminController = new AdminController();
@@ -123,7 +123,9 @@ router.patch('/perfis/:id', exigirAdminAutomacao, adminController.updatePerfil);
  *       401:
  *         description: Não autorizado
  */
-router.get('/setores', adminController.getSetores);
+router.get('/setores', exigirAlgumaPermissaoOuAdminAutomacao([
+  'TELA_BIPAGEM', 'TELA_CHECKLIST', 'TELA_INSPECAO_QUALIDADE', 'TELA_CONSTRUTOR_ROTA',
+]), adminController.getSetores);
 
 /**
  * @swagger
@@ -144,7 +146,9 @@ router.get('/setores', adminController.getSetores);
  *       401:
  *         description: Não autorizado
  */
-router.get('/config-opcoes', adminController.getConfigOpcoes);
+router.get('/config-opcoes', exigirAlgumaPermissao([
+  'TELA_GESTAO_ORDENS', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_BIPAGEM',
+]), adminController.getConfigOpcoes);
 
 /**
  * @swagger
@@ -161,7 +165,9 @@ router.get('/config-opcoes', adminController.getConfigOpcoes);
  *       401:
  *         description: Não autorizado
  */
-router.get('/modelos', adminController.getModelos);
+router.get('/modelos', exigirAlgumaPermissao([
+  'TELA_GESTAO_ORDENS', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_CATALOGO_MODELOS',
+]), adminController.getModelos);
 
 /**
  * @swagger
@@ -178,7 +184,7 @@ router.get('/modelos', adminController.getModelos);
  *       401:
  *         description: Não autorizado
  */
-router.get('/plantas', adminController.getPlantas);
+router.get('/plantas', exigirAlgumaPermissao(['TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE']), adminController.getPlantas);
 
 /**
  * @swagger
@@ -194,15 +200,21 @@ router.get('/plantas', adminController.getPlantas);
  *       401:
  *         description: Não autorizado
  */
-router.get('/marcas', adminController.getMarcas);
+router.get('/marcas', exigirAlgumaPermissao(['TELA_CATALOGO_MODELOS', 'TELA_NOVA_ORDEM_TESTE']), adminController.getMarcas);
 
 /**
- * Operações administrativas do catálogo de marcas. Escritas são restritas
- * ao perfil ADMIN e a desativação mantém referências históricas preservadas.
+ * Operações administrativas do catálogo de marcas. Escritas exigem permissão
+ * de edição do catálogo ou do fluxo de nova ordem; referências históricas ficam preservadas.
  */
-router.get('/marcas/gerenciamento', exigirAdministrador, adminController.getTodasMarcas);
-router.post('/marcas', exigirAdministrador, adminController.createMarca);
-router.patch('/marcas/:id', exigirAdministrador, adminController.updateMarca);
+router.get('/marcas/gerenciamento', exigirAlgumaPermissao([
+  'TELA_CATALOGO_MODELOS', 'TELA_NOVA_ORDEM_TESTE',
+]), adminController.getTodasMarcas);
+router.post('/marcas', exigirAlgumaPermissao([
+  'EDITAR_TELA_CATALOGO_MODELOS', 'EDITAR_TELA_NOVA_ORDEM_TESTE',
+]), adminController.createMarca);
+router.patch('/marcas/:id', exigirAlgumaPermissao([
+  'EDITAR_TELA_CATALOGO_MODELOS', 'EDITAR_TELA_NOVA_ORDEM_TESTE',
+]), adminController.updateMarca);
 
 /**
  * @swagger
@@ -218,7 +230,12 @@ router.patch('/marcas/:id', exigirAdministrador, adminController.updateMarca);
  *       401:
  *         description: Não autorizado
  */
-router.get('/modelos/catalogo', adminController.getAllModelos);
+router.get('/modelos/catalogo', exigirAlgumaPermissao([
+  'TELA_CATALOGO_MODELOS', 'TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE',
+]), adminController.getAllModelos);
+router.get('/modelos/:id', exigirAlgumaPermissao([
+  'TELA_GESTAO_ORDENS', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_CATALOGO_MODELOS',
+]), adminController.getModeloPorId);
 
 /**
  * @swagger
@@ -248,7 +265,9 @@ router.get('/modelos/catalogo', adminController.getAllModelos);
  *       409:
  *         description: Código de produto já existe
  */
-router.post('/modelos', exigirAdministrador, adminController.createModelo);
+router.post('/modelos', exigirAlgumaPermissao([
+  'EDITAR_TELA_CATALOGO_MODELOS', 'EDITAR_TELA_NOVA_ORDEM_TESTE',
+]), adminController.createModelo);
 
 
 /**
@@ -293,6 +312,8 @@ router.post('/modelos', exigirAdministrador, adminController.createModelo);
  *       500:
  *         description: Erro interno do servidor
  */
+router.get('/permissoes/catalogo', exigirAdminAutomacao, adminController.getCatalogoPermissoes);
+router.get('/auditoria/rbac', exigirAdminAutomacao, adminController.getAuditoriaRbac);
 router.get('/permissoes/:perfilId', exigirAdminAutomacao, adminController.getPermissoes);
 
 /**
