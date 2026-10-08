@@ -1,6 +1,17 @@
 import { Server, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
+import { AppDataSource } from '../config/database';
+import { Usuario } from '../entities/Usuario';
+import { Perfil } from '../entities/Perfil';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
+import { obterPermissoesGlobais } from './rbac.service';
+
+const ROOMS_BY_EVENT: Record<string, string[]> = {
+  'peca:avanco': ['screen:gerencial', 'screen:rastreamento'],
+  'rastreamento:atualizado': ['screen:gerencial', 'screen:rastreamento'],
+  'gargalo:update': ['screen:gerencial'],
+};
 import { isAllowedOrigin } from '../config/cors';
 
 class WebSocketService {
@@ -27,7 +38,7 @@ class WebSocketService {
     }
 
     // Middleware de Handshake com Autenticação JWT
-    this.io.use((socket: Socket, next) => {
+    this.io.use(async (socket: Socket, next) => {
       try {
         const tokenRaw =
           socket.handshake.auth?.token ||
@@ -41,8 +52,46 @@ class WebSocketService {
           return next(new Error('TOKEN_EXPIRED'));
         }
 
-        const decoded = jwt.verify(tokenStr, jwtSecret, { clockTolerance: 120 });
-        (socket as any).data.user = decoded;
+        const decoded = jwt.verify(tokenStr, jwtSecret, { clockTolerance: 120 }) as jwt.JwtPayload & {
+          usuario?: string;
+          username?: string;
+          userId?: string;
+        };
+        const username = String(decoded.usuario || decoded.username || decoded.userId || decoded.sub || '').trim().toLowerCase();
+        if (!username) return next(new Error('AUTH_IDENTIFIER_INVALID'));
+
+        const usuarioRepo = AppDataSource.getRepository(Usuario);
+        let userLocal = await usuarioRepo.findOne({ where: { usuario: username }, relations: { perfil: true } });
+        if (!userLocal || !userLocal.ativo) return next(new Error('AUTH_USER_INACTIVE'));
+
+        if (ehUsuarioAdminAutomacao(userLocal.usuario) && userLocal.perfil?.nome?.trim().toUpperCase() !== PERFIL_ADMIN_AUTOMACAO) {
+          const perfilAdminAutomacao = await AppDataSource.getRepository(Perfil).findOne({
+            where: { nome: PERFIL_ADMIN_AUTOMACAO, ativo: true },
+          });
+          if (perfilAdminAutomacao) {
+            userLocal.perfil = perfilAdminAutomacao;
+            userLocal.perfilId = perfilAdminAutomacao.id;
+            userLocal = await usuarioRepo.save(userLocal);
+          }
+        }
+
+        if (!userLocal.perfil || !userLocal.perfil.ativo) return next(new Error('AUTH_PROFILE_INACTIVE'));
+
+        const permissions = await obterPermissoesGlobais(userLocal.perfilId);
+        const user = {
+          ...decoded,
+          userId: userLocal.id,
+          usuario: userLocal.usuario,
+          perfilId: userLocal.perfilId,
+          perfilNome: userLocal.perfil.nome,
+          plantaId: userLocal.plantaId,
+          setorId: userLocal.setorId || undefined,
+          permissoes: permissions,
+        };
+
+        socket.data.user = user;
+        if (permissions.TELA_TORRE_CONTROLE === true) socket.join('screen:gerencial');
+        if (permissions.TELA_RASTREAMENTO === true) socket.join('screen:rastreamento');
         next();
       } catch (err: any) {
         console.warn(`[WebSocket Auth] Rejeitado — Falha no token do Socket ID ${socket.id}:`, err.message);
@@ -68,9 +117,9 @@ class WebSocketService {
   }
 
   public emit(event: string, data: any): void {
-    if (this.io) {
-      this.io.emit(event, data);
-    }
+    const rooms = ROOMS_BY_EVENT[event];
+    if (!this.io || !rooms?.length) return;
+    this.io.to(rooms[0]).to(rooms[1] || rooms[0]).emit(event, data);
   }
 }
 

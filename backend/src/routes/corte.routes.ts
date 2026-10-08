@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { CorteController } from '../controllers/corte.controller';
+import { exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const corteController = new CorteController();
@@ -44,7 +45,7 @@ const corteController = new CorteController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/distribuir', corteController.distribuirCorte);
+router.post('/distribuir', exigirPermissao('EDITAR_TELA_BIPAGEM'), corteController.distribuirCorte);
 
 /**
  * @swagger
@@ -89,7 +90,7 @@ router.post('/distribuir', corteController.distribuirCorte);
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/bipar', corteController.biparCorte);
+router.post('/bipar', exigirPermissao('EDITAR_TELA_BIPAGEM'), corteController.biparCorte);
 
 /**
  * @swagger
@@ -117,6 +118,6 @@ router.post('/bipar', corteController.biparCorte);
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/eficiencia', corteController.getEficiencia);
+router.get('/eficiencia', exigirPermissao('TELA_BIPAGEM'), corteController.getEficiencia);
 
 export default router;

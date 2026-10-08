@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { RotasController } from '../controllers/rotas.controller';
+import { exigirAlgumaPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const rotasController = new RotasController();
@@ -46,7 +47,12 @@ const rotasController = new RotasController();
  *       404:
  *         description: Modelo não encontrado
  */
-router.put('/:modeloId', rotasController.salvarRota);
+router.put(
+  '/:modeloId',
+  exigirAlgumaPermissao(['EDITAR_TELA_CONSTRUTOR_ROTA', 'EDITAR_TELA_NOVA_ORDEM_TESTE']),
+  exigirAlgumaPermissao(['EDITAR_ROTA']),
+  rotasController.salvarRota,
+);
 
 /**
  * @swagger
@@ -69,6 +75,10 @@ router.put('/:modeloId', rotasController.salvarRota);
  *       404:
  *         description: Rota não encontrada
  */
-router.get('/:modeloId', rotasController.getRota);
+router.get(
+  '/:modeloId',
+  exigirAlgumaPermissao(['TELA_CONSTRUTOR_ROTA', 'TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE']),
+  rotasController.getRota,
+);
 
 export default router;
