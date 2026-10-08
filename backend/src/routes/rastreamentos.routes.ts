@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { RastreamentosController } from '../controllers/rastreamentos.controller';
-import { verificarPermissaoSetor } from '../middlewares/rbac.middleware';
+import { exigirAlgumaPermissao, exigirPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const rastreamentosController = new RastreamentosController();
@@ -85,6 +85,7 @@ const rastreamentosController = new RastreamentosController();
  */
 router.post(
   '/bipar-entrada',
+  exigirPermissao('EDITAR_TELA_BIPAGEM'),
   verificarPermissaoSetor('BIPAR_ENTRADA', 'body'),
   rastreamentosController.biparEntrada
 );
@@ -197,6 +198,7 @@ router.post(
  */
 router.post(
   '/bipar-saida',
+  exigirAlgumaPermissao(['EDITAR_TELA_BIPAGEM', 'EDITAR_TELA_CHECKLIST']),
   verificarPermissaoSetor('BIPAR_SAIDA', 'body'),
   rastreamentosController.biparSaida
 );

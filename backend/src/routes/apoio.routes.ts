@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ApoioController } from '../controllers/apoio.controller';
+import { exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const apoioController = new ApoioController();
@@ -54,7 +55,7 @@ const apoioController = new ApoioController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/etapa', apoioController.postEtapa);
+router.post('/etapa', exigirPermissao('EDITAR_TELA_BIPAGEM'), apoioController.postEtapa);
 
 /**
  * @swagger
@@ -97,7 +98,7 @@ router.post('/etapa', apoioController.postEtapa);
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/laboratorio', apoioController.postLaboratorio);
+router.post('/laboratorio', exigirPermissao('EDITAR_TELA_BIPAGEM'), apoioController.postLaboratorio);
 
 /**
  * @swagger
@@ -134,6 +135,6 @@ router.post('/laboratorio', apoioController.postLaboratorio);
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/status/:ordemTesteId', apoioController.getStatus);
+router.get('/status/:ordemTesteId', exigirPermissao('TELA_BIPAGEM'), apoioController.getStatus);
 
 export default router;

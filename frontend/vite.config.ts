@@ -20,15 +20,11 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: backendTarget,
           changeOrigin: true,
+          ws: true,
         },
         '/uploads': {
           target: backendTarget,
           changeOrigin: true,
-        },
-        '/socket.io': {
-          target: backendTarget,
-          changeOrigin: true,
-          ws: true,
         },
       },
     },

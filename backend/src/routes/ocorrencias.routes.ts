@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { OcorrenciasController } from '../controllers/ocorrencias.controller';
 import { upload } from '../middlewares/upload.middleware';
+import { exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const ocorrenciasController = new OcorrenciasController();
@@ -64,7 +65,7 @@ const ocorrenciasController = new OcorrenciasController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/', ocorrenciasController.createOcorrencia);
+router.post('/', exigirPermissao('EDITAR_TELA_BIPAGEM'), ocorrenciasController.createOcorrencia);
 
 /**
  * @swagger
@@ -103,7 +104,7 @@ router.post('/', ocorrenciasController.createOcorrencia);
  *       500:
  *         description: Erro no upload
  */
-router.post('/:id/anexos', upload.single('file'), ocorrenciasController.uploadAnexo);
+router.post('/:id/anexos', exigirPermissao('EDITAR_TELA_BIPAGEM'), upload.single('file'), ocorrenciasController.uploadAnexo);
 
 /**
  * @swagger
@@ -136,7 +137,7 @@ router.post('/:id/anexos', upload.single('file'), ocorrenciasController.uploadAn
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/', ocorrenciasController.getOcorrencias);
+router.get('/', exigirPermissao('TELA_BIPAGEM'), ocorrenciasController.getOcorrencias);
 
 /**
  * @swagger
@@ -173,6 +174,6 @@ router.get('/', ocorrenciasController.getOcorrencias);
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/:id/resolver', ocorrenciasController.resolverOcorrencia);
+router.put('/:id/resolver', exigirPermissao('EDITAR_TELA_BIPAGEM'), ocorrenciasController.resolverOcorrencia);
 
 export default router;

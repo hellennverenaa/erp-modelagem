@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { DashboardController } from '../controllers/dashboard.controller';
+import { exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const dashboardController = new DashboardController();
@@ -45,6 +46,6 @@ const dashboardController = new DashboardController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/kpis', dashboardController.getKpis);
+router.get('/kpis', exigirPermissao('TELA_TORRE_CONTROLE'), dashboardController.getKpis);
 
 export default router;

@@ -28,6 +28,7 @@ import {
   Clock
 } from '@lucide/vue'
 import api from '../api/axios'
+import { authStore } from '../api/auth.store'
 
 const props = defineProps<{
   modeloId?: string
@@ -42,6 +43,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'rota-salva', slasPorSetor?: Record<string, number>): void
 }>()
+
+const podeSalvarRota = computed(() =>
+  authStore.hasPermission('EDITAR_ROTA') && (
+    authStore.hasPermission('EDITAR_TELA_CONSTRUTOR_ROTA') ||
+    (props.isWizardMode === true && authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE'))
+  )
+)
 
 const MAP_BLOCK_TO_NOME: Record<string, string> = {
   'apoio': 'Apoio',
@@ -413,6 +421,11 @@ const fullTimeline = computed<Array<RouteBlock & { isConditional?: boolean; isPa
 const saveSuccess = ref(false)
 
 async function salvarRota() {
+  if (!podeSalvarRota.value) {
+    showToast('Seu perfil não pode editar rotas de produção.', 'error')
+    return
+  }
+
   const modelId = activeModeloId.value
   if (!modelId) {
     showToast('Por favor, selecione um modelo para salvar.', 'error')
@@ -725,11 +738,12 @@ defineExpose({
         </div>
       </div>
       <div class="rb-header-actions">
-        <button class="btn-reset" @click="resetarRota" type="button" title="Redefinir Rota">
+        <button v-if="podeSalvarRota" class="btn-reset" @click="resetarRota" type="button" title="Redefinir Rota">
           <RotateCcw :size="16" aria-hidden="true" />
           <span>Redefinir</span>
         </button>
         <button
+          v-if="podeSalvarRota"
           class="btn-save"
           :class="{ 'btn-save--success': saveSuccess }"
           @click="salvarRota"

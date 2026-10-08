@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { AppDataSource } from '../config/database';
 import { Peca } from '../entities/Peca';
+import { exigirAlgumaPermissao, exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 
@@ -8,7 +9,10 @@ const router = Router();
  * GET /api/pecas/modelo/:modeloId
  * Retorna a listagem de peças associadas a um modelo específico.
  */
-router.get('/modelo/:modeloId', async (req: Request, res: Response) => {
+router.get('/modelo/:modeloId', exigirAlgumaPermissao([
+  'TELA_CATALOGO_MODELOS', 'TELA_CATALOGO_PECAS', 'TELA_GESTAO_ORDENS',
+  'TELA_NOVA_ORDEM_TESTE', 'TELA_CHECKLIST',
+]), async (req: Request, res: Response) => {
   try {
     const modeloId = req.params.modeloId as string;
     const pecaRepo = AppDataSource.getRepository(Peca);
@@ -29,7 +33,9 @@ router.get('/modelo/:modeloId', async (req: Request, res: Response) => {
  * POST /api/pecas/modelo/:modeloId
  * Cadastra/Atualiza as peças associadas a um modelo
  */
-router.post('/modelo/:modeloId', async (req: Request, res: Response) => {
+router.post('/modelo/:modeloId', exigirAlgumaPermissao([
+  'EDITAR_TELA_CATALOGO_MODELOS', 'EDITAR_TELA_NOVA_ORDEM_TESTE',
+]), async (req: Request, res: Response) => {
   try {
     const modeloId = req.params.modeloId as string;
     const { pecas } = req.body;
@@ -60,7 +66,7 @@ router.post('/modelo/:modeloId', async (req: Request, res: Response) => {
  * GET /api/catalogo-pecas ou /api/pecas
  * Lista peças técnicas do catálogo
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', exigirPermissao('TELA_CATALOGO_PECAS'), async (req: Request, res: Response) => {
   try {
     const { CatalogoPeca } = await import('../entities/CatalogoPeca');
     const q = req.query.q as string;
@@ -85,7 +91,7 @@ router.get('/', async (req: Request, res: Response) => {
  * POST /api/catalogo-pecas ou /api/pecas
  * Cria uma nova peça no catálogo técnico
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', exigirPermissao('EDITAR_TELA_CATALOGO_PECAS'), async (req: Request, res: Response) => {
   try {
     const { CatalogoPeca } = await import('../entities/CatalogoPeca');
     const { numero, nome, codigoOriginal, descricao } = req.body;

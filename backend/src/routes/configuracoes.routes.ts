@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ConfiguracoesController } from '../controllers/configuracoes.controller';
+import { exigirAlgumaPermissao, exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const configuracoesController = new ConfiguracoesController();
@@ -34,13 +35,17 @@ const configuracoesController = new ConfiguracoesController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/', configuracoesController.getConfiguracoes);
+router.get('/', exigirAlgumaPermissao([
+  'TELA_GESTAO_ORDENS', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_BIPAGEM',
+]), configuracoesController.getConfiguracoes);
 
 /**
  * GET /api/config/opcoes/:categoria ou /api/configuracoes/opcoes/:categoria
  * Retorna opções ativas filtradas pela categoria (ex: subsetor_corte)
  */
-router.get('/opcoes/:categoria', async (req, res) => {
+router.get('/opcoes/:categoria', exigirAlgumaPermissao([
+  'TELA_GESTAO_ORDENS', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_BIPAGEM',
+]), async (req, res) => {
   try {
     const { AppDataSource } = await import('../config/database');
     const { ConfigOpcao } = await import('../entities/ConfigOpcao');
@@ -107,6 +112,6 @@ router.get('/opcoes/:categoria', async (req, res) => {
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/:chave', configuracoesController.updateConfiguracao);
+router.put('/:chave', exigirPermissao('ADMINISTRAR_CONFIGURACOES'), configuracoesController.updateConfiguracao);
 
 export default router;

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ChecklistsController } from '../controllers/checklists.controller';
-import { verificarPermissaoSetor } from '../middlewares/rbac.middleware';
+import { exigirAlgumaPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const checklistsController = new ChecklistsController();
@@ -108,6 +108,7 @@ router.get('/catalogo', checklistsController.getCatalogo);
  */
 router.post(
   '/responder',
+  exigirAlgumaPermissao(['EDITAR_TELA_CHECKLIST', 'EDITAR_TELA_BIPAGEM']),
   verificarPermissaoSetor('PREENCHER_CHECKLIST', 'body'),
   checklistsController.responderChecklist
 );

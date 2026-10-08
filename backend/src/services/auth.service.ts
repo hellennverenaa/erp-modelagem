@@ -3,6 +3,8 @@ import jwt from 'jsonwebtoken';
 import { AppDataSource } from '../config/database';
 import { Usuario } from '../entities/Usuario';
 import { Perfil } from '../entities/Perfil';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
+import { obterPermissoesGlobais } from './rbac.service';
 import { Planta } from '../entities/Planta';
 
 export interface SsoLoginResult {
@@ -20,7 +22,7 @@ export interface SsoLoginResult {
     ativo: boolean;
     perfilId: string;
     perfilNome: string | null;
-    permissoes: Record<string, any>;
+    permissoes: Record<string, boolean>;
     setorId: string | null;
     plantaId: string;
     gestorId: string | null;
@@ -241,6 +243,16 @@ export class AuthService {
     }
 
     if (userLocal) {
+      if (ehUsuarioAdminAutomacao(unixUsuario)) {
+        const perfilAdminAutomacao = await perfilRepository.findOne({
+          where: { nome: PERFIL_ADMIN_AUTOMACAO, ativo: true },
+        });
+        if (perfilAdminAutomacao) {
+          userLocal.perfil = perfilAdminAutomacao;
+          userLocal.perfilId = perfilAdminAutomacao.id;
+        }
+      }
+
       userLocal.nomeCompleto = unixNome;
       if (unixEmail) userLocal.email = unixEmail;
       userLocal.cargo = unixFuncao;
@@ -259,14 +271,18 @@ export class AuthService {
           relations: { perfil: true }
         })) || userLocal;
     } else {
-      let perfil = await perfilRepository.findOne({ where: { nome: 'OPERADOR' } });
+      const nomePerfilInicial = ehUsuarioAdminAutomacao(unixUsuario)
+        ? PERFIL_ADMIN_AUTOMACAO
+        : 'VISUALIZADOR';
+      let perfil = await perfilRepository.findOne({ where: { nome: nomePerfilInicial, ativo: true } });
       if (!perfil) {
-        perfil = perfilRepository.create({
-          nome: 'OPERADOR',
-          descricao: 'Perfil padrão de operador de fábrica',
-          permissoes: {}
-        });
-        perfil = await perfilRepository.save(perfil);
+        throw new AuthError(
+          nomePerfilInicial === PERFIL_ADMIN_AUTOMACAO
+            ? 'Perfil da equipe de automação não foi provisionado.'
+            : 'Perfil VISUALIZADOR não foi provisionado.',
+          500,
+          'AUTH_RBAC_PROFILE_MISSING',
+        );
       }
 
       let planta = await plantaRepository.findOne({ where: { ativo: true } });
@@ -300,6 +316,12 @@ export class AuthService {
       userLocal = await usuarioRepository.save(userLocal);
     }
 
+    if (!userLocal.perfil || !userLocal.perfil.ativo) {
+      throw new AuthError('O perfil de acesso deste usuário está inativo.', 403, 'AUTH_PROFILE_INACTIVE');
+    }
+
+    const permissoes = await obterPermissoesGlobais(userLocal.perfilId);
+
     return {
       token,
       usuario: {
@@ -315,7 +337,7 @@ export class AuthService {
         ativo: userLocal.ativo,
         perfilId: userLocal.perfilId,
         perfilNome: userLocal.perfil?.nome || null,
-        permissoes: userLocal.perfil?.permissoes || {},
+        permissoes,
         setorId: userLocal.setorId,
         plantaId: userLocal.plantaId,
         gestorId: userLocal.gestorId,

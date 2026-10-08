@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
+import { perfilPossuiAlgumaPermissao, perfilPossuiPermissao } from '../services/rbac.service';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware de RBAC Dinâmico — Zero Hardcode
@@ -39,6 +41,11 @@ export function verificarPermissaoSetor(
 
     try {
       const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
+
+      if (await perfilPossuiPermissao(user.perfilId, 'ADMINISTRAR_BIPAGEM')) {
+        next();
+        return;
+      }
 
       // Busca a permissão de forma dinâmica:
       // Verifica se o perfil do usuário tem a ação permitida para:
@@ -80,16 +87,111 @@ export function verificarPermissaoSetor(
   };
 }
 
-export function exigirAdministrador(req: Request, res: Response, next: NextFunction): void {
+export function exigirAdminAutomacao(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
     res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
     return;
   }
 
-  if (req.user.perfilNome?.trim().toUpperCase() !== 'ADMIN') {
-    res.status(403).json({ error: 'Acesso restrito ao perfil ADMIN.', code: 'RBAC_ADMIN_REQUIRED' });
+  if (
+    req.user.perfilNome?.trim().toUpperCase() !== PERFIL_ADMIN_AUTOMACAO ||
+    !ehUsuarioAdminAutomacao(req.user.usuario)
+  ) {
+    res.status(403).json({
+      error: 'Acesso restrito à equipe autorizada de automação.',
+      code: 'RBAC_AUTOMACAO_REQUIRED',
+    });
     return;
   }
 
   next();
+}
+
+/** Confere uma permissão global configurada para o perfil no banco. */
+export function exigirPermissao(acao: string) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
+      return;
+    }
+
+    try {
+      const permitido = await perfilPossuiPermissao(req.user.perfilId, acao) ||
+        (acao === 'EDITAR_TELA_BIPAGEM' && await perfilPossuiPermissao(req.user.perfilId, 'ADMINISTRAR_BIPAGEM'));
+      if (!permitido) {
+        res.status(403).json({
+          error: `Acesso negado à permissão '${acao}'.`,
+          code: 'RBAC_PERMISSION_DENIED',
+          details: { perfilId: req.user.perfilId, acao },
+        });
+        return;
+      }
+      next();
+    } catch (error) {
+      console.error('[RBAC] Erro ao consultar permissão global:', error);
+      res.status(500).json({ error: 'Erro interno ao verificar permissões.', code: 'RBAC_INTERNAL_ERROR' });
+    }
+  };
+}
+
+/** Confere se o perfil possui ao menos uma das permissões globais informadas. */
+export function exigirAlgumaPermissao(acoes: string[]) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
+      return;
+    }
+
+    try {
+      const permitido = await perfilPossuiAlgumaPermissao(req.user.perfilId, acoes) ||
+        (acoes.includes('EDITAR_TELA_BIPAGEM') && await perfilPossuiPermissao(req.user.perfilId, 'ADMINISTRAR_BIPAGEM'));
+      if (!permitido) {
+        res.status(403).json({
+          error: 'Seu perfil não possui acesso a este recurso.',
+          code: 'RBAC_PERMISSION_DENIED',
+          details: { perfilId: req.user.perfilId, acoes },
+        });
+        return;
+      }
+      next();
+    } catch (error) {
+      console.error('[RBAC] Erro ao consultar permissões globais:', error);
+      res.status(500).json({ error: 'Erro interno ao verificar permissões.', code: 'RBAC_INTERNAL_ERROR' });
+    }
+  };
+}
+
+/** Permite carregar metadados comuns de tela e também a tela restrita de RBAC. */
+export function exigirAlgumaPermissaoOuAdminAutomacao(acoes: string[]) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
+      return;
+    }
+
+    if (
+      req.user.perfilNome?.trim().toUpperCase() === PERFIL_ADMIN_AUTOMACAO &&
+      ehUsuarioAdminAutomacao(req.user.usuario)
+    ) {
+      next();
+      return;
+    }
+
+    try {
+      const permitido = await perfilPossuiAlgumaPermissao(req.user.perfilId, acoes) ||
+        (acoes.includes('EDITAR_TELA_BIPAGEM') && await perfilPossuiPermissao(req.user.perfilId, 'ADMINISTRAR_BIPAGEM'));
+      if (!permitido) {
+        res.status(403).json({
+          error: 'Seu perfil não possui acesso a este recurso.',
+          code: 'RBAC_PERMISSION_DENIED',
+          details: { perfilId: req.user.perfilId, acoes },
+        });
+        return;
+      }
+      next();
+    } catch (error) {
+      console.error('[RBAC] Erro ao consultar permissões globais:', error);
+      res.status(500).json({ error: 'Erro interno ao verificar permissões.', code: 'RBAC_INTERNAL_ERROR' });
+    }
+  };
 }

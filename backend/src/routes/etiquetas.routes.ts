@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { imprimirEtiquetas, gerarEtiquetas } from '../controllers/etiqueta.controller';
-import { verificarPermissaoSetor } from '../middlewares/rbac.middleware';
+import { exigirAlgumaPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
 
-router.post('/imprimir', verificarPermissaoSetor('BIPAR_ENTRADA'), imprimirEtiquetas);
+router.post('/imprimir', exigirAlgumaPermissao([
+  'EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE', 'EDITAR_TELA_BIPAGEM',
+]), verificarPermissaoSetor('BIPAR_ENTRADA'), imprimirEtiquetas);
 
 /**
  * @swagger
@@ -57,6 +59,7 @@ router.post('/imprimir', verificarPermissaoSetor('BIPAR_ENTRADA'), imprimirEtiqu
  */
 router.post(
   '/gerar',
+  exigirAlgumaPermissao(['EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE']),
   gerarEtiquetas
 );
 

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
 import api from '../api/axios'
+import { authStore } from '../api/auth.store'
 import ModalAuthQuiosque from '../components/ModalAuthQuiosque.vue'
 import {
   ShieldCheck,
@@ -93,9 +94,10 @@ const isDraggingOver = ref(false)
 
 // ─── Computed Properties ──────────────────────────────────────────────────
 const isReprovado = computed(() => resultadoDecisao.value === 'REPROVADO')
+const podeEditarInspecao = computed(() => authStore.hasPermission('EDITAR_TELA_INSPECAO_QUALIDADE'))
 
 const podeSubmeter = computed(() => {
-  if (!opAgrupadaAtiva.value || !resultadoDecisao.value) return false
+  if (!podeEditarInspecao.value || !opAgrupadaAtiva.value || !resultadoDecisao.value) return false
   if (isReprovado.value) {
     return Boolean(setorOrigemFalhaId.value && observacaoDivergencia.value.trim().length >= 5)
   }

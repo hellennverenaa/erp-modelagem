@@ -2,6 +2,8 @@ import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { Usuario } from '../entities/Usuario';
+import { Perfil } from '../entities/Perfil';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware de Autenticação JWT — Integração com dass_auth_service
@@ -91,10 +93,33 @@ export async function verificaToken(req: Request, res: Response, next: NextFunct
       return;
     }
 
+    if (
+      ehUsuarioAdminAutomacao(userLocal.usuario) &&
+      userLocal.perfil?.nome?.trim().toUpperCase() !== PERFIL_ADMIN_AUTOMACAO
+    ) {
+      const perfilAdminAutomacao = await AppDataSource.getRepository(Perfil).findOne({
+        where: { nome: PERFIL_ADMIN_AUTOMACAO, ativo: true },
+      });
+      if (perfilAdminAutomacao) {
+        userLocal.perfil = perfilAdminAutomacao;
+        userLocal.perfilId = perfilAdminAutomacao.id;
+        await usuarioRepo.save(userLocal);
+      }
+    }
+
+    if (!userLocal.perfil || !userLocal.perfil.ativo) {
+      res.status(403).json({
+        error: 'O perfil de acesso deste usuário está inativo.',
+        code: 'AUTH_PROFILE_INACTIVE',
+      });
+      return;
+    }
+
     // Injeta as claims locais corretas (UUID do PostgreSQL) sobre o payload legado do Unix
     req.user = {
       ...decoded,
       userId: userLocal.id,
+      usuario: userLocal.usuario,
       perfilId: userLocal.perfilId,
       perfilNome: userLocal.perfil?.nome || decoded.perfilNome || '',
       plantaId: userLocal.plantaId,

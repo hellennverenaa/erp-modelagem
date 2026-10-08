@@ -20,6 +20,7 @@ import {
   Trash2
 } from '@lucide/vue'
 import api from '../api/axios'
+import { authStore } from '../api/auth.store'
 import BrandManagerModal from '../components/BrandManagerModal.vue'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -137,6 +138,8 @@ const filteredModelos = computed(() => {
       (m.temporada ?? '').toLowerCase().includes(q)
   )
 })
+
+const podeEditarCatalogo = computed(() => authStore.hasPermission('EDITAR_TELA_CATALOGO_MODELOS'))
 
 const stats = computed(() => ({
   total:       modelos.value.length,
@@ -369,6 +372,7 @@ onUnmounted(() => {
         </button>
         <button
           id="btn-novo-modelo"
+          v-if="podeEditarCatalogo"
           type="button"
           class="btn-primary"
           @click="openModal"
@@ -559,6 +563,7 @@ onUnmounted(() => {
                   </label>
                   <button
                     id="btn-gerenciar-marcas"
+                    v-if="podeEditarCatalogo"
                     type="button"
                     class="brand-manage-link"
                     @click="showBrandManager = true"

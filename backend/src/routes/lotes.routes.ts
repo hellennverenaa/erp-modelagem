@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { LotesController } from '../controllers/lotes.controller';
+import { exigirPermissao } from '../middlewares/rbac.middleware';
+import { verificaToken } from '../middlewares/auth.middleware';
 
 const router = Router();
 const lotesController = new LotesController();
@@ -117,7 +119,7 @@ router.get('/:id', lotesController.getLoteById);
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/', lotesController.createLote);
+router.post('/', exigirPermissao('EDITAR_TELA_NOVA_ORDEM_TESTE'), lotesController.createLote);
 
 /**
  * @swagger
@@ -167,10 +169,8 @@ router.post('/', lotesController.createLote);
  *       500:
  *         description: Erro interno do servidor
  */
-import { verificaToken } from '../middlewares/auth.middleware';
-
-router.put('/:id', lotesController.updateLote);
-router.put('/:id/manutencao', verificaToken, lotesController.updateManutencao);
-router.get('/:id/auditoria', lotesController.getAuditoria);
+router.put('/:id', exigirPermissao('EDITAR_TELA_GESTAO_ORDENS'), lotesController.updateLote);
+router.put('/:id/manutencao', verificaToken, exigirPermissao('EDITAR_TELA_GESTAO_ORDENS'), lotesController.updateManutencao);
+router.get('/:id/auditoria', exigirPermissao('TELA_GESTAO_ORDENS'), lotesController.getAuditoria);
 
 export default router;

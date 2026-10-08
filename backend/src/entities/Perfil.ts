@@ -14,7 +14,7 @@ export class Perfil {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  // Nome único do perfil (ex: REVISORA, COORDENADOR_SETOR, ASSISTENTE_MODELAGEM, ADMIN, OPERADOR)
+  // Nome único do perfil de acesso; não representa o cargo do colaborador.
   @Column({ type: 'varchar', length: 50, unique: true })
   nome: string;
 

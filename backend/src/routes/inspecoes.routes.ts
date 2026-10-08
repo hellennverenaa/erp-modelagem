@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { InspecoesController } from '../controllers/inspecoes.controller';
-import { verificarPermissaoSetor } from '../middlewares/rbac.middleware';
+import { exigirPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const inspecoesController = new InspecoesController();
@@ -106,6 +106,7 @@ const inspecoesController = new InspecoesController();
  */
 router.post(
   '/',
+  exigirPermissao('EDITAR_TELA_INSPECAO_QUALIDADE'),
   verificarPermissaoSetor('INSPECIONAR_SETOR', 'body'),
   inspecoesController.createInspecao
 );
@@ -220,6 +221,6 @@ router.get('/divergencias', inspecoesController.getDivergencias);
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/retrabalho', inspecoesController.createRetrabalho);
+router.post('/retrabalho', exigirPermissao('EDITAR_TELA_INSPECAO_QUALIDADE'), inspecoesController.createRetrabalho);
 
 export default router;

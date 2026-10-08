@@ -7,6 +7,7 @@ import { Peca } from '../entities/Peca';
 import { AuditLog } from '../entities/AuditLog';
 import { Usuario } from '../entities/Usuario';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
+import { perfilPossuiPermissao } from '../services/rbac.service';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -30,8 +31,8 @@ function isUuid(val: any): boolean {
   return typeof val === 'string' && uuidRegex.test(val);
 }
 
-function isAdminProfile(req: Request): boolean {
-  return req.user?.perfilNome?.trim().toUpperCase() === 'ADMIN';
+function possuiAcessoTodasPlantas(req: Request): Promise<boolean> {
+  return req.user ? perfilPossuiPermissao(req.user.perfilId, 'ACESSAR_TODAS_PLANTAS') : Promise.resolve(false);
 }
 
 const updateManutencaoSchema = z.object({
@@ -50,13 +51,14 @@ export class LotesController {
    */
   public getLotes = async (req: Request, res: Response): Promise<Response> => {
     try {
-      if (!isAdminProfile(req) && !req.user?.plantaId) {
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && !req.user?.plantaId) {
         return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
       }
 
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const lotes = await loteRepo.find({
-        where: isAdminProfile(req) ? undefined : { plantaId: req.user!.plantaId },
+        where: acessoTodasPlantas ? undefined : { plantaId: req.user!.plantaId },
         relations: {
           modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
           planta: true,
@@ -83,9 +85,13 @@ export class LotesController {
   public getLoteById = async (req: Request, res: Response): Promise<Response> => {
     try {
       const id = req.params.id as string;
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && !req.user?.plantaId) {
+        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      }
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const lote = await loteRepo.findOne({
-        where: isAdminProfile(req) ? { id } : { id, plantaId: req.user!.plantaId },
+        where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId },
         relations: {
           modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
           planta: true,
@@ -166,7 +172,9 @@ export class LotesController {
         slasPorSetor
       } = parseResult.data;
 
-      if (!isAdminProfile(req) && plantaId !== req.user.plantaId) {
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+
+      if (!acessoTodasPlantas && plantaId !== req.user.plantaId) {
         return res.status(403).json({
           error: 'Não é permitido criar uma ordem em outra planta.',
           code: 'PLANTA_FORBIDDEN'
@@ -196,7 +204,7 @@ export class LotesController {
 
       const lote = loteRepo.create({
         modeloId,
-        plantaId: isAdminProfile(req) ? plantaId : req.user.plantaId,
+        plantaId: acessoTodasPlantas ? plantaId : req.user.plantaId,
         criadoPorId: req.user!.userId,
         codigoBarras: `OT-${Date.now()}`,
         dataInicio: new Date(),
@@ -243,8 +251,12 @@ export class LotesController {
       }
 
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && !req.user?.plantaId) {
+        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      }
       let lote = await loteRepo.findOne({
-        where: isAdminProfile(req) ? { id } : { id, plantaId: req.user!.plantaId }
+        where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId }
       });
 
       if (!lote) {
@@ -300,9 +312,13 @@ export class LotesController {
 
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
       const pecaRepo = AppDataSource.getRepository(Peca);
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && !req.user?.plantaId) {
+        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      }
 
       let lote = await loteRepo.findOne({
-        where: isAdminProfile(req) ? { id } : { id, plantaId: req.user!.plantaId },
+        where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId },
         relations: { modelo: { pecas: true, rotas: { setor: true } }, planta: true }
       });
 
@@ -316,7 +332,6 @@ export class LotesController {
       const { dataPrevistaProducao, pecas } = parseResult.data;
 
       const reqUser = (req as any).user || (req as any).usuario || {};
-      const userPerfil = (reqUser.perfilNome || reqUser.perfil?.nome || reqUser.perfil || '').toString().toUpperCase();
 
       // Lookup do Usuário Autenticado por Username (SSO Unix)
       let auditUsuarioId: string | null = null;
@@ -369,7 +384,7 @@ export class LotesController {
       const diffNovo: Record<string, number> = {};
 
       if (novosSlas !== undefined && typeof novosSlas === 'object' && novosSlas !== null) {
-        const isAllowedRole = userPerfil === 'MODELISTA' || userPerfil === 'ADMIN';
+        const podeEditarRota = await perfilPossuiPermissao(req.user!.perfilId, 'EDITAR_ROTA');
 
         const allKeys = Array.from(new Set([...Object.keys(slasAnterioresEfetivos), ...Object.keys(novosSlas)]));
         for (const key of allKeys) {
@@ -385,7 +400,7 @@ export class LotesController {
 
         const mudouSlaReal = Object.keys(diffNovo).length > 0;
 
-        if (mudouSlaReal && !isAllowedRole) {
+        if (mudouSlaReal && !podeEditarRota) {
           return res.status(403).json({
             error: 'Acesso Negado: Apenas Modelistas e Administradores podem alterar os prazos (SLA) de produção.',
             code: 'FORBIDDEN_SLA_EDIT'
@@ -526,7 +541,11 @@ export class LotesController {
   public getAuditoria = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { id } = req.params;
-      if (!isAdminProfile(req)) {
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && !req.user?.plantaId) {
+        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      }
+      if (!acessoTodasPlantas) {
         const lote = await AppDataSource.getRepository(OrdemTeste).findOne({
           where: { id: String(id), plantaId: req.user!.plantaId },
           select: { id: true }

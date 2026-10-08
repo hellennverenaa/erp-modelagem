@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { DossieController } from '../controllers/dossie.controller';
+import { exigirAlgumaPermissao, exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const dossieController = new DossieController();
@@ -45,8 +46,8 @@ const dossieController = new DossieController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.post('/gerar', dossieController.gerarDossie);
-router.get('/download/:id', dossieController.downloadDossie);
+router.post('/gerar', exigirPermissao('EDITAR_TELA_GESTAO_ORDENS'), dossieController.gerarDossie);
+router.get('/download/:id', exigirAlgumaPermissao(['TELA_GESTAO_ORDENS', 'TELA_RASTREAMENTO']), dossieController.downloadDossie);
 
 /**
  * @swagger
@@ -84,6 +85,6 @@ router.get('/download/:id', dossieController.downloadDossie);
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/:id', dossieController.getDossieById);
+router.get('/:id', exigirAlgumaPermissao(['TELA_GESTAO_ORDENS', 'TELA_RASTREAMENTO']), dossieController.getDossieById);
 
 export default router;
