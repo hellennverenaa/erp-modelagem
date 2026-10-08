@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import {
   Users,
   Search,
@@ -7,9 +8,12 @@ import {
   XCircle,
   RefreshCw,
   Sliders,
-  AlertCircle
+  AlertCircle,
+  ChevronDown,
+  ArrowRight
 } from '@lucide/vue'
 import api from '../api/axios'
+import { authStore } from '../api/auth.store'
 
 interface User {
   id: string
@@ -56,6 +60,25 @@ interface Permission {
   permitido: boolean
 }
 
+interface PermissionDefinition {
+  acao: string
+  label: string
+}
+
+interface ScreenDefinition {
+  routeName: string
+  routePath: string
+  label: string
+  viewPermission: string
+  editPermission?: string
+}
+
+interface PermissionCatalog {
+  screens: ScreenDefinition[]
+  globalActions: PermissionDefinition[]
+  sectorActions: PermissionDefinition[]
+}
+
 interface Toast {
   id: number
   message: string
@@ -82,8 +105,20 @@ const users = ref<User[]>([])
 const profiles = ref<Perfil[]>([])
 const sectors = ref<Sector[]>([])
 const permissions = ref<Permission[]>([])
+const persistedPermissions = ref<Permission[]>([])
+const permissionCatalog = ref<PermissionCatalog>({ screens: [], globalActions: [], sectorActions: [] })
 
 const selectedPerfilId = ref<string>('')
+type WizardStep = 'telas' | 'globais' | 'setores' | 'revisao'
+const wizardSteps: Array<{ id: WizardStep; title: string; description: string }> = [
+  { id: 'telas', title: 'Acesso às telas', description: 'Escolha quais áreas do ERP o perfil pode consultar ou editar.' },
+  { id: 'globais', title: 'Ações globais', description: 'Configure ações que valem para toda a aplicação.' },
+  { id: 'setores', title: 'Permissões por setor', description: 'Defina as operações disponíveis em cada setor ativo.' },
+  { id: 'revisao', title: 'Revisão', description: 'Confira as diferenças antes de gravá-las.' },
+]
+const expandedWizardStep = ref<WizardStep | null>('telas')
+const showProfileManager = ref(false)
+const configurationJustSaved = ref(false)
 const filterText = ref<string>('')
 const showPerfilModal = ref(false)
 const editingPerfilId = ref<string | null>(null)
@@ -92,10 +127,28 @@ const formPerfil = ref({ nome: '', descricao: '' })
 
 // Loaders
 const loadingUsers = ref(false)
+const usersLoadError = ref('')
 const loadingRBAC = ref(false)
+const metadataLoadError = ref('')
 const permissionLoadError = ref('')
-const updatingPermissions = ref<Record<string, boolean>>({})
+const savingConfiguration = ref(false)
+let permissionFetchSequence = 0
+const showAudit = ref(false)
+const auditLoading = ref(false)
+const auditError = ref('')
+const auditItems = ref<AuditEntry[]>([])
+const auditTotal = ref(0)
 const updatingUserProfile = ref<Record<string, boolean>>({})
+
+interface AuditEntry {
+  id: string
+  acao: string
+  entidadeTipo: string
+  dadosAnteriores: Record<string, unknown> | null
+  dadosNovos: Record<string, unknown> | null
+  createdAt: string
+  usuario: { nomeCompleto: string; usuario: string } | null
+}
 
 // Toasts
 const toasts = ref<Toast[]>([])
@@ -112,30 +165,37 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
 // Fetch Functions
 async function fetchUsers() {
   loadingUsers.value = true
+  usersLoadError.value = ''
   try {
     const { data } = await api.get('/admin/usuarios')
     users.value = data
   } catch (error: any) {
-    showToast(error.response?.data?.error || 'Falha ao carregar lista de usuários.', 'error')
+    usersLoadError.value = error.response?.data?.error || 'Falha ao carregar lista de usuários.'
+    users.value = []
+    showToast(usersLoadError.value, 'error')
   } finally {
     loadingUsers.value = false
   }
 }
 
 async function fetchMetadata() {
+  metadataLoadError.value = ''
   try {
-    const [profilesRes, sectorsRes] = await Promise.all([
+    const [profilesRes, sectorsRes, catalogRes] = await Promise.all([
       api.get('/admin/perfis'),
-      api.get('/admin/setores')
+      api.get('/admin/setores'),
+      api.get('/admin/permissoes/catalogo'),
     ])
     profiles.value = profilesRes.data
     sectors.value = sectorsRes.data
+    permissionCatalog.value = catalogRes.data
 
     if (!profiles.value.some(profile => profile.id === selectedPerfilId.value && profile.ativo)) {
       selectedPerfilId.value = profiles.value.find(profile => profile.ativo)?.id || ''
     }
   } catch (error: any) {
-    showToast(error.response?.data?.error || 'Erro ao carregar perfis e setores.', 'error')
+    metadataLoadError.value = error.response?.data?.error || 'Erro ao carregar perfis, setores e catálogo de permissões.'
+    showToast(metadataLoadError.value, 'error')
   }
 }
 
@@ -152,6 +212,8 @@ function editarPerfil(perfil: Perfil) {
 }
 
 async function salvarPerfil() {
+  if (savingConfiguration.value) return
+  if (pendingPermissions.value.length && !window.confirm('Descartar as alterações não salvas da matriz antes de salvar o perfil?')) return
   const nome = formPerfil.value.nome.trim()
   if (nome.length < 2) {
     showToast('Informe um nome de perfil com pelo menos 2 caracteres.', 'error')
@@ -166,6 +228,7 @@ async function salvarPerfil() {
       : await api.post('/admin/perfis', payload)
 
     const perfilSalvo = response.data as Perfil
+    discardConfiguration()
     const isEditing = editingPerfilId.value !== null
     showPerfilModal.value = false
     await fetchMetadata()
@@ -179,6 +242,8 @@ async function salvarPerfil() {
 }
 
 async function alternarStatusPerfil(perfil: Perfil) {
+  if (savingConfiguration.value) return
+  if (pendingPermissions.value.length && !window.confirm('Descartar as alterações não salvas da matriz?')) return
   const ativo = !perfil.ativo
   if (!ativo && isPerfilSistema(perfil.nome)) {
     showToast(`O perfil ${perfil.nome} é protegido.`, 'error')
@@ -190,6 +255,7 @@ async function alternarStatusPerfil(perfil: Perfil) {
 
   try {
     await api.patch(`/admin/perfis/${perfil.id}`, { ativo })
+    discardConfiguration()
     await fetchMetadata()
     if (!ativo && selectedPerfilId.value === perfil.id) {
       selectedPerfilId.value = profiles.value.find(item => item.ativo)?.id || ''
@@ -200,18 +266,45 @@ async function alternarStatusPerfil(perfil: Perfil) {
   }
 }
 
-async function fetchPermissions() {
-  if (!selectedPerfilId.value) return
+async function fetchPermissions(
+  profileId = selectedPerfilId.value,
+  options: { clearBeforeLoad?: boolean; notifyError?: boolean } = {},
+): Promise<boolean> {
+  const requestSequence = ++permissionFetchSequence
+  const { clearBeforeLoad = true, notifyError = true } = options
+
+  if (!profileId) {
+    permissions.value = []
+    persistedPermissions.value = []
+    permissionLoadError.value = ''
+    loadingRBAC.value = false
+    return true
+  }
+
   loadingRBAC.value = true
   permissionLoadError.value = ''
+  if (clearBeforeLoad) {
+    permissions.value = []
+    persistedPermissions.value = []
+  }
+
   try {
-    const { data } = await api.get(`/admin/permissoes/${selectedPerfilId.value}`)
-    permissions.value = data
+    const { data } = await api.get(`/admin/permissoes/${profileId}`)
+    if (requestSequence !== permissionFetchSequence || profileId !== selectedPerfilId.value) return false
+
+    const loadedPermissions = data.map((item: Permission) => ({ ...item }))
+    permissions.value = loadedPermissions.map((item: Permission) => ({ ...item }))
+    persistedPermissions.value = loadedPermissions
+    return true
   } catch (error: any) {
-    permissionLoadError.value = error.response?.data?.error || 'Erro ao obter matriz de acessos.'
-    showToast(permissionLoadError.value, 'error')
+    if (requestSequence !== permissionFetchSequence || profileId !== selectedPerfilId.value) return false
+
+    const message = error.response?.data?.error || 'Erro ao obter matriz de acessos.'
+    permissionLoadError.value = notifyError ? message : ''
+    if (notifyError) showToast(message, 'error')
+    return false
   } finally {
-    loadingRBAC.value = false
+    if (requestSequence === permissionFetchSequence) loadingRBAC.value = false
   }
 }
 
@@ -223,10 +316,6 @@ async function alterarPerfilColaborador(usuarioId: string, event: Event) {
   try {
     await api.put(`/admin/usuarios/${usuarioId}/perfil`, {
       perfilId: novoPerfilId
-    }, {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('erp_token')}`
-      }
     })
 
     showToast('Perfil do colaborador atualizado com sucesso.')
@@ -244,7 +333,7 @@ async function alterarPerfilColaborador(usuarioId: string, event: Event) {
       }
     }
   } catch (error: any) {
-    showToast('Falha ao atualizar perfil do colaborador.', 'error')
+    showToast(error.response?.data?.error || 'Falha ao atualizar perfil do colaborador.', 'error')
     await fetchUsers()
   } finally {
     updatingUserProfile.value[usuarioId] = false
@@ -284,7 +373,7 @@ async function salvarUsuario() {
     showEditModal.value = false
     await fetchUsers()
   } catch (error: any) {
-    showToast('Falha ao atualizar colaborador.', 'error')
+    showToast(error.response?.data?.error || 'Falha ao atualizar colaborador.', 'error')
   } finally {
     if (selectedUser.value && selectedUser.value.id === id) {
       updatingUserProfile.value[id] = false
@@ -300,75 +389,167 @@ function isAllowed(setorId: string | null, acao: string): boolean {
   return perm ? perm.permitido : false
 }
 
-// Action execution
-async function togglePermission(setorId: string | null, acao: string) {
-  const currentVal = isAllowed(setorId, acao)
-  const newVal = !currentVal
+// A matriz é editada localmente e gravada em uma única transação ao salvar.
+function permissionKey(permission: Pick<Permission, 'setorId' | 'acao'>) {
+  return `${permission.setorId || 'global'}|${permission.acao}`
+}
 
-  const key = `${setorId || 'global'}-${acao}`
-  updatingPermissions.value[key] = true
+const pendingPermissions = computed(() => permissions.value.filter((permission) => {
+  const persisted = persistedPermissions.value.find(item => permissionKey(item) === permissionKey(permission))
+  return permission.permitido !== (persisted?.permitido ?? false)
+}))
 
+const pendingChanges = computed(() => pendingPermissions.value.map((permission) => {
+  const previous = persistedPermissions.value.find(item => permissionKey(item) === permissionKey(permission))
+  const screen = screenDefinitions.value.find(item => item.viewPermission === permission.acao || item.editPermission === permission.acao)
+  const globalAction = permissionCatalog.value.globalActions.find(item => item.acao === permission.acao)
+  const sectorAction = permissionCatalog.value.sectorActions.find(item => item.acao === permission.acao)
+  const sectorName = permission.setorId ? sectors.value.find(item => item.id === permission.setorId)?.nome || 'Setor' : null
+  const section = screen ? 'Acesso às telas' : globalAction ? 'Ações globais' : 'Permissões por setor'
+  const permissionType = screen
+    ? screen.editPermission === permission.acao ? 'Editar' : 'Visualizar'
+    : globalAction || sectorAction ? (globalAction || sectorAction)!.label : permission.acao
+  return {
+    key: permissionKey(permission),
+    section,
+    label: screen?.label || permissionType,
+    scope: screen ? permissionType : sectorName,
+    before: previous?.permitido ? 'Permitido' : 'Bloqueado',
+    after: permission.permitido ? 'Permitido' : 'Bloqueado',
+    permitido: permission.permitido,
+  }
+}))
+
+const pendingChangesByStep = computed<Record<WizardStep, number>>(() => ({
+  telas: pendingChanges.value.filter(item => item.section === 'Acesso às telas').length,
+  globais: pendingChanges.value.filter(item => item.section === 'Ações globais').length,
+  setores: pendingChanges.value.filter(item => item.section === 'Permissões por setor').length,
+  revisao: pendingChanges.value.length,
+}))
+
+const activeWizardIndex = computed(() => wizardSteps.findIndex(step => step.id === expandedWizardStep.value))
+
+function toggleWizardStep(step: WizardStep) {
+  expandedWizardStep.value = expandedWizardStep.value === step ? null : step
+}
+
+function moveWizardStep(direction: -1 | 1) {
+  const current = Math.max(0, activeWizardIndex.value)
+  const next = Math.min(wizardSteps.length - 1, Math.max(0, current + direction))
+  expandedWizardStep.value = wizardSteps[next].id
+}
+
+function formatChangeCount(count: number) {
+  return count === 1 ? '1 mudança' : `${count} mudanças`
+}
+
+function togglePermission(setorId: string | null, acao: string) {
+  if (savingConfiguration.value) return
+  configurationJustSaved.value = false
+  const screen = screenDefinitions.value.find(item => item.viewPermission === acao || item.editPermission === acao)
+  const nextValue = !isAllowed(setorId, acao)
+  const apply = (action: string, permitido: boolean) => {
+    const existing = permissions.value.find(item => item.setorId === setorId && item.acao === action)
+    if (existing) existing.permitido = permitido
+    else permissions.value.push({ perfilId: selectedPerfilId.value, setorId, acao: action, permitido })
+  }
+  apply(acao, nextValue)
+  if (screen?.editPermission === acao && nextValue) apply(screen.viewPermission, true)
+  if (screen?.viewPermission === acao && !nextValue && screen.editPermission) apply(screen.editPermission, false)
+}
+
+function discardConfiguration() {
+  permissions.value = persistedPermissions.value.map(item => ({ ...item }))
+  configurationJustSaved.value = false
+  expandedWizardStep.value = 'telas'
+}
+
+async function saveConfiguration() {
+  const profileId = selectedPerfilId.value
+  const changesToSave = pendingPermissions.value.map(({ perfilId, setorId, acao, permitido }) => ({ perfilId, setorId, acao, permitido }))
+  if (!changesToSave.length || savingConfiguration.value) return
+
+  const savedPermissionsSnapshot = permissions.value.map(item => ({ ...item }))
+  savingConfiguration.value = true
   try {
-    const { data } = await api.put('/admin/permissoes', {
-      perfilId: selectedPerfilId.value,
-      setorId,
-      acao,
-      permitido: newVal
-    })
+    try {
+      await api.put('/admin/permissoes', changesToSave)
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Falha ao salvar configuração do perfil.', 'error')
+      return
+    }
 
-    // Update local permissions state list
-    const returnedItems = Array.isArray(data) ? data : [data]
-    for (const item of returnedItems) {
-      const idx = permissions.value.findIndex(
-        (p) => p.setorId === item.setorId && p.acao === item.acao
-      )
-      if (idx !== -1) {
-        permissions.value[idx].permitido = item.permitido
-      } else {
-        permissions.value.push(item)
+    const refreshed = await fetchPermissions(profileId, { clearBeforeLoad: false, notifyError: false })
+    const notices: string[] = []
+    if (!refreshed) {
+      if (selectedPerfilId.value === profileId) {
+        permissions.value = savedPermissionsSnapshot.map(item => ({ ...item }))
+        persistedPermissions.value = savedPermissionsSnapshot.map(item => ({ ...item }))
+        configurationJustSaved.value = true
+      }
+      notices.push('não foi possível recarregar a matriz')
+    } else {
+      configurationJustSaved.value = true
+    }
+
+    if (authStore.user.value?.perfilId === profileId) {
+      try {
+        await authStore.refreshCurrentUser()
+      } catch {
+        notices.push('a sessão atual não foi atualizada')
       }
     }
 
-    const actionLabel = getActionLabel(acao)
-    const sectorName = setorId ? sectors.value.find(s => s.id === setorId)?.nome : 'Geral/Global'
-    showToast(`Permissão "${actionLabel}" (${sectorName}) atualizada com sucesso.`)
-  } catch (error: any) {
-    showToast(error.response?.data?.error || 'Falha ao salvar alteração de permissão.', 'error')
+    if (notices.length) {
+      showToast(`Permissões salvas, mas ${notices.join(' e ')}.`, 'error')
+    } else {
+      showToast('Configuração do perfil salva no banco de dados.')
+    }
   } finally {
-    updatingPermissions.value[key] = false
+    savingConfiguration.value = false
+  }
+}
+
+function selectProfile(event: Event) {
+  const target = event.target as HTMLSelectElement
+  if (pendingPermissions.value.length && !window.confirm('Descartar as alterações não salvas deste perfil?')) {
+    target.value = selectedPerfilId.value
+    return
+  }
+  selectedPerfilId.value = target.value
+}
+
+async function toggleAudit() {
+  showAudit.value = !showAudit.value
+  if (showAudit.value) await fetchAudit(true)
+}
+
+async function fetchAudit(reset = false) {
+  auditLoading.value = true
+  auditError.value = ''
+  try {
+    const offset = reset ? 0 : auditItems.value.length
+    const { data } = await api.get('/admin/auditoria/rbac', { params: { offset, limit: 30 } })
+    auditItems.value = reset ? data.items : [...auditItems.value, ...data.items]
+    auditTotal.value = data.total
+  } catch (error: any) {
+    auditError.value = error.response?.data?.error || 'Falha ao carregar auditoria.'
+  } finally {
+    auditLoading.value = false
   }
 }
 
 // Helpers
 function getActionLabel(action: string): string {
-  const map: Record<string, string> = {
-    BIPAR_ENTRADA: 'Bipar Entrada',
-    BIPAR_SAIDA: 'Bipar Saída',
-    REVISAO_MAQUINA: 'Revisão Máquina',
-    FECHAMENTO_LOTE: 'Fechamento Lote',
-    PREENCHER_CHECKLIST: 'Checklist Setor',
-    INSPECIONAR_SETOR: 'Inspeção Qualidade',
-    EDITAR_ROTA: 'Editar Rota',
-    ADMINISTRAR_RBAC: 'Administrar RBAC',
-    REGISTRAR_VEREDICTO_FINAL: 'Veredito Final'
-  }
-  return map[action] || action
+  return [
+    ...permissionCatalog.value.globalActions,
+    ...permissionCatalog.value.sectorActions,
+  ].find((definition) => definition.acao === action)?.label || action
 }
 
-const globalActions = [
-  'EDITAR_ROTA',
-  'ADMINISTRAR_RBAC',
-  'REGISTRAR_VEREDICTO_FINAL'
-]
-
-const sectorActions = [
-  'BIPAR_ENTRADA',
-  'BIPAR_SAIDA',
-  'PREENCHER_CHECKLIST',
-  'REVISAO_MAQUINA',
-  'FECHAMENTO_LOTE',
-  'INSPECIONAR_SETOR'
-]
+const globalActions = computed(() => permissionCatalog.value.globalActions.map(({ acao }) => acao))
+const sectorActions = computed(() => permissionCatalog.value.sectorActions.map(({ acao }) => acao))
+const screenDefinitions = computed(() => permissionCatalog.value.screens)
 
 // Computed list of filtered users
 const filteredUsers = computed(() => {
@@ -383,13 +564,35 @@ const filteredUsers = computed(() => {
   )
 })
 
-watch(selectedPerfilId, () => {
-  fetchPermissions()
+watch(selectedPerfilId, (profileId) => {
+  expandedWizardStep.value = 'telas'
+  configurationJustSaved.value = false
+  fetchPermissions(profileId)
+})
+
+function protectUnsavedDraft(event: BeforeUnloadEvent) {
+  if (!pendingPermissions.value.length) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onBeforeRouteLeave(() => {
+  if (savingConfiguration.value) {
+    showToast('Aguarde o salvamento da configuração antes de sair.', 'error')
+    return false
+  }
+  if (!pendingPermissions.value.length) return true
+  return window.confirm('Existem alterações de permissões não salvas. Deseja sair e descartá-las?')
 })
 
 onMounted(() => {
+  window.addEventListener('beforeunload', protectUnsavedDraft)
   fetchUsers()
   fetchMetadata()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', protectUnsavedDraft)
 })
 </script>
 
@@ -402,6 +605,28 @@ onMounted(() => {
         <p class="view-subtitle">Controle matriz de acesso a setores, bipagem e auditorias no chão de fábrica.</p>
       </div>
       <div class="header-right">
+        <div class="audit-control">
+          <button type="button" class="btn-edit-user" :aria-expanded="showAudit" @click="toggleAudit">Auditoria de acessos</button>
+          <div v-if="showAudit" class="audit-dropdown" role="region" aria-label="Histórico de acessos RBAC">
+            <div class="audit-heading">
+              <strong>Histórico de alterações</strong>
+              <button type="button" class="btn-edit-user" :disabled="auditLoading" @click="fetchAudit(true)">Atualizar</button>
+            </div>
+            <p v-if="auditError" role="alert">{{ auditError }}</p>
+            <p v-else-if="auditLoading && !auditItems.length">Carregando auditoria...</p>
+            <p v-else-if="!auditItems.length">Nenhuma alteração registrada.</p>
+            <div v-for="entry in auditItems" :key="entry.id" class="audit-entry">
+              <strong>{{ entry.acao.replaceAll('_', ' ') }}</strong>
+              <small>{{ new Date(entry.createdAt).toLocaleString('pt-BR') }} · {{ entry.usuario?.nomeCompleto || 'Sistema' }}</small>
+              <details>
+                <summary>Ver dados alterados</summary>
+                <pre>Antes: {{ JSON.stringify(entry.dadosAnteriores, null, 2) }}
+Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
+              </details>
+            </div>
+            <button v-if="auditItems.length < auditTotal" type="button" class="btn-edit-user" :disabled="auditLoading" @click="fetchAudit(false)">Carregar mais</button>
+          </div>
+        </div>
         <!-- Tab Switches -->
         <div class="tabs-nav" role="tablist">
           <button
@@ -473,7 +698,10 @@ onMounted(() => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="user in filteredUsers" :key="user.id">
+                  <tr v-if="usersLoadError">
+                    <td colspan="8" class="table-empty" role="alert">{{ usersLoadError }}</td>
+                  </tr>
+                  <tr v-for="user in filteredUsers" v-if="!usersLoadError" :key="user.id">
                     <td class="td-primary">
                       <div class="user-meta">
                         <span class="user-display-name">{{ user.nomeCompleto }}</span>
@@ -519,7 +747,7 @@ onMounted(() => {
                       </button>
                     </td>
                   </tr>
-                  <tr v-if="filteredUsers.length === 0">
+                  <tr v-if="!usersLoadError && filteredUsers.length === 0">
                     <td colspan="8" class="table-empty">
                       Nenhum colaborador corresponde aos filtros de busca.
                     </td>
@@ -535,128 +763,289 @@ onMounted(() => {
       <Transition name="fade-slide">
         <div v-if="activeTab === 'permissoes'" class="tab-panel" role="tabpanel">
           <div class="matrix-setup">
-            <div class="panel-card config-card">
-              <div class="profile-manager-header">
-                <div>
-                  <h3 class="section-title">Perfis de acesso</h3>
-                  <p class="field-hint-text">Perfis são conjuntos de permissões e não dependem do cargo cadastrado.</p>
-                </div>
-                <button type="button" class="btn-save" @click="abrirNovoPerfil">Novo perfil</button>
-              </div>
-              <div class="profile-list">
-                <div v-for="profile in profiles" :key="profile.id" class="profile-row">
-                  <div class="profile-row-info">
-                    <strong>{{ profile.nome }}</strong>
-                    <span>{{ profile.descricao || 'Sem descrição' }}</span>
-                  </div>
-                  <span :class="['status-pill', profile.ativo ? 'status-pill--active' : 'status-pill--inactive']">
-                    {{ profile.ativo ? 'Ativo' : 'Inativo' }}
-                  </span>
-                  <button type="button" class="btn-edit-user" @click="editarPerfil(profile)">Editar</button>
-                  <button
-                    type="button"
-                    class="btn-edit-user"
-                    :disabled="isPerfilSistema(profile.nome) && profile.ativo"
-                    @click="alternarStatusPerfil(profile)"
-                  >
-                    {{ profile.ativo ? 'Desativar' : 'Reativar' }}
-                  </button>
-                </div>
-                <p v-if="profiles.length === 0" class="field-hint-text">Nenhum perfil cadastrado.</p>
-              </div>
-            </div>
-
-            <!-- Filter Options Card -->
-            <div class="panel-card config-card">
-              <div class="dropdown-group">
-                <label for="perfil-select" class="dropdown-label">Perfil de Usuário</label>
+            <section class="profile-config-card" aria-label="Perfil em configuração">
+              <div class="profile-choice">
+                <label for="perfil-select" class="dropdown-label">Perfil de usuário</label>
                 <div class="select-wrapper">
-                  <select id="perfil-select" v-model="selectedPerfilId" class="perfil-select">
+                  <select id="perfil-select" :value="selectedPerfilId" @change="selectProfile" class="perfil-select" :disabled="loadingRBAC || savingConfiguration">
                     <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
                       {{ prof.nome }} — {{ prof.descricao || 'Sem descrição' }}
                     </option>
                   </select>
                 </div>
+                <p v-if="profiles.find(profile => profile.id === selectedPerfilId)?.descricao" class="profile-current-description">
+                  {{ profiles.find(profile => profile.id === selectedPerfilId)?.descricao }}
+                </p>
+                <p v-if="metadataLoadError" class="field-hint-text" role="alert">{{ metadataLoadError }}</p>
               </div>
-            </div>
+              <div class="profile-config-actions">
+                <button
+                  type="button"
+                  class="btn-edit-user"
+                  :aria-expanded="showProfileManager"
+                  aria-controls="rbac-profile-manager"
+                  @click="showProfileManager = !showProfileManager"
+                >
+                  {{ showProfileManager ? 'Fechar perfis' : `Gerenciar perfis (${profiles.length})` }}
+                  <ChevronDown :size="15" :class="{ 'chevron-open': showProfileManager }" aria-hidden="true" />
+                </button>
+                <button type="button" class="btn-save" @click="abrirNovoPerfil" :disabled="savingConfiguration">Novo perfil</button>
+              </div>
+            </section>
 
-            <!-- Loader or matrix -->
+            <section id="rbac-profile-manager" v-show="showProfileManager" class="profile-manager-panel" aria-label="Gerenciar perfis">
+              <div v-for="profile in profiles" :key="profile.id" class="profile-row">
+                <div class="profile-row-info">
+                  <strong>{{ profile.nome }}</strong>
+                  <span>{{ profile.descricao || 'Sem descrição' }}</span>
+                </div>
+                <span :class="['status-pill', profile.ativo ? 'status-pill--active' : 'status-pill--inactive']">
+                  {{ profile.ativo ? 'Ativo' : 'Inativo' }}
+                </span>
+                <button type="button" class="btn-edit-user" @click="editarPerfil(profile)" :disabled="savingConfiguration">Editar</button>
+                <button
+                  type="button"
+                  class="btn-edit-user"
+                  :disabled="savingConfiguration || (isPerfilSistema(profile.nome) && profile.ativo)"
+                  @click="alternarStatusPerfil(profile)"
+                >
+                  {{ profile.ativo ? 'Desativar' : 'Reativar' }}
+                </button>
+              </div>
+              <p v-if="profiles.length === 0" class="field-hint-text">Nenhum perfil cadastrado.</p>
+            </section>
+
             <div v-if="loadingRBAC" class="loading-state card-loading">
               <RefreshCw :size="32" class="spin-anim loading-spinner" />
-              <span>Buscando matriz de permissões do perfil selecionado...</span>
+              <span>Carregando permissões do perfil...</span>
             </div>
-
             <div v-else-if="permissionLoadError" class="field-hint-text" role="alert">
               {{ permissionLoadError }}
             </div>
-
-            <div v-else class="matrix-layout">
-              <!-- Global Actions Grid -->
-              <section class="matrix-section">
-                <h3 class="section-title">Ações e Configurações Globais</h3>
-                <div class="global-actions-grid">
-                  <div v-for="action in globalActions" :key="action" class="global-action-card">
-                    <div class="action-info">
-                      <h4 class="action-title-label">{{ getActionLabel(action) }}</h4>
-                      <code class="action-code-tag">{{ action }}</code>
-                    </div>
-                    <div class="action-control">
-                      <button
-                        type="button"
-                        class="matrix-toggle"
-                        :class="{ 'matrix-toggle--active': isAllowed(null, action) }"
-                        :disabled="updatingPermissions[`global-${action}`]"
-                        @click="togglePermission(null, action)"
-                        :aria-label="`Permitir ação global ${getActionLabel(action)}`"
-                      >
-                        <RefreshCw v-if="updatingPermissions[`global-${action}`]" :size="12" class="spin-anim toggle-spinner" aria-hidden="true" />
-                        <span v-else class="matrix-toggle-thumb"></span>
-                      </button>
-                    </div>
-                  </div>
+            <div v-else class="permission-wizard">
+              <div class="wizard-overview">
+                <div class="wizard-overview-copy">
+                  <span class="wizard-eyebrow">Configuração de acesso</span>
+                  <strong>{{ expandedWizardStep ? `Etapa ${activeWizardIndex + 1} de ${wizardSteps.length}` : 'Escolha uma etapa' }}</strong>
+                  <span>As mudanças ficam em rascunho até a confirmação final.</span>
                 </div>
-              </section>
+                <div class="wizard-progress" role="progressbar" aria-label="Progresso da configuração" :aria-valuenow="expandedWizardStep ? activeWizardIndex + 1 : 0" aria-valuemin="0" :aria-valuemax="wizardSteps.length">
+                  <span :style="{ width: `${expandedWizardStep ? ((activeWizardIndex + 1) / wizardSteps.length) * 100 : 0}%` }"></span>
+                </div>
+              </div>
 
-              <!-- Sector Matrix Grid -->
-              <section class="matrix-section">
-                <h3 class="section-title">Controle Operacional por Setor do Chão de Fábrica</h3>
-                <div class="table-outer shadow-matrix">
-                  <table class="matrix-table">
-                    <thead>
-                      <tr>
-                        <th class="sticky-col">Setor de Produção</th>
-                        <th v-for="action in sectorActions" :key="action" class="text-center">
-                          <div class="action-header-cell">
-                            <span>{{ getActionLabel(action) }}</span>
-                            <code class="action-header-code">{{ action }}</code>
-                          </div>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="sector in sectors" :key="sector.id">
-                        <td class="sticky-col sector-name-cell">
-                          <div class="sector-meta">
-                            <span class="sector-title-name">{{ sector.nome }}</span>
-                            <span v-if="sector.isCondicional" class="cond-badge">Condicional</span>
-                          </div>
-                        </td>
-                        <td v-for="action in sectorActions" :key="action" class="text-center">
+              <section
+                v-for="(step, index) in wizardSteps"
+                :key="step.id"
+                class="wizard-step"
+                :class="{ 'wizard-step--active': expandedWizardStep === step.id, 'wizard-step--review': step.id === 'revisao' }"
+              >
+                <h3 class="wizard-step-heading">
+                  <button
+                    :id="`rbac-step-heading-${step.id}`"
+                    type="button"
+                    class="wizard-step-trigger"
+                    :aria-expanded="expandedWizardStep === step.id"
+                    :aria-controls="`rbac-step-panel-${step.id}`"
+                    @click="toggleWizardStep(step.id)"
+                  >
+                    <span class="wizard-step-number">{{ String(index + 1).padStart(2, '0') }}</span>
+                    <span class="wizard-step-title">
+                      <strong>{{ step.title }}</strong>
+                      <small>{{ step.description }}</small>
+                    </span>
+                    <span class="wizard-step-count" :class="{ 'wizard-step-count--pending': pendingChangesByStep[step.id] > 0 }">
+                      {{ pendingChangesByStep[step.id] ? formatChangeCount(pendingChangesByStep[step.id]) : 'Sem mudanças' }}
+                    </span>
+                    <ChevronDown :size="18" class="wizard-chevron" :class="{ 'chevron-open': expandedWizardStep === step.id }" aria-hidden="true" />
+                  </button>
+                </h3>
+
+                <div
+                  :id="`rbac-step-panel-${step.id}`"
+                  v-show="expandedWizardStep === step.id"
+                  class="wizard-step-panel"
+                  role="region"
+                  :aria-labelledby="`rbac-step-heading-${step.id}`"
+                >
+                  <template v-if="step.id === 'telas'">
+                    <div class="step-panel-intro">
+                      <span class="step-panel-kicker">Etapa 1</span>
+                      <p>Escolha o que este perfil pode consultar e editar em cada tela.</p>
+                    </div>
+                    <div class="table-outer shadow-matrix">
+                      <table class="matrix-table">
+                        <thead>
+                          <tr>
+                            <th class="sticky-col">Tela</th>
+                            <th class="text-center">Visualizar</th>
+                            <th class="text-center">Editar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="screen in screenDefinitions" :key="screen.viewPermission">
+                            <td class="sticky-col sector-name-cell">
+                              <div class="sector-meta">
+                                <span class="sector-title-name">{{ screen.label }}</span>
+                                <code class="action-header-code">{{ screen.routePath }}</code>
+                              </div>
+                            </td>
+                            <td class="text-center">
+                              <button
+                                type="button"
+                                class="matrix-toggle"
+                                :class="{ 'matrix-toggle--active': isAllowed(null, screen.viewPermission) }"
+                                :disabled="savingConfiguration"
+                                @click="togglePermission(null, screen.viewPermission)"
+                                :aria-label="`Permitir visualizar ${screen.label}`"
+                                :aria-pressed="isAllowed(null, screen.viewPermission)"
+                              >
+                                <span class="matrix-toggle-thumb"></span>
+                              </button>
+                            </td>
+                            <td class="text-center">
+                              <button
+                                v-if="screen.editPermission"
+                                type="button"
+                                class="matrix-toggle"
+                                :class="{ 'matrix-toggle--active': isAllowed(null, screen.editPermission) }"
+                                :disabled="savingConfiguration"
+                                @click="togglePermission(null, screen.editPermission)"
+                                :aria-label="`Permitir edição em ${screen.label}`"
+                                :aria-pressed="isAllowed(null, screen.editPermission)"
+                              >
+                                <span class="matrix-toggle-thumb"></span>
+                              </button>
+                              <span v-else class="text-muted">Somente leitura</span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </template>
+
+                  <template v-else-if="step.id === 'globais'">
+                    <div class="step-panel-intro">
+                      <span class="step-panel-kicker">Etapa 2</span>
+                      <p>Essas ações não ficam vinculadas a um setor específico.</p>
+                    </div>
+                    <div class="global-actions-grid">
+                      <div v-for="action in globalActions" :key="action" class="global-action-card">
+                        <div class="action-info">
+                          <h4 class="action-title-label">{{ getActionLabel(action) }}</h4>
+                          <code class="action-code-tag">{{ action }}</code>
+                        </div>
+                        <div class="action-control">
                           <button
                             type="button"
                             class="matrix-toggle"
-                            :class="{ 'matrix-toggle--active': isAllowed(sector.id, action) }"
-                            :disabled="updatingPermissions[`${sector.id}-${action}`]"
-                            @click="togglePermission(sector.id, action)"
-                            :aria-label="`Permitir ação ${getActionLabel(action)} no setor ${sector.nome}`"
+                            :class="{ 'matrix-toggle--active': isAllowed(null, action) }"
+                            :disabled="savingConfiguration"
+                            @click="togglePermission(null, action)"
+                            :aria-label="`Permitir ação global ${getActionLabel(action)}`"
+                            :aria-pressed="isAllowed(null, action)"
                           >
-                            <RefreshCw v-if="updatingPermissions[`${sector.id}-${action}`]" :size="12" class="spin-anim toggle-spinner" aria-hidden="true" />
-                            <span v-else class="matrix-toggle-thumb"></span>
+                            <span class="matrix-toggle-thumb"></span>
                           </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <template v-else-if="step.id === 'setores'">
+                    <div class="step-panel-intro">
+                      <span class="step-panel-kicker">Etapa 3</span>
+                      <p>Os setores ativos vêm do cadastro do sistema. Cada permissão vale somente para a linha correspondente.</p>
+                    </div>
+                    <div v-if="sectors.length" class="table-outer shadow-matrix">
+                      <table class="matrix-table sector-matrix-table">
+                        <thead>
+                          <tr>
+                            <th class="sticky-col">Setor de produção</th>
+                            <th v-for="action in sectorActions" :key="action" class="text-center">
+                              <div class="action-header-cell">
+                                <span>{{ getActionLabel(action) }}</span>
+                                <code class="action-header-code">{{ action }}</code>
+                              </div>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="sector in sectors" :key="sector.id">
+                            <td class="sticky-col sector-name-cell">
+                              <div class="sector-meta">
+                                <span class="sector-title-name">{{ sector.nome }}</span>
+                                <span v-if="sector.isCondicional" class="cond-badge">Condicional</span>
+                              </div>
+                            </td>
+                            <td v-for="action in sectorActions" :key="action" class="text-center">
+                              <button
+                                type="button"
+                                class="matrix-toggle"
+                                :class="{ 'matrix-toggle--active': isAllowed(sector.id, action) }"
+                                :disabled="savingConfiguration"
+                                @click="togglePermission(sector.id, action)"
+                                :aria-label="`Permitir ação ${getActionLabel(action)} no setor ${sector.nome}`"
+                                :aria-pressed="isAllowed(sector.id, action)"
+                              >
+                                <span class="matrix-toggle-thumb"></span>
+                              </button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div v-else class="wizard-empty-state">
+                      <strong>Nenhum setor ativo disponível</strong>
+                      <span>Cadastre ou ative setores para configurar permissões operacionais.</span>
+                    </div>
+                  </template>
+
+                  <template v-else>
+                    <div class="step-panel-intro review-intro">
+                      <span class="step-panel-kicker">Etapa 4</span>
+                      <p>Confira cada mudança. Nada será gravado até você confirmar abaixo.</p>
+                    </div>
+                    <div v-if="configurationJustSaved && !pendingChanges.length" class="review-success" role="status">
+                      <CheckCircle2 :size="18" aria-hidden="true" />
+                      <span>Configuração salva. Não há mudanças pendentes.</span>
+                    </div>
+                    <div v-else-if="!pendingChanges.length" class="wizard-empty-state">
+                      <strong>Nenhuma mudança para salvar</strong>
+                      <span>Volte a uma etapa e altere as permissões que deseja configurar.</span>
+                    </div>
+                    <div v-else class="review-list" aria-label="Mudanças pendentes">
+                      <article v-for="change in pendingChanges" :key="change.key" class="review-change">
+                        <div class="review-change-info">
+                          <span class="review-category">{{ change.section }}</span>
+                          <strong>{{ change.label }}</strong>
+                          <small v-if="change.scope">{{ change.scope }}</small>
+                        </div>
+                        <div class="review-diff">
+                          <span class="review-before">{{ change.before }}</span>
+                          <ArrowRight :size="15" aria-hidden="true" />
+                          <span :class="['review-after', change.permitido ? 'review-after--allowed' : 'review-after--blocked']">{{ change.after }}</span>
+                        </div>
+                      </article>
+                    </div>
+                    <div class="wizard-review-actions">
+                      <button type="button" class="btn-edit-user" :disabled="!pendingChanges.length || savingConfiguration" @click="discardConfiguration">Descartar rascunho</button>
+                      <button type="button" class="btn-save" :disabled="!pendingChanges.length || savingConfiguration" @click="saveConfiguration">
+                        {{ savingConfiguration ? 'Salvando...' : 'Salvar configuração' }}
+                      </button>
+                    </div>
+                  </template>
+
+                  <div class="wizard-navigation">
+                    <button v-if="index > 0" type="button" class="wizard-back" @click="moveWizardStep(-1)">Voltar</button>
+                    <span v-else class="wizard-navigation-note">{{ pendingChanges.length ? `${formatChangeCount(pendingChanges.length)} em rascunho` : 'Nenhuma mudança em rascunho' }}</span>
+                    <button v-if="index < wizardSteps.length - 1" type="button" class="btn-save wizard-continue" @click="moveWizardStep(1)">
+                      Continuar <ArrowRight :size="15" aria-hidden="true" />
+                    </button>
+                    <span v-else class="wizard-navigation-note wizard-navigation-note--end">
+                      {{ pendingChanges.length ? `${formatChangeCount(pendingChanges.length)} aguardando confirmação` : 'Revisão concluída' }}
+                    </span>
+                  </div>
                 </div>
               </section>
             </div>
@@ -697,7 +1086,7 @@ onMounted(() => {
                 <label for="modal-perfil" class="input-label-tag">Perfil de Acesso</label>
                 <div class="select-wrapper">
                   <select id="modal-perfil" v-model="formUsuario.perfilId" class="modal-select-input" required>
-                    <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
+                    <option v-for="prof in profiles.filter(item => item.ativo && (item.nome !== 'ADMIN_AUTOMACAO' || isContaAdminAutomacao(selectedUser?.usuario || '')))" :key="prof.id" :value="prof.id">
                       {{ prof.nome }}
                     </option>
                   </select>
@@ -784,27 +1173,25 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.audit-control { position: relative; }
+.audit-dropdown { position: absolute; z-index: 30; right: 0; top: calc(100% + 8px); width: min(430px, calc(100vw - 2rem)); max-height: min(70vh, 560px); overflow: auto; padding: 16px; background: white; border: 1px solid #dce5f0; border-radius: 12px; box-shadow: 0 12px 30px #11224426; }
+.audit-heading, .profile-config-actions, .wizard-navigation, .wizard-review-actions { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.audit-entry { border-top: 1px solid #e4e9f2; padding: 12px 0; display: grid; gap: 4px; }
+.audit-entry small { color: #52627b; }
+.audit-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 /* ═══════════════════════════════════════
    ROOT CONTAINER
 ═══════════════════════════════════════ */
 .rbac-container {
+  --rbac-primary: #1e40af;
+  --rbac-ink: #0f172a;
+  --rbac-muted: #64748b;
+  --rbac-line: #dbe4ef;
+  --rbac-surface: #ffffff;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
   width: 100%;
-}
-
-.profile-manager-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.profile-list {
-  display: grid;
-  gap: 0.625rem;
-  margin-top: 1rem;
 }
 
 .profile-row {
@@ -1170,18 +1557,382 @@ onMounted(() => {
 .matrix-setup {
   display: flex;
   flex-direction: column;
+  gap: 1rem;
+}
+
+.profile-config-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: center;
   gap: 1.5rem;
+  padding: 1.125rem 1.25rem;
+  background: var(--rbac-surface);
+  border: 1px solid var(--rbac-line);
+  border-radius: 0.75rem;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
 }
 
-.config-card {
-  padding: 1.25rem;
+.profile-choice {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 42rem;
 }
 
-.dropdown-group {
+.profile-current-description {
+  margin: 0;
+  color: var(--rbac-muted);
+  font-size: 0.78rem;
+}
+
+.profile-config-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.profile-config-actions .btn-edit-user,
+.profile-config-actions .btn-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.5rem;
+  white-space: nowrap;
+}
+
+.chevron-open {
+  transform: rotate(180deg);
+}
+
+.profile-config-actions svg,
+.wizard-chevron {
+  transition: transform 160ms ease;
+}
+
+.profile-manager-panel {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid var(--rbac-line);
+  border-radius: 0.75rem;
+}
+
+.permission-wizard {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.wizard-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 240px);
+  align-items: center;
+  gap: 1rem;
+  padding: 0.25rem 0 0.5rem;
+}
+
+.wizard-overview-copy {
   display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-  max-width: 24rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.7rem;
+}
+
+.wizard-eyebrow,
+.step-panel-kicker {
+  color: var(--rbac-primary);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wizard-overview-copy strong {
+  color: var(--rbac-ink);
+  font-size: 0.9rem;
+}
+
+.wizard-overview-copy > span:last-child {
+  flex-basis: 100%;
+  color: var(--rbac-muted);
+  font-size: 0.76rem;
+}
+
+.wizard-progress {
+  height: 0.4rem;
+  overflow: hidden;
+  background: #e7edf6;
+  border-radius: 999px;
+}
+
+.wizard-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--rbac-primary);
+  border-radius: inherit;
+  transition: width 180ms ease;
+}
+
+.wizard-step {
+  overflow: hidden;
+  background: var(--rbac-surface);
+  border: 1px solid var(--rbac-line);
+  border-radius: 0.75rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.wizard-step--active {
+  border-color: #a9bee9;
+  box-shadow: 0 4px 14px rgb(30 64 175 / 6%);
+}
+
+.wizard-step-heading {
+  margin: 0;
+}
+
+.wizard-step-trigger {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 2.35rem minmax(0, 1fr) auto 1.25rem;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.85rem 1rem;
+  color: var(--rbac-ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.wizard-step-trigger:hover {
+  background: #f8faff;
+}
+
+.wizard-step-trigger:focus-visible,
+.wizard-back:focus-visible {
+  outline: 3px solid rgb(30 64 175 / 32%);
+  outline-offset: -3px;
+}
+
+.wizard-step-number {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  color: #334155;
+  font-size: 0.75rem;
+  font-weight: 800;
+  background: #eef2f8;
+  border-radius: 0.6rem;
+}
+
+.wizard-step--active .wizard-step-number {
+  color: white;
+  background: var(--rbac-primary);
+}
+
+.wizard-step-title {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.wizard-step-title strong {
+  font-size: 0.9rem;
+}
+
+.wizard-step-title small {
+  overflow: hidden;
+  color: var(--rbac-muted);
+  font-size: 0.74rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wizard-step-count {
+  padding: 0.3rem 0.55rem;
+  color: #52627b;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: #f1f5f9;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.wizard-step-count--pending {
+  color: #1e3a8a;
+  background: #eaf1ff;
+}
+
+.wizard-chevron {
+  color: #64748b;
+}
+
+.wizard-step-panel {
+  padding: 0.15rem 1rem 1rem;
+  border-top: 1px solid #edf1f6;
+}
+
+.step-panel-intro {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  padding: 0.9rem 0;
+}
+
+.step-panel-intro p {
+  margin: 0;
+  color: #52627b;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.wizard-navigation {
+  min-height: 2.75rem;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid #edf1f6;
+}
+
+.wizard-navigation-note {
+  color: var(--rbac-muted);
+  font-size: 0.75rem;
+}
+
+.wizard-navigation-note--end {
+  margin-left: auto;
+}
+
+.wizard-back,
+.wizard-continue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+}
+
+.wizard-back {
+  padding: 0.5rem 0.75rem;
+  color: #334155;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: white;
+  border: 1px solid var(--rbac-line);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+.wizard-continue {
+  margin-left: auto;
+}
+
+.wizard-empty-state {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1.25rem;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 0.65rem;
+}
+
+.wizard-empty-state strong {
+  color: var(--rbac-ink);
+  font-size: 0.85rem;
+}
+
+.wizard-empty-state span {
+  font-size: 0.76rem;
+}
+
+.review-list {
+  display: grid;
+  border-top: 1px solid #e5ebf3;
+}
+
+.review-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0.25rem;
+  border-bottom: 1px solid #e5ebf3;
+}
+
+.review-change-info {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.review-category {
+  color: var(--rbac-primary);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.review-change-info strong {
+  color: var(--rbac-ink);
+  font-size: 0.82rem;
+}
+
+.review-change-info small {
+  color: var(--rbac-muted);
+  font-size: 0.72rem;
+}
+
+.review-diff {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.review-before,
+.review-after {
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.4rem;
+  white-space: nowrap;
+}
+
+.review-before {
+  color: #475569;
+  background: #f1f5f9;
+}
+
+.review-after--allowed {
+  color: #166534;
+  font-weight: 700;
+  background: #f0fdf4;
+}
+
+.review-after--blocked {
+  color: #991b1b;
+  font-weight: 700;
+  background: #fef2f2;
+}
+
+.review-success {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  color: #166534;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.6rem;
+}
+
+.wizard-review-actions {
+  justify-content: flex-end;
+  padding-top: 1rem;
 }
 
 .dropdown-label {
@@ -1225,27 +1976,6 @@ onMounted(() => {
 }
 
 /* Matrix Layout Section */
-.matrix-layout {
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-}
-
-.matrix-section {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.section-title {
-  font-size: 1.0625rem;
-  font-weight: 800;
-  color: #0f172a;
-  letter-spacing: -0.01em;
-  border-left: 3px solid #1e40af;
-  padding-left: 0.625rem;
-}
-
 /* Global Actions Cards */
 .global-actions-grid {
   display: grid;
@@ -1350,6 +2080,10 @@ onMounted(() => {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
+}
+
+.sector-matrix-table {
+  min-width: 48rem;
 }
 
 .matrix-table th {
@@ -1551,6 +2285,63 @@ onMounted(() => {
   .perfil-select { font-size: 1.25rem; }
   .action-title-label { font-size: 1.25rem; }
   .matrix-table { font-size: 1.25rem; }
+}
+
+@media (max-width: 760px) {
+  .profile-config-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.85rem;
+  }
+
+  .profile-config-actions {
+    justify-content: flex-start;
+  }
+
+  .wizard-overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.65rem;
+  }
+
+  .wizard-step-trigger {
+    grid-template-columns: 2.25rem minmax(0, 1fr) 1.25rem;
+    gap: 0.6rem;
+    padding: 0.75rem;
+  }
+
+  .wizard-step-number { grid-column: 1; grid-row: 1; }
+  .wizard-step-title { grid-column: 2; grid-row: 1; }
+  .wizard-step-title small { white-space: normal; }
+  .wizard-step-count { grid-column: 2; grid-row: 2; justify-self: start; }
+  .wizard-chevron { grid-column: 3; grid-row: 1 / span 2; }
+
+  .wizard-step-panel { padding: 0.1rem 0.75rem 0.75rem; }
+
+  .step-panel-intro {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .review-change {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.55rem;
+  }
+
+  .review-diff { justify-content: flex-start; }
+
+  .wizard-review-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-progress > span,
+  .wizard-step,
+  .profile-config-actions svg,
+  .wizard-chevron {
+    transition: none;
+  }
 }
 /* ═══════════════════════════════════════
    BOTOES E MODAL DE COLABORADOR
