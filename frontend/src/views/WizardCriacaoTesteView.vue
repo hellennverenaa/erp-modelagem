@@ -64,6 +64,9 @@ interface PecaSelecionada {
 
 // ─── Navegação e Roteamento ──────────────────────────────────────────────────
 const router = useRouter()
+const podeEditarWizard = computed(() =>
+  authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE') && authStore.hasPermission('EDITAR_ROTA')
+)
 
 // ─── Estado do Stepper ───────────────────────────────────────────────────────
 // 1: Modelo | 2: Peças | 3: Rota | 4: Ordem
@@ -201,6 +204,7 @@ onUnmounted(() => {
 
 // Salvar Modelo (Passo 1 -> 2)
 async function submitModelo() {
+  if (!podeEditarWizard.value) return
   if (!formModelo.value.nome.trim() || !formModelo.value.codigoProduto.trim() || !formModelo.value.marcaId) {
     errorModelo.value = 'Preencha todos os campos obrigatórios do modelo.'
     return
@@ -297,6 +301,7 @@ function removePeca(index: number) {
 }
 
 async function submitPecasAndAdvance() {
+  if (!podeEditarWizard.value) return
   if (pecasSelecionadas.value.length === 0) {
     addToast('error', 'Adicione pelo menos uma peça ao modelo antes de avançar.')
     return
@@ -321,6 +326,10 @@ async function submitPecasAndAdvance() {
 
 // Salvar Rota (Passo 3 -> 4)
 function triggerSaveRota() {
+  if (!podeEditarWizard.value) {
+    addToast('error', 'Seu perfil não pode concluir o cadastro da rota de produção.')
+    return
+  }
   if (routeBuilderRef.value) {
     loadingRota.value = true
     routeBuilderRef.value.salvarRota()
@@ -339,6 +348,7 @@ function onRotaSalva(slas?: Record<string, number>) {
 
 // Salvar Ordem (Passo 4 -> Conclusão)
 async function submitOrdem() {
+  if (!podeEditarWizard.value) return
   if (!formOrdem.value.plantaId) {
     errorOrdem.value = 'Selecione uma planta de fabricação.'
     return
@@ -496,7 +506,12 @@ function resetWizard() {
     <div v-else class="wiz-card">
       
       <!-- CONCLUSÃO SUCESSO -->
-      <div v-if="createdOrdem" class="wiz-done-block">
+      <div v-if="!podeEditarWizard" class="wiz-done-block" role="status">
+        <h2 class="wiz-done-title">Acesso somente para visualização</h2>
+        <p class="wiz-done-desc">Seu perfil pode abrir esta tela, mas não tem todas as permissões para cadastrar modelos, peças, rotas e ordens.</p>
+      </div>
+
+      <div v-else-if="createdOrdem" class="wiz-done-block">
         <div class="wiz-done-icon-wrap" aria-hidden="true">
           <CheckCircle :size="36" />
         </div>
@@ -581,7 +596,7 @@ function resetWizard() {
             <div class="form-group">
               <div class="brand-label-row">
                 <label for="marcaId" class="form-label">Marca <span class="required">*</span></label>
-                <button type="button" class="brand-manage-button" @click="showBrandManager = true">
+                <button v-if="podeEditarWizard" type="button" class="brand-manage-button" @click="showBrandManager = true">
                   Gerenciar marcas
                 </button>
               </div>
@@ -887,7 +902,7 @@ function resetWizard() {
     </div>
 
     <BrandManagerModal
-      v-if="showBrandManager"
+      v-if="showBrandManager && podeEditarWizard"
       @close="showBrandManager = false"
       @created="handleMarcaCreated"
       @updated="handleMarcaUpdated"

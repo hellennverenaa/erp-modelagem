@@ -21,7 +21,6 @@ const setorId = route.params.setorId as string
 
 // Dados do Usuário & Perfil
 const user = computed(() => authStore.user.value)
-const isAdmin = computed(() => authStore.isAdmin.value)
 
 // Trava de Contexto de Setor (Primeira Camada)
 function validarAcessoSetor() {
@@ -29,7 +28,11 @@ function validarAcessoSetor() {
     router.push({ name: 'login' })
     return
   }
-  if (!isAdmin.value && user.value.setorId !== setorId) {
+  if (
+    !authStore.hasPermission('ACESSAR_TODOS_SETORES') &&
+    !authStore.hasPermission('ADMINISTRAR_BIPAGEM') &&
+    user.value.setorId !== setorId
+  ) {
     console.warn(`[ChecklistSecurity] Acesso negado. Setor logado (${user.value.setorId}) diferente do setor da URL (${setorId})`)
     router.push({ name: 'acesso-negado' })
   }
@@ -37,10 +40,13 @@ function validarAcessoSetor() {
 
 // Segunda Camada: Privilégio de Itens Avulsos
 const podeAdicionarItemAvulso = computed(() => {
-  if (!user.value) return false
-  const perfil = user.value.perfilNome?.toUpperCase() || ''
-  return ['ADMIN', 'MODELISTA', 'GERENTE_MODELAGEM', 'ASSISTENTE_MODELAGEM'].includes(perfil)
+  return authStore.hasPermission('ADICIONAR_ITEM_AVULSO_CHECKLIST')
 })
+const podePreencherChecklist = computed(() =>
+  authStore.hasPermission('EDITAR_TELA_CHECKLIST') ||
+  authStore.hasPermission('EDITAR_TELA_BIPAGEM') ||
+  authStore.hasPermission('ADMINISTRAR_BIPAGEM')
+)
 
 // Estados da UI
 const loading = ref(false)
@@ -87,7 +93,9 @@ async function carregarDados() {
     }
 
     // 3. Busca templates de checklist para obter o templateId adequado (caso exista)
-    const resTemplates = await api.get('/checklists/templates')
+    const resTemplates = await api.get('/checklists/templates', {
+      params: { setorId, setorTipoOpcaoId: setor.value.tipoOpcaoId },
+    })
     const templatesList = resTemplates.data || []
     template.value = templatesList.find(
       (t: any) => t.setorTipoOpcaoId === setor.value.tipoOpcaoId
@@ -157,6 +165,7 @@ function removerItemAvulso(index: number) {
 }
 
 async function finalizarChecklist() {
+  if (!podePreencherChecklist.value) return
   erroMsg.value = ''
   sucessoMsg.value = ''
 
@@ -175,6 +184,8 @@ async function finalizarChecklist() {
     const respostasPayload = [
       ...itensEstaticos.value.map(it => ({
         templateItemId: null, // Como são peças dinâmicas, templateItemId deve ser nulo
+        pecaId: it.id,
+        itemAvulso: false,
         descricaoAvulsa: it.descricao, // Enviado na propriedade descricaoAvulsa
         conforme: it.conforme,
         valorResposta: it.valorResposta || null,
@@ -182,6 +193,7 @@ async function finalizarChecklist() {
       })),
       ...itensAvulsos.value.map(it => ({
         templateItemId: null,
+        itemAvulso: true,
         descricaoAvulsa: it.descricaoAvulsa,
         conforme: it.conforme,
         valorResposta: it.valorResposta || null,
@@ -304,6 +316,7 @@ onMounted(() => {
 
         <!-- Formulario Checklist -->
         <form @submit.prevent="finalizarChecklist" class="ck-form">
+          <fieldset :disabled="!podePreencherChecklist || salvando" class="ck-editable-fields" style="border: 0; padding: 0; margin: 0; min-width: 0;">
           <div class="ck-card">
             <div class="ck-card-header">
               <h2 class="ck-card-title">{{ template?.nome || 'Itens de Verificacao' }}</h2>
@@ -509,7 +522,7 @@ onMounted(() => {
                 <button
                   type="submit"
                   class="btn-submit-ck"
-                  :disabled="salvando"
+                  :disabled="!podePreencherChecklist || salvando"
                 >
                   <Loader2 v-if="salvando" class="ck-spinner" :size="16" />
                   <span>{{ salvando ? 'Processando...' : 'Finalizar Conferência e Liberar Setor' }}</span>
@@ -517,6 +530,7 @@ onMounted(() => {
               </div>
             </div>
           </div>
+          </fieldset>
         </form>
       </div>
     </main>

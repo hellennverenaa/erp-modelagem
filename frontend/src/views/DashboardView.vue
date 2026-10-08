@@ -24,34 +24,21 @@ const user = computed(() => authStore.user.value)
 const sidebarOpen = ref(true)
 
 const navItems = [
-  { to: '/dashboard/gerencial',      label: 'Torre de Controle',     icon: LayoutDashboard },
-  { to: '/dashboard/modelos',        label: 'Catálogo de Modelos',   icon: Layers },
-  { to: '/dashboard/catalogo-pecas', label: 'Catálogo de Peças',     icon: Layers },
-  { to: '/dashboard/ordens',         label: 'Gestão de Ordens',     icon: ClipboardList },
-  { to: '/dashboard/rotas',          label: 'Construtor de Rota',   icon: ListOrdered },
-  { to: '/dashboard/bipagem',        label: 'Bipagem Operacional',  icon: Barcode },
-  { to: '/dashboard/inspecao',       label: 'Inspeção de Qualidade', icon: ShieldCheck },
-  { to: '/dashboard/rastreamento',   label: 'TV Rastreamento',    icon: MonitorPlay },
-  { to: '/dashboard/rbac',           label: 'Permissões RBAC',      icon: ShieldCheck },
+  { to: '/dashboard/gerencial',      label: 'Torre de Controle',     icon: LayoutDashboard, permission: 'TELA_TORRE_CONTROLE' },
+  { to: '/dashboard/modelos',        label: 'Catálogo de Modelos',   icon: Layers, permission: 'TELA_CATALOGO_MODELOS' },
+  { to: '/dashboard/catalogo-pecas', label: 'Catálogo de Peças',     icon: Layers, permission: 'TELA_CATALOGO_PECAS' },
+  { to: '/dashboard/ordens',         label: 'Gestão de Ordens',     icon: ClipboardList, permission: 'TELA_GESTAO_ORDENS' },
+  { to: '/dashboard/rotas',          label: 'Construtor de Rota',   icon: ListOrdered, permission: 'TELA_CONSTRUTOR_ROTA' },
+  { to: '/dashboard/bipagem',        label: 'Bipagem Operacional',  icon: Barcode, permission: 'TELA_BIPAGEM' },
+  { to: '/dashboard/inspecao',       label: 'Inspeção de Qualidade', icon: ShieldCheck, permission: 'TELA_INSPECAO_QUALIDADE' },
+  { to: '/dashboard/rastreamento',   label: 'TV Rastreamento',    icon: MonitorPlay, permission: 'TELA_RASTREAMENTO' },
+  { to: '/dashboard/rbac',           label: 'Permissões RBAC',      icon: ShieldCheck, permission: 'RBAC_ADMIN_AUTOMACAO' },
 ]
 
 const visibleNavItems = computed(() => {
-  return navItems.filter(item => {
-    // Torre de Controle (Gerencial)
-    if (item.to === '/dashboard/gerencial') {
-      const perfil = authStore.user.value?.perfilNome?.toUpperCase() || ''
-      return authStore.isAdmin.value || authStore.isGerente.value || perfil === 'SUPERVISOR_SETOR'
-    }
-    // Gestão de perfis RBAC é exclusiva para a equipe de automação
-    if (item.to === '/dashboard/rbac') {
-      return authStore.isAdminAutomacao.value
-    }
-    // Construtor de Rota é acessível por ADMIN, MODELISTA ou GERENTE
-    if (item.to === '/dashboard/rotas') {
-      return authStore.isAdmin.value || authStore.isModelista.value || authStore.isGerente.value
-    }
-    return true
-  })
+  return navItems.filter(item => item.to === '/dashboard/rbac'
+    ? authStore.isAdminAutomacao.value
+    : authStore.hasPermission(item.permission))
 })
 
 const activeLabel = computed(() => {
@@ -92,7 +79,7 @@ function logout() {
       </div>
 
       <!-- Stepper Quick Action Button (Destaque) -->
-      <div v-if="authStore.isAdmin.value || authStore.isModelista.value || authStore.isGerente.value" class="sidebar-action-wrap">
+      <div v-if="authStore.hasPermission('TELA_NOVA_ORDEM_TESTE') && authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE')" class="sidebar-action-wrap">
         <RouterLink
           to="/dashboard/novo-teste"
           class="btn-sidebar-action"

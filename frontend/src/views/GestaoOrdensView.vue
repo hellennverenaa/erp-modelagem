@@ -650,7 +650,17 @@ function formatPermanencia(min: number | null) {
 }
 
 // ─── Modal de Manutenção e Remanejamento ─────────────────────────────────────
-const canEditSla = computed(() => authStore.isAdmin.value || authStore.isModelista.value)
+const canEditSla = computed(() => authStore.hasPermission('EDITAR_ROTA'))
+const canEditOrdens = computed(() => authStore.hasPermission('EDITAR_TELA_GESTAO_ORDENS'))
+const canViewRastreamento = computed(() => authStore.hasPermission('TELA_RASTREAMENTO'))
+const canCreateOrdem = computed(() =>
+  authStore.hasPermission('TELA_NOVA_ORDEM_TESTE') && authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE')
+)
+const canPrintOrdens = computed(() =>
+  authStore.hasPermission('EDITAR_TELA_GESTAO_ORDENS') ||
+  authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE') ||
+  authStore.hasPermission('EDITAR_TELA_BIPAGEM')
+)
 
 export interface SlaSetorFormItem {
   setorKey: string
@@ -1138,6 +1148,7 @@ onMounted(async () => {
         </button>
         <button
           id="btn-nova-ordem"
+          v-if="canCreateOrdem"
           type="button"
           class="btn-primary"
           @click="openModal"
@@ -1272,6 +1283,7 @@ onMounted(async () => {
                     <span>Timeline</span>
                   </button>
                   <button
+                    v-if="canViewRastreamento"
                     type="button"
                     class="btn-action-timeline"
                     style="background: #e0f2fe; color: #0369a1; border-color: #bae6fd; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #bae6fd;"
@@ -1282,6 +1294,7 @@ onMounted(async () => {
                     <span>Rastrear Dual</span>
                   </button>
                   <button
+                    v-if="canEditOrdens"
                     type="button"
                     class="btn-action-timeline"
                     style="background: #f1f5f9; color: #334155; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
@@ -1292,6 +1305,7 @@ onMounted(async () => {
                     <span>Manutenção</span>
                   </button>
                   <button
+                    v-if="canPrintOrdens"
                     type="button"
                     class="btn-action-print"
                     style="background: #f8fafc; color: #0f172a; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
@@ -1306,6 +1320,7 @@ onMounted(async () => {
                   </button>
                   <template v-if="ordem.possuiCaixaTeste">
                     <button
+                      v-if="canPrintOrdens"
                       type="button"
                       class="btn-action-print"
                       @click="imprimirOrdem(ordem, 'LOTE_PRINCIPAL')"
@@ -1318,6 +1333,7 @@ onMounted(async () => {
                       <span>{{ loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` ? 'Gerando...' : 'Lote' }}</span>
                     </button>
                     <button
+                      v-if="canPrintOrdens"
                       type="button"
                       class="btn-action-print"
                       @click="imprimirOrdem(ordem, 'CAIXA_TESTE')"
@@ -1332,6 +1348,7 @@ onMounted(async () => {
                   </template>
                   <template v-else>
                     <button
+                      v-if="canPrintOrdens"
                       type="button"
                       class="btn-action-print"
                       @click="imprimirOrdem(ordem, 'LOTE_PRINCIPAL')"
@@ -1981,6 +1998,7 @@ onMounted(async () => {
                 type="button"
                 class="btn-primary"
                 @click="salvarManutencao"
+                v-if="canEditOrdens"
                 :disabled="loadingManutencao"
               >
                 <Loader2 v-if="loadingManutencao" :size="14" class="animate-spin" />

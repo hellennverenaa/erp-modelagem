@@ -135,12 +135,10 @@ const fotoPreview = ref<string | null>(null)
 // ─── 2. Computeds ──────────────────────────────────────────────────────────
 const user = computed(() => authStore.user.value)
 
-const podeEditarSetor = computed(() => {
-  const perfil = user.value?.perfilNome?.toUpperCase() || ''
-  return perfil === 'ADMIN' || perfil === 'GERENTE'
-})
-
-const isAdmin = computed(() => authStore.isAdmin.value)
+const podeEditarSetor = computed(() =>
+  authStore.hasPermission('EDITAR_TELA_BIPAGEM') || authStore.hasPermission('ADMINISTRAR_BIPAGEM')
+)
+const isAdmin = computed(() => authStore.hasPermission('ADMINISTRAR_BIPAGEM'))
 
 const isSetorFaseInicial = computed<boolean>(() => {
   if (!selecionouSetorId.value) return false
@@ -163,9 +161,7 @@ const isFaseMonolitica = computed<boolean>(() => {
 })
 
 const podeAdicionarItemAvulso = computed(() => {
-  if (!user.value) return false
-  const perfil = user.value.perfilNome?.toUpperCase() || ''
-  return ['ADMIN', 'MODELISTA', 'GERENTE_MODELAGEM', 'ASSISTENTE_MODELAGEM', 'GERENTE'].includes(perfil)
+  return authStore.hasPermission('ADICIONAR_ITEM_AVULSO_CHECKLIST')
 })
 
 // ─── 3. Funções e Métodos Auxiliares ───────────────────────────────────────
@@ -294,7 +290,14 @@ async function verificarStatusConclusaoLote(loteId: string, setorId: string) {
 async function buscarItensCatalogo(queryStr: string = '') {
   loadingAutocomplete.value = true
   try {
-    const res = await api.get(`/checklists/catalogo?query=${encodeURIComponent(queryStr)}`)
+    const setorAtual = setores.value.find(setor => setor.id === selecionouSetorId.value)
+    const res = await api.get('/checklists/catalogo', {
+      params: {
+        q: queryStr,
+        setorId: selecionouSetorId.value || undefined,
+        setorTipoOpcaoId: setorAtual?.tipoOpcaoId,
+      },
+    })
     autocompleteResults.value = res.data || []
   } catch (err: any) {
     console.error('[BipagemView] Erro ao buscar catálogo de itens:', err?.response?.data || err?.message || err)
@@ -334,7 +337,9 @@ async function carregarChecklist(lote: any, setorId: string) {
       }
     }
 
-    const resTemplates = await api.get('/checklists/templates')
+    const resTemplates = await api.get('/checklists/templates', {
+      params: { setorId, setorTipoOpcaoId: setorLocal.tipoOpcaoId },
+    })
     const templatesList = resTemplates.data || []
     templateChecklist.value = templatesList.find(
       (t: any) => t.setorTipoOpcaoId === setorLocal.tipoOpcaoId
@@ -429,23 +434,28 @@ async function executarFechamentoDefinitivoLote(gestor: any) {
 
     const itensSanitizados = itensChecklist.value
       .filter(item => {
-        const templateItemIdValido = !item.isAvulso && isUuid(item.templateItemId || item.id) ? (item.templateItemId || item.id) : null
         const catalogItemIdValido = isUuid(item.catalogItemId) ? item.catalogItemId : null
+        const templateItemIdValido = !item.isAvulso && !catalogItemIdValido && isUuid(item.templateItemId || item.id) ? (item.templateItemId || item.id) : null
         const descText = (item.descricaoAvulsa || item.descricao || '').trim()
 
-        if (!templateItemIdValido && !catalogItemIdValido && !descText) {
+        if (!item.isAvulso && !templateItemIdValido && !catalogItemIdValido) {
+          return false
+        }
+        if (item.isAvulso && !descText) {
           return false
         }
         return true
       })
       .map(item => {
-        const templateItemIdValido = !item.isAvulso && isUuid(item.templateItemId || item.id) ? (item.templateItemId || item.id) : undefined
+        const catalogItemId = isUuid(item.catalogItemId) ? item.catalogItemId : undefined
+        const templateItemIdValido = !item.isAvulso && !catalogItemId && isUuid(item.templateItemId || item.id) ? (item.templateItemId || item.id) : undefined
         const descText = (item.descricaoAvulsa || item.descricao || '').trim()
 
         return {
           templateItemId: templateItemIdValido,
-          catalogItemId: isUuid(item.catalogItemId) ? item.catalogItemId : undefined,
-          descricaoAvulsa: !templateItemIdValido ? (descText || 'Item sem descrição') : (item.isAvulso ? descText : undefined),
+          catalogItemId,
+          itemAvulso: item.isAvulso,
+          descricaoAvulsa: !templateItemIdValido ? descText : undefined,
           valorResposta: item.status || 'OK',
           conforme: item.status !== 'NAO_OK',
           observacao: item.observacao ? item.observacao.trim() : undefined
@@ -555,6 +565,7 @@ function removerFoto() {
 }
 
 async function submeterOcorrencia() {
+  if (!podeEditarSetor.value) return
   if (!ordemAtiva.value) {
     triggerToast('Nenhum lote ativo selecionado.', 'error')
     return
@@ -945,6 +956,7 @@ onMounted(async () => {
       </header>
 
       <form @submit.prevent class="bp-form">
+        <fieldset :disabled="!podeEditarSetor" style="border: 0; padding: 0; margin: 0; min-width: 0;">
         <!-- ── SETOR SELECTOR ── -->
         <div class="field-group">
           <div class="label-row-security">
@@ -1113,6 +1125,7 @@ onMounted(async () => {
           <AlertOctagon :size="20" class="ocorrencia-icon" aria-hidden="true" />
           <span>Reportar Ocorrencia</span>
         </button>
+        </fieldset>
       </form>
     </main>
 

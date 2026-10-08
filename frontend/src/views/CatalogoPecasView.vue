@@ -13,6 +13,7 @@ import {
   AlertCircle
 } from '@lucide/vue'
 import api from '../api/axios'
+import { authStore } from '../api/auth.store'
 
 interface CatalogoPeca {
   id: string
@@ -77,6 +78,8 @@ const filteredPecas = computed(() => {
     (p.codigoOriginal && p.codigoOriginal.toLowerCase().includes(q))
   )
 })
+
+const podeEditarCatalogo = computed(() => authStore.hasPermission('EDITAR_TELA_CATALOGO_PECAS'))
 
 function openModal() {
   form.value = { numero: '', nome: '', codigoOriginal: '', descricao: '' }
@@ -170,6 +173,7 @@ onMounted(() => {
         </button>
         <button
           type="button"
+          v-if="podeEditarCatalogo"
           class="btn-primary"
           @click="openModal"
         >
