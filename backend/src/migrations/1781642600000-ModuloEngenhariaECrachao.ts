@@ -2,7 +2,7 @@ import { MigrationInterface, QueryRunner, Table, TableColumn, TableForeignKey } 
 
 export class ModuloEngenhariaECrachao1781642600000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
-    const schema = process.env.DB_SCHEMA || 'erp_modelagem';
+    const schema = 'erp_modelagem';
     const quotedSchema = `"${schema.replace(/"/g, '""')}"`;
     // 1. Adicionar coluna codigo_crachao em usuarios (se ainda não existir)
     const usuariosTable = await queryRunner.getTable('usuarios');
@@ -219,7 +219,7 @@ export class ModuloEngenhariaECrachao1781642600000 implements MigrationInterface
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    const schema = process.env.DB_SCHEMA || 'erp_modelagem';
+    const schema = 'erp_modelagem';
     const quotedSchema = `"${schema.replace(/"/g, '""')}"`;
     await queryRunner.dropTable('etapa_corte_pecas');
     await queryRunner.query(`DROP TYPE IF EXISTS ${quotedSchema}."etapa_corte_pecas_resultado_conformidade_enum"`);

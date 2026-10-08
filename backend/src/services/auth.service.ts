@@ -51,10 +51,10 @@ export class AuthService {
    * Obtém a URL do serviço de autenticação legado (Zero Hardcode).
    */
   private static getAuthServiceUrl(): string {
-    const authServiceUrl = process.env.DASS_AUTH_URL || process.env.AUTH_SERVICE_URL;
+    const authServiceUrl = process.env.DASS_AUTH_URL;
     if (!authServiceUrl) {
       throw new AuthError(
-        'A variável de ambiente DASS_AUTH_URL ou AUTH_SERVICE_URL não está configurada.',
+        'A variável de ambiente DASS_AUTH_URL não está configurada.',
         500,
         'AUTH_SERVICE_URL_MISSING'
       );

@@ -6,19 +6,14 @@ dotenv.config({
   path: process.env.DOTENV_CONFIG_PATH || path.resolve(__dirname, '../../.env'),
 });
 
-const schema = process.env.DB_SCHEMA || 'erp_modelagem';
+const schema = 'erp_modelagem';
 const databaseUrl = process.env.DATABASE_URL;
-const client = new Client(
-  databaseUrl
-    ? { connectionString: databaseUrl }
-    : {
-        host: process.env.DB_HOST || 'localhost',
-        port: Number(process.env.DB_PORT || 5432),
-        user: process.env.DB_USER || 'postgres',
-        password: process.env.DB_PASS,
-        database: process.env.DB_NAME || 'postgres',
-      },
-);
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL não configurada.');
+}
+const connectionUrl = new URL(databaseUrl);
+connectionUrl.searchParams.delete('schema');
+const client = new Client({ connectionString: connectionUrl.toString() });
 
 async function prepareDatabase() {
   await client.connect();

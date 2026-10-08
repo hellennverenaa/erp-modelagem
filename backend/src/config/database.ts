@@ -45,30 +45,18 @@ dotenv.config({
 });
 
 const databaseUrl = process.env.DATABASE_URL;
-const appSchema = process.env.DB_SCHEMA || 'erp_modelagem';
-let connectionUrl: string | undefined;
-
-if (databaseUrl) {
-  const parsedUrl = new URL(databaseUrl);
-  parsedUrl.searchParams.delete('schema');
-  connectionUrl = parsedUrl.toString();
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL não configurada.');
 }
+const connectionUrl = new URL(databaseUrl);
+connectionUrl.searchParams.delete('schema');
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
-  ...(connectionUrl
-    ? { url: connectionUrl }
-    : {
-        host: process.env.DB_HOST || 'localhost',
-        port: parseInt(process.env.DB_PORT || '5432', 10),
-        username: process.env.DB_USER || 'postgres',
-        password: process.env.DB_PASS,
-        database: process.env.DB_NAME || 'postgres',
-      }),
-  schema: appSchema,
-  // Mantém funções/extensões do ERP resolvidas primeiro no próprio schema.
+  url: connectionUrl.toString(),
+  schema: 'erp_modelagem',
   extra: {
-    options: `-c search_path=${appSchema},public`,
+    options: '-c search_path=erp_modelagem,public',
   },
   synchronize: false,
   logging: ["error"],

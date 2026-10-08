@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import path from 'path';
+import { uploadDir } from './config/uploads';
 import { createServer } from 'http';
 import { AppDataSource } from './config/database';
 import { corsOptions } from './config/cors';
@@ -82,7 +82,7 @@ app.use('/uploads', (_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
-}, express.static(path.join(__dirname, '../uploads')));
+}, express.static(uploadDir));
 
 app.use('/api', apiRoutes);
 // O gateway remove /api/erp-modelagem antes de encaminhar ao ERP.
@@ -93,8 +93,6 @@ app.use(errorHandler);
 
 // ═══ INICIALIZAÇÃO ═══
 console.log('🔧 Verificando configurações de ambiente...');
-console.log(`🔌 Banco de Dados - Host: ${process.env.DB_HOST || 'localhost'} | Porta: ${process.env.DB_PORT || 5432}`);
-console.log(`🔌 Redis Cache - Host: ${process.env.REDIS_HOST || 'Não configurado'}`);
 
 const httpServer = createServer(app);
 

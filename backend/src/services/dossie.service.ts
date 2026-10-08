@@ -1,3 +1,4 @@
+import { uploadDir } from '../config/uploads';
 import { AppDataSource } from '../config/database';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { Rastreamento } from '../entities/Rastreamento';
@@ -380,10 +381,7 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
       order: { dataInspecao: 'ASC' }
     });
 
-    // 3. Define diretório de destino (com fallback seguro para local)
-    const uploadDir = process.env.NODE_ENV === 'production'
-      ? (process.env.UPLOAD_DIR || '/app/uploads')
-      : path.join(process.cwd(), 'uploads');
+    // 3. Usa o mesmo diretório das imagens e dos arquivos estáticos.
 
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
@@ -395,7 +393,7 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
     // 4. Cria HTML com Template Literals
     const htmlContent = generateDossieHtml(testOrder, rastreamentos, checklists, ocorrencias, inspecoes);
 
-    // 5. Executa Puppeteer para converter HTML -> PDF (com argumentos anti-sandbox para Docker)
+    // 5. Executa Puppeteer para converter HTML -> PDF
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox']

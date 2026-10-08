@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => {
         },
         '/uploads': {
           target: backendTarget,
+          rewrite: (path) => `/api/erp-modelagem${path}`,
           changeOrigin: true,
         },
       },
