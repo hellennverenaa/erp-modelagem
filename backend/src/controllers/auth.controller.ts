@@ -1,7 +1,30 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthService, AuthError } from '../services/auth.service';
+import { obterPermissoesGlobais } from '../services/rbac.service';
 
 export class AuthController {
+  public me = async (req: Request, res: Response): Promise<Response> => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
+    }
+
+    try {
+      return res.json({
+        id: req.user.userId,
+        nomeCompleto: req.user.nomeCompleto,
+        usuario: req.user.usuario,
+        perfilId: req.user.perfilId,
+        perfilNome: req.user.perfilNome,
+        permissoes: await obterPermissoesGlobais(req.user.perfilId),
+        setorId: req.user.setorId || null,
+        plantaId: req.user.plantaId,
+      });
+    } catch (error) {
+      console.error('[AuthController.me] Erro ao carregar permissões do usuário:', error);
+      return res.status(500).json({ error: 'Erro ao carregar permissões do usuário.', code: 'AUTH_SESSION_LOAD_FAILED' });
+    }
+  };
+
   /**
    * @swagger
    * /api/auth/login:

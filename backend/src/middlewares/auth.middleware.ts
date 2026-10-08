@@ -107,6 +107,14 @@ export async function verificaToken(req: Request, res: Response, next: NextFunct
       }
     }
 
+    if (!userLocal.perfil || !userLocal.perfil.ativo) {
+      res.status(403).json({
+        error: 'O perfil de acesso deste usuário está inativo.',
+        code: 'AUTH_PROFILE_INACTIVE',
+      });
+      return;
+    }
+
     // Injeta as claims locais corretas (UUID do PostgreSQL) sobre o payload legado do Unix
     req.user = {
       ...decoded,

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller';
+import { verificaToken } from '../middlewares/auth.middleware';
 
 const router = Router();
 const authController = new AuthController();
@@ -41,6 +42,8 @@ const authController = new AuthController();
  *         description: Erro interno do servidor
  */
 router.post('/login', authController.login);
+
+router.get('/me', verificaToken, authController.me);
 
 /**
  * @swagger
