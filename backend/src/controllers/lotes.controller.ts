@@ -8,6 +8,8 @@ import { AuditLog } from '../entities/AuditLog';
 import { Usuario } from '../entities/Usuario';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { perfilPossuiPermissao } from '../services/rbac.service';
+import { finalizarNovoTeste, NovoTesteServiceError } from '../services/novo-teste.service';
+import { finalizarNovoTesteSchema } from '../schemas/novo-teste.schema';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -137,6 +139,59 @@ export class LotesController {
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordem de teste:', error);
       return res.status(500).json({ error: 'Erro ao buscar ordem de teste' });
+    }
+  };
+
+  /**
+   * POST /api/ordens-teste/wizard
+   * Persiste o agregado do wizard em uma única transação.
+   */
+  public finalizarWizard = async (req: Request, res: Response): Promise<Response> => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
+    }
+
+    const parseResult = finalizarNovoTesteSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: 'Dados inválidos para finalizar o novo teste.',
+        code: 'VALIDATION_ERROR',
+        details: parseResult.error.flatten().fieldErrors,
+      });
+    }
+
+    const { plantaId } = parseResult.data.ordem;
+    const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+    if (!acessoTodasPlantas && plantaId !== req.user.plantaId) {
+      return res.status(403).json({
+        error: 'Não é permitido criar uma ordem em outra planta.',
+        code: 'PLANTA_FORBIDDEN',
+      });
+    }
+
+    try {
+      const resultado = await finalizarNovoTeste(parseResult.data, req.user.userId);
+      return res.status(201).json({
+        message: 'Novo teste finalizado com sucesso.',
+        modelo: resultado.modelo,
+        lote: resultado.ordem,
+        totalPecas: resultado.totalPecas,
+        totalEtapasRota: resultado.totalEtapasRota,
+      });
+    } catch (error) {
+      if (error instanceof NovoTesteServiceError) {
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          ...(error.details ? { details: error.details } : {}),
+        });
+      }
+
+      console.error('[LotesController] Erro ao finalizar wizard:', error);
+      return res.status(500).json({
+        error: 'Erro ao finalizar o novo teste. Nenhuma etapa foi confirmada.',
+        code: 'NEW_TEST_FINALIZATION_FAILED',
+      });
     }
   };
 

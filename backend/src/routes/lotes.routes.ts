@@ -8,6 +8,72 @@ const lotesController = new LotesController();
 
 /**
  * @swagger
+ * /api/ordens-teste/wizard:
+ *   post:
+ *     summary: Finaliza o Novo Teste com gravação atômica
+ *     tags: [lotes]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [modelo, pecas, rota, ordem]
+ *             properties:
+ *               modelo:
+ *                 type: object
+ *                 required: [marcaId, codigoProduto, nome]
+ *                 properties:
+ *                   marcaId: { type: string, format: uuid }
+ *                   codigoProduto: { type: string, pattern: '^[0-9]+$' }
+ *                   nome: { type: string }
+ *               pecas:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [catalogoPecaId, setorCorteOpcaoId]
+ *                   properties:
+ *                     catalogoPecaId: { type: string, format: uuid }
+ *                     setorCorteOpcaoId: { type: string, format: uuid }
+ *               rota:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [setorId, ordem]
+ *                   properties:
+ *                     setorId: { type: string, format: uuid }
+ *                     ordem: { type: integer }
+ *                     obrigatorio: { type: boolean }
+ *                     tipoExecucao: { type: string, enum: [SEQUENCIAL, PARALELO] }
+ *                     bipagemApenasSaida: { type: boolean }
+ *               ordem:
+ *                 type: object
+ *                 required: [plantaId, prioridadePcp]
+ *                 properties:
+ *                   plantaId: { type: string, format: uuid }
+ *                   prioridadePcp: { type: string, enum: [BAIXA, MEDIA, ALTA, URGENTE] }
+ *                   possuiCaixaTeste: { type: boolean }
+ *                   observacoes: { type: string, nullable: true }
+ *                   dataPrevistaProducao: { type: string, nullable: true }
+ *                   slasPorSetor: { type: object, nullable: true }
+ *     responses:
+ *       201: { description: Modelo, peças, rota e ordem foram persistidos }
+ *       400: { description: Payload inválido ou referência inexistente }
+ *       403: { description: Permissão ou planta não autorizada }
+ *       409: { description: Código do produto já cadastrado }
+ *       500: { description: Transação não concluída }
+ */
+router.post(
+  '/wizard',
+  exigirPermissao('EDITAR_TELA_NOVA_ORDEM_TESTE'),
+  exigirPermissao('EDITAR_ROTA'),
+  lotesController.finalizarWizard,
+);
+
+/**
+ * @swagger
  * /api/lotes:
  *   get:
  *     summary: Lista todas as ordens de teste e lotes cadastrados
