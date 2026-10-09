@@ -6,6 +6,8 @@
 
 **Uso do plano:** uma TASK por branch; uma pessoa responsável por TASK; mudanças em arquivos centrais e migrations sempre serializadas. Ao descobrir trabalho novo, registrar outra TASK antes de alterar código. O plano deve ser atualizado em commits pequenos, sem edição simultânea por duas pessoas.
 
+**Fluxo de Git obrigatório:** [`docs/GIT.md`](docs/GIT.md) é a referência para branches, sincronização, rebase e Pull Requests. Para esta demanda, toda funcionalidade pequena deve ser entregue em branch própria e PR; o outro desenvolvedor deve aprovar o PR antes do merge na `main`.
+
 ## 1. Visão geral
 
 O objetivo é fazer `Modelo → Peças → Rota → Ordem → Bipagem → Torre de Controle` usar regras e dados consistentes. O fluxo “Iniciar Novo Teste” terá quatro passos reversíveis e só gravará o conjunto ao finalizar. Cadastros individuais continuarão disponíveis.
@@ -262,8 +264,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-001 — Auditar dados, ambiente e falha de persistência da rota
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** seguir um caso real de `PUT /rotas/:modeloId` até o `POST /ordens-teste`; comparar IDs, base/schema, linhas e respostas. Levantar contagens de modelos, rotas, peças, OTs em andamento, órfãos, códigos não numéricos, `temporada`, SLAs e timestamps. Inspecionar permissões, setor/planta e rotas históricas sem alterar registros.
 - **Arquivos prováveis:** frontend `RouteBuilder.vue`, `WizardCriacaoTesteView.vue`, `GestaoOrdensView.vue`; backend `rotas.controller.ts`, `lotes.controller.ts`, `config/database.ts`, entidades; banco `modelos`, `pecas`, `rota_modelo`, `ordens_teste`, `rastreamentos`, `setores` (somente SELECT). Registrar consultas e resultados agregados neste plano, sem dados pessoais.
@@ -273,8 +276,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-002 — Decidir semântica de Bordado/Apoio, bifurcação e planta
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** documentar se Bordado substitui, acompanha ou integra Apoio, após inspecionar rotas/OTs/produção/bipagem/Torre. Separar `possuiCaixaTeste` de bifurcação por Serigrafia; decidir comportamento de múltiplas plantas, rotas antigas e reuso de modelo em várias OTs. Confirmar decisão operacional com responsável do processo antes da mudança correspondente.
 - **Arquivos prováveis:** frontend `RouteBuilder.vue`, `BipagemView.vue`; backend `rastreamentos.controller.ts`, `lotes.controller.ts`, entidades `EtapaApoio.ts`, `Setor.ts`; banco `rota_modelo`, `ordens_teste`, `rastreamentos`, `etapas_apoio` (leitura).
@@ -284,8 +288,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-003 — Fechar esquema alvo e contratos de API
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** aprovar identificador de etapa, versão da rota, snapshot da OT, SLA por etapa, condição de bifurcação, subsetor de corte, regra de planta, compatibilidade de payload e nomes de endpoints. Atualizar seções 11 e 12 antes de migrations.
 - **Arquivos prováveis:** documentação/contratos neste plano; leitura de `entities/*`, `routes/*`, `controllers/*`, `frontend/src/api/axios.ts`; banco somente desenho.
@@ -296,8 +301,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-004 — Corrigir busca do catálogo no wizard
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** desacoplar cargas, alinhar RBAC da busca com uso permitido no wizard, mostrar sugestões durante digitação/foco, tratar loading/vazio/erro, respostas atrasadas e seleção.
 - **Arquivos prováveis:** frontend `frontend/src/views/WizardCriacaoTesteView.vue`; backend `backend/src/routes/pecas.routes.ts`; banco leitura `catalogo_pecas`.
@@ -306,8 +312,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-005 — Reorganizar sidebar e layout
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** ordenar navegação conforme dependências reais e páginas existentes; retirar breadcrumb; mover nome, perfil e sair ao rodapé da sidebar; adaptar estado recolhido/mobile sem alterar RBAC.
 - **Arquivos prováveis:** frontend `frontend/src/views/DashboardView.vue`, estilos locais e, apenas se necessário, `frontend/src/router/index.ts`; backend/banco nenhum.
@@ -316,8 +323,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-006 — Validar código numérico e retirar Temporada do uso ativo
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** aplicar `^[0-9]+$` no backend e nas duas telas de modelo; tratar códigos históricos após auditoria; retirar `temporada` de formulários/DTO novo mantendo coluna/dados antigos até migração separada. Preservar zeros à esquerda como texto.
 - **Arquivos prováveis:** frontend `GestaoModelosView.vue`, `WizardCriacaoTesteView.vue`; backend `admin.controller.ts`, possível schema compartilhado; banco `modelos`, migration de `CHECK` apenas se dados conformes.
@@ -328,8 +336,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-007 — Fixar vínculo peça–catálogo–subsetor de corte
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** preservar ID da peça de catálogo e identificar opções Lectra, Atom, CN, Ponte, Laser e Couro por IDs/configuração, evitando comparação textual; validar opção existente, ativa e coerente com planta/modelo.
 - **Arquivos prováveis:** backend `entities/Peca.ts`, `entities/CatalogoPeca.ts`, `routes/pecas.routes.ts`, `controllers/admin.controller.ts`, serviço novo; frontend wizard e cadastro individual de peças se consumidor; banco migration aditiva em `pecas` e configuração existente.
@@ -338,8 +347,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-008 — Persistir etapas versionadas da rota com dados independentes
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** criar esquema aditivo para rota/etapas versionadas com identificador estável, `setor_id`, posição, tempo/SLA e condições/grupos; garantir que cada etapa possui tempo próprio. Materializar/buscar versão histórica sem reescrever `rota_modelo` ou OTs antigas.
 - **Arquivos prováveis:** backend `entities/RotaModelo.ts`, novas entidades, migrations, configuração TypeORM; banco `rota_modelo` e novas tabelas a definir em TASK-003; frontend nenhum nesta TASK.
@@ -348,8 +358,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-009 — Centralizar gravação/leitura da rota e sanar erro comprovado
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** serviço de domínio para validar peça/setor/planta, salvar rota completa em transação e devolver versão/etapas confirmadas; leitura da criação da OT usa o mesmo contrato. Aplicar correção específica de `ROTA_NOT_FOUND` encontrada na TASK-001, sem presumir causa.
 - **Arquivos prováveis:** backend `controllers/rotas.controller.ts`, `controllers/lotes.controller.ts`, `routes/rotas.routes.ts`, novo service, entidades de rota; frontend `RouteBuilder.vue` somente se contrato exigir; banco tabelas de rota.
@@ -360,8 +371,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-010 — Criar snapshot imutável da rota na ordem
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** copiar versão/etapas da rota validada para a OT ao criá-la, com `ordem`, `setor`, tempo e condições; definir fallback explícito para OTs existentes sem snapshot. `possuiCaixaTeste` mantém semântica própria se confirmada; bifurcação por Serigrafia deriva do snapshot.
 - **Arquivos prováveis:** backend `controllers/lotes.controller.ts`, `entities/OrdemTeste.ts`, entidades novas, serviço de OT; banco `ordens_teste`, tabela de etapas da ordem, migration aditiva; frontend Gestão de Ordens só se contrato exigir.
@@ -370,8 +382,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-011 — Finalização transacional do Novo Teste
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** endpoint agregado para validar e criar modelo, peças, rota e ordem em uma transação, reutilizando os mesmos validadores/serviços dos cadastros individuais. Garantir idempotência para duplo clique/retry; geração de etiqueta ocorre depois do commit com falha recuperável.
 - **Arquivos prováveis:** backend `routes/index.ts`, nova rota/controller/service, `admin.controller.ts`, `pecas.routes.ts`, `rotas.controller.ts`, `lotes.controller.ts`; banco tabelas do agregado e chave idempotente se aprovada em TASK-003; frontend nenhum nesta TASK.
@@ -380,8 +393,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-012 — Corrigir construtor e preview da rota
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** estado por etapa com ID próprio, setor, posição, tempo e opções; preconfigurar os setores de corte a partir das peças; refletir Serigrafia/Telas e decisão Bordado/Apoio; confirmar persistência antes de sucesso visual.
 - **Arquivos prováveis:** frontend `components/RouteBuilder.vue`, chamadas locais de API; backend apenas contrato fechado da TASK-009; banco leitura indireta da rota.
@@ -390,8 +404,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-013 — Tornar o wizard reversível e persistir só ao finalizar
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** manter agregado temporário no frontend pelos quatro passos; avançar, voltar e editar sem chamadas de gravação; revisar tudo no passo 4 e finalizar no endpoint atômico. Tratar perda de sessão, retry e saída com rascunho local apenas se aprovado em contrato.
 - **Arquivos prováveis:** frontend `views/WizardCriacaoTesteView.vue`, `components/RouteBuilder.vue` se integração exigir, serviço de API específico; backend endpoint TASK-011; banco somente no POST final.
@@ -402,8 +417,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-014 — Fazer backend de bipagem executar rota da OT
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** resolver etapas a partir do snapshot da OT, validar setor/ordem de execução/bifurcação e criar `rastreamentos` associados à etapa concreta. Manter fallback explícito para ordens antigas e gates de checklist/inspeção.
 - **Arquivos prováveis:** backend `controllers/rastreamentos.controller.ts`, `routes/rastreamentos.routes.ts`, serviços de fluxo, `entities/Rastreamento.ts`; banco `rastreamentos`, etapas da OT, migration nullable se necessária; frontend nenhum.
@@ -412,8 +428,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-015 — Construir tela de bipagem pela rota da ordem
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** carregar fluxo da OT escolhida e exibir somente seus setores/etapas, posição, status e ações permitidas; retirar sequência fixa do componente. Telas condicional por Serigrafia.
 - **Arquivos prováveis:** frontend `views/BipagemView.vue`, componentes de setor/checklist, API de fluxo; backend endpoint de fluxo da OT da TASK-014; banco nenhum diretamente.
@@ -422,8 +439,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-016 — Atualizar TV de rastreamento para rota da OT
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** usar snapshot da OT e progresso real na visualização da TV, com fallback para histórico; impedir que edição da rota do modelo altere a TV de uma OT antiga.
 - **Arquivos prováveis:** frontend `views/RastreamentoOrdemView.vue`; backend leitura da OT/fluxo já definida; banco nenhum diretamente.
@@ -434,8 +452,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-017 — Revisar dados e agregações da Torre
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** definir KPIs/status/filtros por planta e período com dados de OT, snapshot, bipagem, qualidade e ocorrências; revisar atualização Socket.IO e consulta N+1/índices. Distinguir Torre gerencial da TV.
 - **Arquivos prováveis:** backend `controllers/dashboard.controller.ts`, `routes/dashboard.routes.ts`, `services/websocket.service.ts`, índices/migration apenas se justificados; frontend contrato da Torre documentado.
@@ -444,8 +463,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-018 — Revisar interface da Torre de Controle
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** consumir contrato validado, estados de atualização/erro e filtros; ajustar tipografia, hierarquia, cards, tabelas, cores, densidade e responsividade.
 - **Arquivos prováveis:** frontend `views/DashboardGerencialView.vue`, estilos/componentes locais; backend contrato TASK-017; banco nenhum.
@@ -454,8 +474,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-019 — Padronizar timestamps de backend e banco
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** medir timezone efetivo de Node/PostgreSQL e formatos retornados; padronizar novos instantes em UTC/ISO com offset, sem deslocar automaticamente históricos `timestamp without time zone`; plano separado para correção dos ambíguos.
 - **Arquivos prováveis:** backend `config/database.ts`, entidades `OrdemTeste.ts` e timestamps relacionados, `lotes.controller.ts`, migration aditiva/transformação somente após auditoria; banco `ordens_teste`, `rastreamentos`.
@@ -464,8 +485,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-020 — Corrigir exibição e edição de horários no frontend
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** converter UTC apenas na apresentação e converter `datetime-local` com timezone explícito ao enviar; substituir `toISOString().slice(0,16)` usado como hora local. Sem offsets numéricos fixos.
 - **Arquivos prováveis:** frontend `views/GestaoOrdensView.vue`, wizard e Torre se consumidores, helper de datas específico; backend contrato TASK-019; banco nenhum.
@@ -476,8 +498,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-021 — Corrigir contratos de anexos ativos
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** alinhar `foto`/`file` em ocorrência e criar ou corrigir endpoint de anexo de inspeção apenas após mapear autorização e armazenamento atuais.
 - **Arquivos prováveis:** frontend `BipagemView.vue`, `InspecaoQualidadeView.vue`; backend `ocorrencias.routes.ts`, `inspecoes.routes.ts`, controllers e armazenamento de anexos; banco `anexos` se contrato exigir.
@@ -486,8 +509,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-022 — Auditar exposição de Corte/Apoio e mocks
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** verificar consumidores reais de `/corte` e `/apoio`, dados simulados e efeitos na nova rota. Se for necessária implementação, criar TASK específica com contrato/migração e dependências; não expandir esta TASK silenciosamente.
 - **Arquivos prováveis:** backend `corte.controller.ts`, `apoio.controller.ts`, routes e entidades; frontend consumidores encontrados; banco `etapas_corte`, `etapas_apoio` (leitura).
@@ -496,8 +520,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-023 — Aceitação integrada e regressão final
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Concluído · [ ] Bloqueado  
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **Arquivos alterados:** —
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
 
 - **Objetivo:** percorrer modelo→peças→rota→OT→bipagem→Torre em banco de teste com casos novos e históricos; fechar checklist protegido, contrato e rollback operacional. Registrar pendências como TASKs novas.
 - **Arquivos prováveis:** documentação, fixtures e testes específicos; código somente para defeito novo registrado em outra TASK; banco de teste.
@@ -569,12 +594,15 @@ Modelo → Peças → Rota do modelo/versionada → Ordem + snapshot
 
 ## 10. Estratégia de Git
 
-1. Criar uma branch curta por TASK a partir da base atualizada: `audit/task-001-route-data`, `feature/task-010-order-snapshot`, `fix/task-004-piece-autocomplete`. Worktrees separados evitam sobrescrever mudanças de outra pessoa.
-2. Antes de começar, ler este plano, verificar `git status`, dono do arquivo central e commits recém-integrados; registrar status, responsável e branch. Uma pessoa coordena a edição deste arquivo e integra a atualização de status primeiro.
-3. Congelar o contrato da seção 12 antes de backend/frontend paralelos. Integrar uma TASK que libera dependências antes de começar sua sucessora. Rebase/merge da base em cada branch curta, revisando conflitos; não resolver conflito de migration ou regra de negócio por escolha automática.
-4. Commit pequeno e restrito a uma TASK, com ID na mensagem, por exemplo `fix(TASK-004): atualizar sugestões do catálogo durante digitação`. Não misturar navegação, banco e fluxo em um commit.
-5. Ao concluir, registrar testes reais e limitações, status, arquivos alterados e hash; revisar o diff e integrar por PR/revisão conforme `AGENTS.md`. Não marcar teste não executado como aprovado.
-6. Se duas pessoas necessitarem o mesmo arquivo, a segunda espera a integração ou divide a TASK em mudanças sequenciais sem editar em paralelo. Replanejar no documento antes de tocar esse arquivo.
+O procedimento de [`docs/GIT.md`](docs/GIT.md) prevalece para Git. Cada entrega deve ser **uma funcionalidade pequena e revisável**, em branch nova criada a partir da `main` atualizada. Se uma TASK do plano ficar grande para um PR, dividi-la em subentregas com IDs próprios, contratos e critérios de aceite, antes de implementar.
+
+1. Antes de iniciar: `git switch main`, `git pull`, verificar `git status` e criar branch específica, por exemplo `feature/task-010-order-snapshot` ou `fix/task-004-piece-autocomplete`. Worktrees separados podem isolar o trabalho das duas pessoas.
+2. Registrar no plano responsável, branch, arquivos reservados e dependências. Congelar o contrato da seção 12 antes de trabalhos paralelos em frontend/backend.
+3. Durante o trabalho, manter commits pequenos e objetivos, restritos à subentrega; usar o ID da TASK na mensagem. Verificar atualizações remotas com `git fetch origin` e `git log HEAD..origin/main --oneline`.
+4. Quando a `main` avançar, atualizar a branch com `git rebase origin/main`; antes do PR, fazer novo `fetch`/`rebase`, resolver conflitos manualmente e executar testes/regressões. Se a branch publicada precisar de push após rebase, usar somente `git push --force-with-lease` nela; nunca force push na `main`.
+5. Fazer push e abrir **um Pull Request por funcionalidade pequena**. O **outro desenvolvedor deve revisar e aprovar** o PR. Não fazer merge sem essa aprovação. Registrar link do PR, revisor, aprovação e hash do merge no plano. Mudanças em arquivos críticos exigem atenção especial à compatibilidade.
+6. Depois do merge, atualizar a `main` local e verificar `origin/main` nas branches ainda abertas. A próxima TASK dependente só começa depois que o PR anterior estiver aprovado e integrado na `main`.
+7. Se duas pessoas precisarem do mesmo arquivo, a segunda espera a integração ou divide o trabalho em PRs sequenciais. Não resolver conflito de migration ou regra de negócio por escolha automática.
 
 ## 11. Banco de dados
 
@@ -640,6 +668,7 @@ Para cada falha, registrar reprodução, causa, TASK responsável e resultado ap
 - [ ] Conferir funcionalidades protegidas e riscos de regressão.
 - [ ] Confirmar que outra pessoa não altera os mesmos arquivos centrais, service ou migration.
 - [ ] Criar branch/worktree específica a partir da base atualizada.
+- [ ] Confirmar `git fetch origin` e que a branch partiu da `main` atualizada, conforme `docs/GIT.md`.
 - [ ] Registrar `Status: Em andamento`, responsável e branch no plano, sob posse exclusiva do arquivo.
 - [ ] Definir testes e estratégia de rollback apropriados à TASK.
 
@@ -655,10 +684,11 @@ Para cada falha, registrar reprodução, causa, TASK responsável e resultado ap
 - [ ] Dados antigos, OT em andamento e módulos protegidos verificados.
 - [ ] `IMPLEMENTATION_PLAN.md` atualizado: decisão, status, responsável, branch, arquivos, resultados, rollback e commit.
 - [ ] Diff revisado; commit único ou pequena série com `TASK-XXX`; PR/revisão e integração antes da sucessora.
+- [ ] Branch sincronizada com `origin/main`; Pull Request aberto, revisado e **aprovado pelo outro desenvolvedor antes do merge**.
 
 ## 16. Regra de atualização contínua do plano
 
-Ao iniciar: `Status: Em andamento`, `Responsável: nome/dev`, `Branch: nome-da-branch`, data e arquivos reservados. Ao concluir: `Status: Concluído`, `Commit: hash`, arquivos alterados, testes executados/resultados, migração/rollback realizados e evidência de aceite. Ao bloquear: `Status: Bloqueado`, motivo, dado ou decisão faltante, impacto nas sucessoras. Apenas uma pessoa edita este arquivo por vez; a outra atualiza após a primeira integrar sua alteração.
+Ao iniciar: `Status: Em andamento`, `Responsável: nome/dev`, `Branch: nome-da-branch`, data e arquivos reservados. Ao concluir: `Status: Concluído`, `Commit: hash`, `PR: link`, `Revisor: nome`, `Aprovação: data`, `Merge: hash`, arquivos alterados, testes executados/resultados, migração/rollback realizados e evidência de aceite. Enquanto o PR aguarda aprovação, registrar `Status: Em revisão`; só marcar `Concluído` após o merge na `main`. Ao bloquear: `Status: Bloqueado`, motivo, dado ou decisão faltante, impacto nas sucessoras. Apenas uma pessoa edita este arquivo por vez; a outra atualiza após a primeira integrar sua alteração.
 
 Novo problema recebe um novo ID `ISS-XX` e nova `TASK-XXX`, com dependências, dono e risco, **antes** de alteração de código. Se a causa raiz mudar, atualizar diagnóstico, contrato, banco e testes afetados. Não apagar histórico de decisões; registrar data, decisão, evidência e consequência. Se uma TASK exceder os arquivos previstos, registrar extensão e colisões antes de prosseguir.
 
@@ -714,5 +744,5 @@ Novo problema recebe um novo ID `ISS-XX` e nova `TASK-XXX`, com dependências, d
 
 Este documento é o resultado autorizado nesta rodada. **Parar após criar/revisar o plano; não iniciar nenhuma TASK automaticamente.** A primeira etapa recomendada é a **TASK-001**, para transformar hipóteses em evidência de banco/runtime e fixar a causa real de `ROTA_NOT_FOUND` antes de migrations. TASK-005 pode ser executada por outra pessoa em paralelo, seguindo a posse de arquivos; TASK-004 também é isolável, mas não deve coincidir com TASK-013 no wizard.
 
-Quando houver pedido explícito `implemente TASK-XXX`: reler a TASK e dependências; verificar arquivos protegidos, branch e posse; executar somente seu escopo; testar função e regressões; atualizar este plano; fazer commit com ID; informar resultado e **parar**, aguardando autorização da próxima TASK. Se uma dependência estiver pendente ou surgir decisão operacional sem resposta, registrar bloqueio e não improvisar implementação.
+Quando houver pedido explícito `implemente TASK-XXX`: reler a TASK e dependências; verificar arquivos protegidos, branch e posse; sincronizar a `main`, criar branch nova; executar somente uma funcionalidade pequena; testar função e regressões; atualizar este plano; fazer commit com ID; abrir PR e aguardar a aprovação do outro desenvolvedor antes do merge. Após merge, atualizar a `main`, registrar a conclusão e **parar**, aguardando autorização da próxima TASK. Se uma dependência estiver pendente ou surgir decisão operacional sem resposta, registrar bloqueio e não improvisar implementação.
 
