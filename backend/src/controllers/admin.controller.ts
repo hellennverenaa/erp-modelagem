@@ -14,6 +14,7 @@ import { Peca } from '../entities/Peca';
 import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 import { carregarCatalogoRbac } from '../services/rbac-catalog.service';
 import { AuditLog } from '../entities/AuditLog';
+import { modeloIdentificacaoSchema } from '../schemas/modelo.schema';
 
 async function auditarRbac(manager: EntityManager, req: Request, acao: string, entidadeTipo: string, entidadeId: string, anteriores: Record<string, unknown> | null, novos: Record<string, unknown> | null) {
   await manager.getRepository(AuditLog).save(manager.getRepository(AuditLog).create({
@@ -29,10 +30,7 @@ async function auditarRbac(manager: EntityManager, req: Request, acao: string, e
 
 // ─── Schema de validação para criação de Modelo ─────────────────────────────
 const createModeloSchema = z.object({
-  marcaId:       z.string().uuid({ message: 'marcaId deve ser um UUID válido.' }),
-  codigoProduto: z.string().min(1).max(50),
-  nome:          z.string().min(1).max(150),
-  temporada:     z.string().max(50).optional().nullable(),
+  ...modeloIdentificacaoSchema.shape,
   dataCorte:     z.string().optional().nullable(),
   mfmReferenciaUrl: z.string().url().optional().nullable(),
   fichaTecnicaUrl:  z.string().url().optional().nullable(),
@@ -373,7 +371,7 @@ export class AdminController {
         });
       }
 
-      const { marcaId, codigoProduto, nome, temporada, dataCorte, mfmReferenciaUrl, fichaTecnicaUrl, pecas } = parse.data;
+      const { marcaId, codigoProduto, nome, dataCorte, mfmReferenciaUrl, fichaTecnicaUrl, pecas } = parse.data;
 
       const modeloRepo = AppDataSource.getRepository(Modelo);
       const marcaRepo  = AppDataSource.getRepository(Marca);
@@ -397,7 +395,7 @@ export class AdminController {
         marcaId,
         codigoProduto,
         nome,
-        temporada:        temporada        || null,
+        temporada:        null,
         dataCorte:        dataCorte        ? new Date(dataCorte) : null,
         mfmReferenciaUrl: mfmReferenciaUrl || null,
         fichaTecnicaUrl:  fichaTecnicaUrl  || null,

@@ -41,7 +41,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'rota-salva', slasPorSetor?: Record<string, number>): void
+  (e: 'rota-salva', payload: RotaSalvaPayload): void
 }>()
 
 const podeSalvarRota = computed(() =>
@@ -148,6 +148,19 @@ interface RouteBlock {
   icon: any
   color: string
   description: string
+}
+
+interface RotaRascunhoEtapa {
+  setorId: string
+  ordem: number
+  obrigatorio: boolean
+  tipoExecucao: 'SEQUENCIAL' | 'PARALELO'
+  bipagemApenasSaida: boolean
+}
+
+interface RotaSalvaPayload {
+  rota: RotaRascunhoEtapa[]
+  slasPorSetor: Record<string, number>
 }
 
 // ─── Fixed blocks (non-draggable, always present) ───────────────────────
@@ -322,7 +335,7 @@ function removerSetor(block: RouteBlock) {
 }
 
 // ─── Reset route layout ──────────────────────────────────────────────────
-function resetarRota() {
+function resetarRota(notify = true) {
   zoneAntesApoio.value = []
   zoneJuntoApoio.value = []
   zoneEntreApoioCostura.value = []
@@ -344,7 +357,13 @@ function resetarRota() {
     { id: 'bordado',            label: 'Bordado',            tipo: 'flutuante', icon: Zap,          color: '#b45309', description: 'Posicione entre Apoio e Montagem' },
     { id: 'pre-fabricado',      label: 'Pré-Fabricado',      tipo: 'flutuante', icon: Package,      color: '#0369a1', description: 'Antes, junto ou depois de Montagem' },
   ]
-  showToast('Rota redefinida para o layout padrão.', 'success')
+  if (notify) showToast('Rota redefinida para o layout padrão.', 'success')
+}
+
+function resetDraft() {
+  resetarRota(false)
+  sectorSlaMap.value = {}
+  sectorSlaConfigMap.value = {}
 }
 
 // ─── Computed full timeline preview ──────────────────────────────────────
@@ -427,7 +446,7 @@ async function salvarRota() {
   }
 
   const modelId = activeModeloId.value
-  if (!modelId) {
+  if (!props.isWizardMode && !modelId) {
     showToast('Por favor, selecione um modelo para salvar.', 'error')
     return
   }
@@ -534,6 +553,15 @@ async function salvarRota() {
     }
   }
 
+  const payload: RotaSalvaPayload = { rota: rotaFiltrada, slasPorSetor }
+  if (props.isWizardMode) {
+    showToast('Rota pronta. Ela será persistida ao finalizar o novo teste.', 'success')
+    saveSuccess.value = true
+    emit('rota-salva', payload)
+    setTimeout(() => { saveSuccess.value = false }, 3000)
+    return
+  }
+
   try {
     const response = await api.put(`/rotas/${modelId}`, {
       rota: rotaFiltrada,
@@ -542,7 +570,7 @@ async function salvarRota() {
     if (response.status === 200) {
       showToast('Rota de produção salva com sucesso.', 'success')
       saveSuccess.value = true
-      emit('rota-salva', slasPorSetor)
+      emit('rota-salva', payload)
       setTimeout(() => { saveSuccess.value = false }, 3000)
     } else {
       showToast('Falha ao salvar a rota de produção.', 'error')
@@ -556,7 +584,7 @@ async function salvarRota() {
 
 // ─── Carregar modelos (para modo standalone) ───────────────────────────
 async function carregarModelos() {
-  if (props.modeloId) return
+  if (props.isWizardMode || props.modeloId) return
   loadingModelos.value = true
   try {
     const response = await api.get('/admin/modelos')
@@ -672,7 +700,7 @@ async function carregarRotaDoModelo(modeloId: string) {
 
 onMounted(async () => {
   await carregarSetores()
-  carregarModelos()
+  if (!props.isWizardMode) carregarModelos()
   if (props.modeloId) {
     carregarRotaDoModelo(props.modeloId)
   }
@@ -711,7 +739,8 @@ function getBlockBorder(block: RouteBlock) {
 }
 
 defineExpose({
-  salvarRota
+  salvarRota,
+  resetDraft,
 })
 </script>
 
@@ -738,7 +767,7 @@ defineExpose({
         </div>
       </div>
       <div class="rb-header-actions">
-        <button v-if="podeSalvarRota" class="btn-reset" @click="resetarRota" type="button" title="Redefinir Rota">
+        <button v-if="podeSalvarRota" class="btn-reset" @click="resetarRota()" type="button" title="Redefinir Rota">
           <RotateCcw :size="16" aria-hidden="true" />
           <span>Redefinir</span>
         </button>
@@ -756,7 +785,7 @@ defineExpose({
     </header>
 
     <!-- Seleção do Modelo (Apenas quando fora do Wizard) -->
-    <div v-if="!props.modeloId" class="rb-model-selector-card" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.25rem; display:flex; flex-direction:column; gap:0.5rem; margin-bottom: 0.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+    <div v-if="!props.isWizardMode && !props.modeloId" class="rb-model-selector-card" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:0.75rem; padding:1.25rem; display:flex; flex-direction:column; gap:0.5rem; margin-bottom: 0.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
       <label for="modelo-select" class="field-label" style="font-weight:800; color:#475569;">Modelo de Referência *</label>
       <div style="display:flex; align-items:center; gap:0.75rem;">
         <select
@@ -779,7 +808,7 @@ defineExpose({
     </div>
 
     <!-- ══ BLOCKED OVERLAY ══════════════════════════════════════════════ -->
-    <div v-if="!activeModeloId" class="rb-blocked-overlay" style="background:#f1f5f9; border: 1.5px dashed #cbd5e1; border-radius:0.75rem; padding: 4rem; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0.5rem; margin-top: 1rem;">
+    <div v-if="!activeModeloId && !props.isWizardMode" class="rb-blocked-overlay" style="background:#f1f5f9; border: 1.5px dashed #cbd5e1; border-radius:0.75rem; padding: 4rem; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0.5rem; margin-top: 1rem;">
       <AlertTriangle :size="32" style="color: #64748b;" />
       <span style="font-size:0.9375rem; font-weight:700; color:#0f172a;">Aguardando Seleção de Modelo</span>
       <span style="font-size:0.8125rem; color:#64748b;">Selecione um modelo no dropdown acima para habilitar o Construtor de Rota de Produção.</span>
