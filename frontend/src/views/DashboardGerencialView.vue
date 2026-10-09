@@ -20,7 +20,7 @@ import {
   Activity,
   Layers,
   ShieldCheck
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 
 // ==========================================
 // INTERFACES (PRESERVADAS 100%)

@@ -21,7 +21,7 @@ import {
   User,
   Cpu,
   Image as ImageIcon
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 
 interface RastreamentoItem {
   id: string

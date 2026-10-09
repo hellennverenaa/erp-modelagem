@@ -35,7 +35,7 @@ export function errorHandler(
     return;
   }
 
-  // ═══ Erro de Validação Zod (safety net — já tratado no validate.middleware) ═══
+  // ═══ Erro de Validação Zod ═══
   if (err.name === 'ZodError') {
     res.status(400).json({
       error: 'Dados de entrada inválidos.',

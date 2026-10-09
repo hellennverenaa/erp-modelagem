@@ -19,8 +19,6 @@ const userRaw = localStorage.getItem('erp_user')
 const user = ref<UsuarioLogado | null>(userRaw ? JSON.parse(userRaw) : null)
 let retrySessionEndpointAfter = 0
 
-const isAuthenticated = computed(() => !!token.value)
-
 const contasAdminAutomacao = new Set([
   'hellen.magalhaes',
   'jose.falcao',
@@ -79,7 +77,6 @@ function logout() {
 export const authStore = {
   token,
   user,
-  isAuthenticated,
   isAdminAutomacao,
   hasPermission,
   refreshCurrentUser,

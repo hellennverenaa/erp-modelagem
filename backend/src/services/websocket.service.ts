@@ -109,13 +109,6 @@ class WebSocketService {
     return this.io;
   }
 
-  public getIO(): Server {
-    if (!this.io) {
-      throw new Error('WebSocketService has not been initialized.');
-    }
-    return this.io;
-  }
-
   public emit(event: string, data: any): void {
     const rooms = ROOMS_BY_EVENT[event];
     if (!this.io || !rooms?.length) return;
