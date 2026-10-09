@@ -105,7 +105,7 @@ async function startServer(): Promise<void> {
     console.log('📦 Banco de dados conectado com sucesso via TypeORM!');
 
     webSocketService.init(httpServer);
-    httpServer.listen(port, () => {
+    httpServer.listen(Number(port), '0.0.0.0', () => {
       console.log(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
       console.log(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
       console.log('🔒 Helmet, CORS e Rate Limiting ativos');
