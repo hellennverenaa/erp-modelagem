@@ -1,8 +1,8 @@
 # IMPLEMENTATION_PLAN — ERP Modelagem
 
-**Estado:** implementação de ISS-02 e ISS-03 concluída na branch publicada `feature/iss-02-03-wizard-model` (commits `a120995` e `80d377f`, com mensagens em português). A criação do PR pela integração GitHub foi bloqueada por `403 Resource not accessible by integration`; abrir manualmente em [github.com/hellennverenaa/erp-modelagem/pull/new/feature/iss-02-03-wizard-model](https://github.com/hellennverenaa/erp-modelagem/pull/new/feature/iss-02-03-wizard-model). O merge aguarda aprovação do outro desenvolvedor.
+**Estado:** planejamento atualizado: TASK-024 é a próxima proposta de implementação na branch `feature/task-024-modelo-rota-integrados`. A implementação de TASK-024 não começou. As implementações de ISS-02/03 estão publicadas em `feature/iss-02-03-wizard-model` e ainda precisam ser integradas à `main` antes de TASK-024.
 
-**Base do diagnóstico:** leitura estática do código e consulta read-only ao ambiente local em 2026-10-09. A branch temporária usada no diagnóstico foi removida após consolidar o registro neste plano. O `AppDataSource` real do backend conectou ao banco `postgres`, schema `erp_modelagem`, `search_path=erp_modelagem,public` e timezone `America/Bahia`. O inventário encontrou 4 modelos, 7 peças, 5 setores ativos, 10 etapas em `rota_modelo`, 2 ordens (ambas `AGUARDANDO_MATERIAL`) e 0 rastreamentos. Dois modelos não têm rota, mas nenhuma ordem está ligada a modelo sem rota; não há órfãos nas relações modelo/rota/setor/ordem/rastreamento verificadas. As 10 etapas existentes estão marcadas `PARALELO`; as duas posições repetidas pertencem a grupos paralelos. A base local não tem códigos de produto não numéricos nem duplicados; todos os 4 modelos têm temporada. Isso não comprova o estado de outros ambientes nem identifica o modelo do erro relatado. As consultas foram feitas em transação `READ ONLY` e encerradas com `ROLLBACK`; não houve escrita no banco nem execução de migration.
+**Base do diagnóstico:** leitura estática do repositório e consulta local read-only ao PostgreSQL em 2026-10-09, schema `erp_modelagem`. O snapshot encontrou 4 modelos, 10 etapas de rota e 2 modelos sem rota; nenhuma das 2 ordens existentes estava ligada a esses modelos. Isso confirma que o cadastro independente produz modelos sem rota, mas não prova qual modelo foi selecionado no incidente. Nenhuma escrita ou migration foi executada. O caso de rota salva para o mesmo ID que não é lida ainda requer evidência do request.
 
 **Uso do plano:** nesta implementação, ISS-02 e ISS-03 ficam na mesma branch conforme instrução do usuário; arquivos centrais e migration são alterados em sequência. Mudanças fora desse escopo exigem outra TASK. O plano será atualizado no início e na conclusão, sem registrar cada subetapa.
 
@@ -103,13 +103,13 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 ### ISS-01 — Rota não encontrada ao criar a ordem
 
 - **Problema / atual:** `POST /ordens-teste` retorna `ROTA_NOT_FOUND` quando `count(rota_modelo where modelo_id = modeloId)` é zero.
-- **Esperado:** uma rota salva com sucesso para o mesmo modelo e banco é recuperada antes da criação da OT.
-- **Causa raiz:** o gatilho está confirmado: `createLote` retorna `ROTA_NOT_FOUND` quando não encontra etapa em `rota_modelo` para o `modeloId` recebido. Não há divergência estática entre os IDs do wizard: o mesmo `createdModeloId` é passado ao `RouteBuilder`, ao `PUT /rotas/:modeloId` e ao `POST /ordens-teste`. O PUT grava por `RotaModelo.modeloId`, aguarda o commit da transação e só então responde `200`; falha de transação responde erro, não sucesso. O GET da rota, quando não há linhas, responde `200` com `rota: []`, enquanto a criação da OT retorna erro; essa diferença de contrato pode esconder ausência de rota no leitor. A configuração TypeORM testada aponta para `erp_modelagem`, e a tabela física lida/escrita pelo código é `rota_modelo`; não foi encontrada uma segunda tabela de rota no schema. A base local tem 2 modelos sem rota, mas nenhuma ordem associada, então confirma apenas o gatilho, não a causa do incidente relatado. **Incidente não reproduzido:** falta o `modeloId`/código do modelo e a sequência de respostas PUT/GET/POST do caso. Hipóteses a verificar com essa evidência: IDs diferentes entre gravação e criação, PUT não concluído no ambiente da tentativa, ou dados/versão de backend diferentes. Não atribuir a falha a rollback silencioso ou schema divergente sem evidência.
+- **Esperado:** um modelo novo só fica criado após configurar peças e rota; modelos históricos sem rota permanecem preservados e não podem gerar uma nova OT até que a rota seja configurada.
+- **Causa raiz:** **lacuna de prontidão entre módulos confirmada para modelos ainda sem rota**. O cadastro de modelo e o Construtor de Rota são independentes; `GET /admin/modelos` lista modelos ativos sem ordem, mas não filtra os que ainda não têm etapas. `GestaoOrdensView` usa essa lista no seletor, então permite escolher um modelo sem rota. O backend então encontra zero linhas em `rota_modelo` e retorna `ROTA_NOT_FOUND`: nesse cenário, a rejeição é correta, mas tardia e mal orientada pela interface. A explicação não comprova uma falha de persistência quando a rota foi salva para o mesmo modelo; se isso ocorrer, comparar os IDs e as respostas do PUT/GET/POST conforme TASK-009.
 - **Frontend afetado:** `RouteBuilder.vue`, `WizardCriacaoTesteView.vue`, `GestaoOrdensView.vue`.
 - **Backend afetado:** `rotas.controller.ts`, `lotes.controller.ts`, gateway/configuração.
 - **Banco afetado:** `erp_modelagem.rota_modelo`, `modelos`; na base local consultada há 4 modelos, 10 etapas, 2 modelos sem rota e 0 ordens sem rota para seu modelo. A migration define FKs de `rota_modelo.modelo_id` para `modelos.id` e `setor_id` para `setores.id`; não há constraint única para `(modelo_id, ordem)`, permitindo posições compartilhadas entre etapas paralelas.
 - **Arquivos envolvidos:** os citados e `backend/src/config/database.ts` (leitura/configuração).
-- **Dependências:** TASK-001; correção específica definida em TASK-009 somente após identificar o modelo/request do incidente. A autorização para implementar não substitui a evidência necessária para escolher a correção.
+- **Dependências:** TASK-001 e TASK-024. TASK-009 continua responsável por investigar um caso em que uma rota confirmada para o mesmo `modeloId` não seja recuperada.
 - **Risco:** crítico.
 
 ### ISS-02 — Wizard grava parcialmente e não volta com segurança
@@ -275,16 +275,16 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-001 — Auditar dados, ambiente e falha de persistência da rota
 
-**Status:** [ ] Não iniciado · [ ] Em andamento · [ ] Em revisão · [x] Concluído · [ ] Bloqueado
+**Status:** [ ] Não iniciado · [ ] Em andamento · [ ] Em revisão · [x] Concluído (inventário read-only e causa arquitetural; caso de rota salva com mesmo ID não reproduzido) · [ ] Bloqueado
 
-**Responsável:** Codex · **Branch:** `feature/iss-02-03-wizard-model` (branch única atual; a branch temporária de diagnóstico foi removida) · **Commit:** — (aguardando “está ok” do usuário) · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `IMPLEMENTATION_PLAN.md` (diagnóstico somente)
+**Responsável:** Codex · **Branch:** análise registrada no plano · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `IMPLEMENTATION_PLAN.md`
 
 - **Objetivo:** seguir um caso real de `PUT /rotas/:modeloId` até o `POST /ordens-teste`; comparar IDs, base/schema, linhas e respostas. Levantar contagens de modelos, rotas, peças, OTs em andamento, órfãos, códigos não numéricos, `temporada`, SLAs e timestamps. Inspecionar permissões, setor/planta e rotas históricas sem alterar registros.
 - **Arquivos prováveis:** frontend `RouteBuilder.vue`, `WizardCriacaoTesteView.vue`, `GestaoOrdensView.vue`; backend `rotas.controller.ts`, `lotes.controller.ts`, `config/database.ts`, entidades; banco `modelos`, `pecas`, `rota_modelo`, `ordens_teste`, `rastreamentos`, `setores` (somente SELECT). Registrar consultas e resultados agregados neste plano, sem dados pessoais.
 - **Dependências:** nenhuma. **Paralelo:** sim, com TASK-005. **Risco:** baixo na execução; crítico no diagnóstico.
 - **Aceite:** causa de `ROTA_NOT_FOUND` comprovada por logs/SQL ou explicitamente não reproduzida, com hipóteses restantes e passos para reproduzir; inventário de dados/compatibilidade registrado.
 - **Testes necessários:** reprodução controlada de gravação/leitura em ambiente seguro; conferência read-only de schema e conexão. **Rollback:** nenhum dado deve ser alterado.
-- **Progresso (2026-10-09):** inventário local read-only concluído para modelos, peças, setores, rotas, ordens, rastreamentos, FKs, timestamps, timezone, configuração TypeORM e tabelas de rota/migrations. O incidente específico não foi reproduzido porque não há `modeloId` nem traces do request; o plano registra a evidência necessária e as hipóteses sem escolher uma causa. Nenhum dado foi escrito e nenhuma migration foi executada. Para corrigir ISS-01, TASK-009 depende de evidência do incidente; não mascarar a validação nem alterar a rota como workaround.
+- **Conclusão (2026-10-13):** a criação independente de modelo e rota foi confirmada como causa arquitetural para modelos sem etapas: a consulta do seletor não filtra por rota e o endpoint de ordem bloqueia somente no envio. O incidente específico de rota previamente salva para o mesmo ID continua não reproduzido; comparar PUT/GET/POST se esse cenário persistir.
 
 #### TASK-002 — Decidir semântica de Bordado/Apoio, bifurcação e planta
 
@@ -425,6 +425,25 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 - **Dependências:** TASK-006/011. A integração de `RouteBuilder` nesta TASK limita-se a transferir o rascunho sem gravá-lo; alterações gerais de preview, tempos por etapa e pré-configuração de setores continuam em TASK-012. **Paralelo:** não. **Risco:** alto.
 - **Aceite:** quatro passos navegáveis sem perda; nenhuma linha nova antes de Finalizar; finalização única; cadastros individuais intactos. **Testes necessários:** avançar/voltar/editar, sair sem finalizar, falha de API, retry, duplo clique, peças/setores/rota/ordem, regressão dos cadastros isolados. **Rollback:** reverter UI para fluxo anterior só em ambiente seguro; endpoint novo pode permanecer inativo, sem eliminar dados finalizados.
 
+### FASE 3B — Cadastro de modelo dependente da rota
+
+#### TASK-024 — Integrar criação do modelo, peças e rota
+
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch planejada:** `feature/task-024-modelo-rota-integrados` · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
+
+- **Objetivo:** transformar a criação de um modelo novo no Catálogo em um fluxo guiado **Modelo → Peças → Rota**, usando o `RouteBuilder` como rascunho. Persistir modelo, peças e rota juntos em uma transação somente ao concluir; não incluir a ordem nesse cadastro. Manter a edição de modelos e de rotas existentes disponível nas telas próprias.
+- **Regra de produto atualizada:** para modelos novos, a criação independente que permitia salvar o registro antes da rota deixa de ser o comportamento padrão. A edição de modelos existentes e a edição de rota continuam podendo ser salvas separadamente. Modelos históricos sem rota são preservados, identificados como pendentes e podem receber uma rota posteriormente.
+- **Backend:** serviço agregado reutilizável, validação de marca/código/peças/setores/etapas, endpoint de criação após commit e proteção dos endpoints antigos contra criação incompleta por chamada direta. A criação de ordem deve rejeitar modelos sem rota no backend e oferecer à interface um erro de pré-requisito claro.
+- **Frontend:** adaptar `GestaoModelosView.vue` para o fluxo em etapas; reutilizar `RouteBuilder.vue` em modo de rascunho; indicar nos modelos existentes se a rota está pendente; não permitir selecioná-los para uma nova ordem sem rota e oferecer navegação para concluir a configuração.
+- **Banco:** `modelos`, `pecas`, `rota_modelo`, `ordens_teste`. Não adicionar coluna booleana duplicando a existência da rota e não remover registros históricos. A relação permanece derivada das etapas existentes em `rota_modelo`; migration somente se a implementação revelar necessidade comprovada.
+- **Arquivos prováveis:** frontend `views/GestaoModelosView.vue`, `components/RouteBuilder.vue`, `views/GestaoOrdensView.vue`; backend `controllers/admin.controller.ts`, `controllers/rotas.controller.ts`, `controllers/lotes.controller.ts`, rotas correspondentes, schema e serviço agregado. Reservar os arquivos centrais, sem edição paralela.
+- **Contrato proposto a congelar na TASK-003:** novo `POST /admin/modelos/configuracao-completa`, request `{ modelo, pecas, rota }`, response `{ modelo, pecas, rota }` somente após commit. Consulta própria para as opções de modelo na criação de OT, baseada em modelo ativo, ausência de ordem existente e rota presente. Confirmar os nomes e formatos usando os handlers reais antes de codificar.
+- **Dependências:** TASK-003; integração das TASK-006/011/013 na `main`; diagnóstico de prontidão da TASK-001. **Paralelo:** não com TASK-009/011/012/013 nem com outra alteração em modelos, rota ou criação de ordens. **Risco:** alto.
+- **Critérios de aceite:** (1) cadastro novo não gera linha de modelo antes da conclusão da rota; (2) erro em qualquer etapa não deixa modelo/peças/rota parciais; (3) o `RouteBuilder` confirma o rascunho sem gravar antes da conclusão; (4) a ordem não oferece modelos sem rota e a API também bloqueia chamadas diretas; (5) modelos históricos sem rota continuam acessíveis, sem exclusão, e passam a ser elegíveis depois de configurar a rota; (6) edição independente de modelo/rota e criação do Novo Teste continuam funcionando.
+- **Testes necessários:** criar agregado e reler a rota; injetar falha em cada gravação e conferir rollback; chamada direta aos endpoints legados; seleção de modelo sem rota; concluir rota de modelo histórico; criar ordem com/sem rota; regressão do wizard e dos cadastros de edição. **Rollback:** reverter frontend/API sem apagar dados; preservar endpoints de leitura e rota existentes; não executar DDL destrutivo.
+
 ### FASE 4 — Execução operacional
 
 #### TASK-014 — Fazer backend de bipagem executar rota da OT
@@ -556,6 +575,7 @@ Modelo → Peças → Rota do modelo/versionada → Ordem + snapshot
 | Peça e rota persistente | TASK-007 + TASK-008 + TASK-009 | TASK-010/011/012 e consumidores posteriores |
 | Ordem com snapshot | TASK-010 | TASK-011/014/016/017/019 |
 | Finalização e construtor | TASK-004 + TASK-006 + TASK-011 + TASK-012 | TASK-013 |
+| Cadastro integrado de modelo com rota | TASK-003 e integração de TASK-006/011/013 na `main` | TASK-024 |
 | Execução operacional | TASK-014 | TASK-015/017/022 |
 | Torre confiável | TASK-017 + TASK-016 | TASK-018 |
 | Horário padronizado | TASK-019 + TASK-013 + TASK-018 | TASK-020 |
@@ -587,15 +607,16 @@ Modelo → Peças → Rota do modelo/versionada → Ordem + snapshot
 | `IMPLEMENTATION_PLAN.md` | Coordenação | Todas, updates seriais | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/migrations/*`, entidades novas | Banco | 006/007/008/010/014/017/019 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/entities/{Modelo,Peca,RotaModelo,OrdemTeste,Rastreamento}.ts` | Domínio | 006–010/014/019 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `backend/src/controllers/admin.controller.ts` | Modelos/peças | 006/007/011 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `backend/src/controllers/rotas.controller.ts` | Rota | 009/011 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `backend/src/controllers/lotes.controller.ts` | Ordem | 009/010/011/019 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/controllers/admin.controller.ts` | Modelos/peças | 006/007/011/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/controllers/rotas.controller.ts` | Rota | 009/011/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/controllers/lotes.controller.ts` | Ordem | 009/010/011/019/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/controllers/rastreamentos.controller.ts` | Operação | 014 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/controllers/dashboard.controller.ts` | Torre | 017 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `backend/src/routes/{index,pecas,rotas,lotes,rastreamentos}.ts` | API | 004/007/009/011/014 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/routes/{index,admin,pecas,rotas,lotes,rastreamentos}.ts` | API | 004/007/009/011/014/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/config/database.ts` | Banco | 001 leitura; 019 se preciso | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/views/WizardCriacaoTesteView.vue` | Wizard | 004/006/007/013 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `frontend/src/components/RouteBuilder.vue` | Rota | 012/013 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `frontend/src/components/RouteBuilder.vue` | Rota | 012/013/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `frontend/src/views/GestaoModelosView.vue` | Catálogo de Modelos | 006/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/views/BipagemView.vue` | Operação | 015/021 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/views/DashboardGerencialView.vue` | Torre | 018/020 se data | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/views/{GestaoOrdens,RastreamentoOrdem,DashboardView}.vue` | Ordem/TV/layout | 005/016/020 conforme arquivo | Não definido | **NÃO ALTERAR EM PARALELO** |
@@ -627,6 +648,7 @@ O procedimento de [`docs/GIT.md`](docs/GIT.md) prevalece para Git. Cada entrega 
 | `pecas` | `catalogo_peca_id` nullable com FK/índice, se identidade não existir em outra coluna; preservar `setor_corte_opcao_id` | Peças legadas sem correspondência permanecem com nome e setor; backfill só em pares inequívocos | Adicionar FK/índice, leitura dual; rollback de aplicação sem apagar coluna preenchida |
 | `config_opcoes`/`setores` | Mapear explicitamente subsetor de corte a setor da rota por ID/configuração existente; nova FK/mapeamento só se não houver conceito equivalente | Checar planta e opções em uso; evitar renomear opções históricas | Migration aditiva e backfill auditado; rollback da leitura mantendo mapeamento |
 | `rota_modelo` | Preservar como legado; criar estrutura de versões/etapas ou estendê-la sem romper leitores | Cada etapa precisa ID, posição, tempo/SLA, tipo, condição/grupo; uma rota ativa por modelo/planta conforme TASK-002 | Migrations aditivas, backfill versionado, comparação linha a linha; rollback por leitor legado, sem drop de histórico |
+| `modelos`, `pecas`, `rota_modelo` | TASK-024 grava novo modelo, peças e etapas da rota como agregado transacional; aptidão para OT é derivada das etapas existentes | Modelos históricos sem rota permanecem preservados e identificados como pendentes; não criar coluna booleana duplicando a relação | Sem migration prevista; rollback de aplicação sem apagar registros existentes |
 | `ordens_teste` | Associar versão da rota e snapshot imutável em tabela própria; conservar `slas_por_setor` JSONB e `possui_caixa_teste` até semântica confirmada | OTs existentes não recebem snapshot fictício; fallback explícito/relatório de lacunas | Adição nullable, criação só para OTs novas; rollback do aplicativo sem apagar snapshots |
 | `rastreamentos` | Opcional `ordem_rota_etapa_id` nullable apontando etapa da OT | Bipagens antigas mantêm setor e timestamps; backfill somente correspondência unívoca | Migration aditiva; rollback mantém coluna/dados até consumidores removidos |
 | `ordens_teste` e datas relacionadas | Definir instantes novos com offset/UTC e considerar coluna nova ou migração assistida se `timestamp` atual for ambíguo | Não aplicar `AT TIME ZONE` em massa sem conhecer fuso de origem por período/ambiente | Backup + amostra + migration reversível; manter valor original para reconciliação |
@@ -644,6 +666,8 @@ O procedimento de [`docs/GIT.md`](docs/GIT.md) prevalece para Git. Cada entrega 
 | `GET /catalogo-pecas` | Lista sem busca obrigatória → `?q=...&limit=...` opcional ou filtragem local com permissão corrigida | Lista → lista filtrada/paginada se aprovada, mantendo forma legada | `WizardCriacaoTesteView`, `CatalogoPecasView`; RBAC permite busca apenas aos perfis autorizados à seleção |
 | `POST /pecas/modelo/:modeloId` | Peças com nome/opção de corte → acrescentar `catalogoPecaId` e opção por ID | Lista salva → lista com IDs/identidade | Cadastro individual e wizard antigo até TASK-013; sem perda de legado |
 | `GET/PUT /rotas/:modeloId` | Array de setor/ordem/tipo/obrigatório; frontend envia `slasPorSetor` ignorado → etapas com ID/posição/tempo/condição/versão | Lista/“salvo” → versão e etapas persistidas confirmadas | `RouteBuilder`, Gestão de Ordens; GET aceita rota antiga, PUT antigo durante transição |
+| **Proposto** `POST /admin/modelos/configuracao-completa` | Criação separada de modelo/peças/rota → `{ modelo, pecas, rota }` | Inexistente → `{ modelo, pecas, rota }` somente após commit integral | TASK-024; novos cadastros no Catálogo; edição existente continua nos endpoints atuais; consumidores diretos de `POST /admin/modelos` devem ser auditados |
+| **Proposto** `GET /ordens-teste/modelos-disponiveis` | Lista de modelos ativos sem ordem → opções com rota presente e motivos de pendência | Lista simples → `{ elegiveis, pendentes }` ou contrato equivalente definido na TASK-003 | TASK-024; `GestaoOrdensView`; não alterar a listagem geral usada pelo Construtor de Rota |
 | `POST /ordens-teste` | Modelo/planta/prazo/`possuiCaixaTeste`/SLAs → mantém campos legítimos; bifurcação deriva da rota | OT criada → OT com `rotaVersaoId` e resumo do snapshot | Gestão de Ordens e wizard antigo; rejeitar rota ausente com erro comprovável |
 | **Novo** `POST /ordens-teste/wizard` | Inexistente → `{modelo:{marcaId,codigoProduto,nome}, pecas:[{catalogoPecaId,setorCorteOpcaoId}], rota:[{setorId,ordem,obrigatorio,tipoExecucao,bipagemApenasSaida}], ordem:{plantaId,prioridadePcp,possuiCaixaTeste,observacoes,dataPrevistaProducao,slasPorSetor}}` | Inexistente → `{modelo, lote}` após commit integral | Só wizard novo; cadastro individual mantém `/admin/modelos`, `/pecas/modelo/:modeloId`, `/rotas/:modeloId` e `POST /ordens-teste`; sem idempotência durável nesta fase |
 | **Proposto** `GET /ordens-teste/:id/fluxo` | Inexistente; leitores pegam `modelo.rotas` → ID da OT | Inexistente → etapas do snapshot, status de execução e sinalizador de legado | Bipagem, TV, Torre se necessário; fallback de OT antiga explicitado |
@@ -663,6 +687,7 @@ Nenhum teste ou build foi executado durante a criação deste plano. O repositó
 | TASK-007/008/009 | Peça↔catálogo/subsetor e save/read da rota | Modelo/peça individual, rota antiga, criar OT com rota, OT antiga, duas plantas, tempo de cada etapa |
 | TASK-010/011 | Snapshot e finalização atômica | CRUD individual, falha no passo 1/2/3/4, duplicidade/retry, rota editada após OT, etiqueta, auditoria |
 | TASK-012/013 | Construtor e wizard | Quatro passos avançar/voltar, saída antes de finalizar sem escrita, setores de corte, Serigrafia/Telas, criar OT, cadastro isolado |
+| TASK-024 | Criação integrada de modelo, peças e rota | Falha em cada etapa e rollback; modelo sem rota bloqueado pela UI e API; modelos históricos preservados; edição de rota e criação de OT sem regressão |
 | TASK-014/015/016 | Backend/UI bipagem e TV | OT sem/com Serigrafia, rota com Bordado, setor repetido, caixa de teste, crachá, RBAC, checklist, inspeção, retrabalho, OT antiga |
 | TASK-017/018 | Agregações e UX da Torre | Comparar KPIs com SQL, planta/período, evento Socket.IO, ocorrências, qualidade, filtros, carga, responsividade, TV |
 | TASK-019/020 | Datas | Persistir/ler em UTC, exibir em Bahia e outro fuso, virada de dia, prazos, OT antiga, etiqueta/exportação se consumir data |
@@ -719,7 +744,8 @@ Novo problema recebe um novo ID `ISS-XX` e nova `TASK-XXX`, com dependências, d
 | Demanda | Diagnóstico | TASK de implementação/decisão | Evidência de aceite |
 |---|---|---|---|
 | Novo Teste em quatro passos, só finalizar grava, voltar/avançar | ISS-02 | 011/013 | Banco vazio antes de finalizar; agregado completo depois |
-| Cadastro individual preservado | ISS-02 | 006/007/009/011/013 | CRUD de modelo, peça, rota e OT fora do wizard |
+| Cadastro individual preservado | ISS-02/ISS-01 | 006/007/009/011/013/024 | Edição de registros e rota continua independente; modelo novo só é criado após concluir peças e rota |
+| Novo modelo apto a gerar OT | ISS-01 | 024 | Agregado gravado atomicamente; modelos sem rota não aparecem como elegíveis para OT |
 | Código numérico e Temporada removida | ISS-03 | 006 | UI/API/DB coerentes; histórico preservado |
 | Peças em Lectra, Atom, CN, Ponte, Laser e Couro | ISS-05 | 007/012 | IDs/opções persistidos e rota pré-configurada |
 | Autocomplete ao digitar | ISS-04 | 004 | Sugestões sem perder foco, RBAC correto |
