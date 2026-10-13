@@ -108,7 +108,11 @@ const maquinasCorte = ref<MaquinaOpcao[]>([])
 const searchPecaText = ref('')
 const showAutocomplete = ref(false)
 const autocompleteContainerRef = ref<HTMLElement | null>(null)
-const loadingStep2 = ref(false)
+const loadingCatalogo = ref(false)
+const loadingMaquinas = ref(false)
+const loadingStep2 = computed(() => loadingCatalogo.value || loadingMaquinas.value)
+const errorCatalogo = ref('')
+const errorMaquinas = ref('')
 
 // ─── Inteligência Reativa (Passo 2 -> Passo 3) ──────────────────────────────
 const autoMaquinas = computed(() => {
@@ -241,25 +245,42 @@ function sanitizeCodigoProduto(event: Event) {
 
 // Passo 2: Carregar Catálogo e Opções de Máquinas
 async function loadStep2Data() {
-  loadingStep2.value = true
+  if (loadingStep2.value) return
+  await Promise.all([loadCatalogo(), loadMaquinas()])
+}
+
+async function loadCatalogo() {
+  loadingCatalogo.value = true
+  errorCatalogo.value = ''
   try {
-    const [catRes, maqRes] = await Promise.all([
-      api.get<CatalogoItem[]>('/catalogo-pecas'),
-      api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
-        api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
-      )
-    ])
-    catalogoPecas.value = catRes.data || []
-    maquinasCorte.value = (maqRes.data || []).map((m: any) => ({
+    const { data } = await api.get<CatalogoItem[]>('/catalogo-pecas')
+    catalogoPecas.value = data || []
+  } catch {
+    errorCatalogo.value = 'Não foi possível carregar o catálogo de peças.'
+  } finally {
+    loadingCatalogo.value = false
+  }
+}
+
+async function loadMaquinas() {
+  loadingMaquinas.value = true
+  errorMaquinas.value = ''
+  try {
+    const { data } = await api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
+      api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
+    )
+    maquinasCorte.value = (data || []).map((m: any) => ({
       id: m.id,
       label: m.label || m.valor,
       valor: m.valor
     }))
-  } catch (err) {
-    console.error('[loadStep2Data] Erro ao buscar catálogo/máquinas:', err)
-    addToast('error', 'Erro ao carregar catálogo de peças e máquinas.')
+    if (maquinasCorte.value.length === 0) {
+      errorMaquinas.value = 'Nenhuma máquina de corte disponível. Verifique a configuração dos subsetores.'
+    }
+  } catch {
+    errorMaquinas.value = 'Não foi possível carregar as máquinas de corte.'
   } finally {
-    loadingStep2.value = false
+    loadingMaquinas.value = false
   }
 }
 
@@ -681,24 +702,38 @@ function resetWizard() {
                 type="text"
                 v-model="searchPecaText"
                 @focus="showAutocomplete = true"
+                @input="showAutocomplete = true"
+                @keydown.esc="showAutocomplete = false"
                 placeholder="Buscar por número (ex: 026) ou nome (ex: GÁSPEA)..."
                 class="ac-input"
               />
             </div>
 
             <!-- Dropdown de Peças -->
-            <div v-if="showAutocomplete && filteredCatalogo.length > 0" class="ac-dropdown">
-              <div
-                v-for="item in filteredCatalogo"
+            <div v-if="showAutocomplete" class="ac-dropdown" aria-live="polite">
+              <div v-if="loadingCatalogo" class="ac-item">Carregando catálogo...</div>
+              <div v-else-if="errorCatalogo" class="ac-item">
+                <span>{{ errorCatalogo }}</span>
+                <button type="button" class="btn-secondary" @click="loadCatalogo">Tentar novamente</button>
+              </div>
+              <div v-else-if="filteredCatalogo.length === 0" class="ac-item">Nenhuma peça encontrada.</div>
+              <button
+                v-for="item in loadingCatalogo || errorCatalogo ? [] : filteredCatalogo"
+                type="button"
                 :key="item.id"
                 class="ac-item"
-                @mousedown.prevent="addPecaFromCatalogo(item)"
+                @click="addPecaFromCatalogo(item)"
               >
                 <span class="ac-badge">{{ item.numero }}</span>
                 <span class="ac-name">{{ item.nome }}</span>
                 <span v-if="item.codigoOriginal" class="ac-ref">Ref: {{ item.codigoOriginal }}</span>
-              </div>
+              </button>
             </div>
+          </div>
+
+          <div v-if="errorMaquinas" role="alert" class="pecas-empty">
+            <p>{{ errorMaquinas }}</p>
+            <button type="button" class="btn-secondary" @click="loadMaquinas" :disabled="loadingMaquinas">Tentar novamente</button>
           </div>
 
           <!-- Tabela de Peças Selecionadas -->
@@ -732,6 +767,7 @@ function resetWizard() {
                     </td>
                     <td>
                       <select v-model="p.setorCorteOpcaoId" class="maquina-select">
+                        <option disabled value="">Selecione a máquina</option>
                         <option v-for="m in maquinasCorte" :key="m.id" :value="m.id">
                           {{ m.label }}
                         </option>
@@ -758,7 +794,7 @@ function resetWizard() {
               <ArrowLeft :size="16" aria-hidden="true" />
               <span>Voltar ao Modelo</span>
             </button>
-            <button type="button" class="btn-primary" @click="submitPecasAndAdvance" :disabled="loadingStep2">
+            <button type="button" class="btn-primary" @click="submitPecasAndAdvance" :disabled="loadingStep2 || !!errorMaquinas">
               <Loader2 v-if="loadingStep2" :size="16" class="wiz-spinner" aria-hidden="true" />
               <span>Avançar para Rota</span>
               <ArrowRight v-if="!loadingStep2" :size="16" aria-hidden="true" />
@@ -1458,4 +1494,6 @@ function resetWizard() {
   font-weight: 600;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
+button.ac-item { width: 100%; border: 0; background: transparent; text-align: left; font: inherit; }
+button.ac-item:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
 </style>

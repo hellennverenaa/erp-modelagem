@@ -694,7 +694,7 @@ async function processarLeituraRfid() {
 
       if (fotoFile.value && ocorrenciaId) {
         const formData = new FormData()
-        formData.append('foto', fotoFile.value)
+        formData.append('file', fotoFile.value)
         await api.post(`/ocorrencias/${ocorrenciaId}/anexos`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })

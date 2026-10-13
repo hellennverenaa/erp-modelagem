@@ -1,18 +1,18 @@
 # IMPLEMENTATION_PLAN — ERP Modelagem
 
-**Estado:** planejamento atualizado: TASK-024 é a próxima proposta de implementação na branch `feature/task-024-modelo-rota-integrados`. A implementação de TASK-024 não começou. As implementações de ISS-02/03 estão publicadas em `feature/iss-02-03-wizard-model` e ainda precisam ser integradas à `main` antes de TASK-024.
+**Estado verificado em 2026-10-13:** a `main` local contém ISS-02/03 pelo PR #6, merge `0a0e590`. As TASK-006/011/013 estão integradas, com validação de aceite pendente. O PR #7, merge `b22b68e`, integrou somente planejamento de TASK-024; sua implementação não começou. TASK-024 depende de TASK-002/003 e do aceite de TASK-006/011/013. Nenhuma aprovação de PR ou estado remoto foi verificado nesta revisão documental.
 
 **Base do diagnóstico:** leitura estática do repositório e consulta local read-only ao PostgreSQL em 2026-10-09, schema `erp_modelagem`. O snapshot encontrou 4 modelos, 10 etapas de rota e 2 modelos sem rota; nenhuma das 2 ordens existentes estava ligada a esses modelos. Isso confirma que o cadastro independente produz modelos sem rota, mas não prova qual modelo foi selecionado no incidente. Nenhuma escrita ou migration foi executada. O caso de rota salva para o mesmo ID que não é lida ainda requer evidência do request.
 
-**Uso do plano:** nesta implementação, ISS-02 e ISS-03 ficam na mesma branch conforme instrução do usuário; arquivos centrais e migration são alterados em sequência. Mudanças fora desse escopo exigem outra TASK. O plano será atualizado no início e na conclusão, sem registrar cada subetapa.
+**Uso obrigatório do plano:** este arquivo é o registro ativo de execução para desenvolvedores e qualquer agente de IA, independentemente de fornecedor, modelo ou ferramenta. Ler a TASK, os gates e a seção 16 antes de alterar código. Atualizar documentação ao iniciar, mudar escopo/contrato, terminar uma entrega, interromper o trabalho e constatar integração ou validação. O documento distingue proposta, código implementado, integração e aceite; uma dimensão não comprova a outra. Não é necessário narrar cada edição. O planejamento histórico em `docs/plano_implementation.md` não substitui este registro.
 
-**Fluxo de Git obrigatório:** [`docs/GIT.md`](docs/GIT.md) é a referência para sincronização com `main`, Pull Request e revisão. A exceção autorizada para esta etapa é manter ISS-02 e ISS-03 na branch única `feature/iss-02-03-wizard-model`; o PR deverá ser aprovado pelo outro desenvolvedor antes do merge.
+**Fluxo de Git obrigatório:** [`docs/GIT.md`](docs/GIT.md) é a referência para sincronização com `main`, Pull Request e revisão. A exceção histórica autorizada foi manter ISS-02 e ISS-03 na branch única `feature/iss-02-03-wizard-model`, integrada pelo PR #6. Novas entregas seguem branches/PRs próprios e aprovação do outro desenvolvedor antes do merge; não presumir aprovação a partir da existência de um merge.
 
 ## 1. Visão geral
 
-O objetivo é fazer `Modelo → Peças → Rota → Ordem → Bipagem → Torre de Controle` usar regras e dados consistentes. O fluxo “Iniciar Novo Teste” terá quatro passos reversíveis e só gravará o conjunto ao finalizar. Cadastros individuais continuarão disponíveis.
+O objetivo é fazer `Modelo → Peças → Rota → Ordem → Bipagem → Torre de Controle` usar regras e dados consistentes. O fluxo “Iniciar Novo Teste” já mantém os quatro passos em rascunho e possui finalização transacional no código; a jornada e o rollback ainda aguardam aceite funcional. Cadastros individuais continuarão disponíveis.
 
-Os maiores riscos identificados são: gravações parciais no wizard; rota mutável do modelo usada por ordens existentes; ausência de SLA por etapa na rota; ligação indireta entre máquina da peça e setor; setores fixos na construção da rota e na bipagem; datas sem padrão explícito de timezone. O erro `ROTA_NOT_FOUND` foi localizado na leitura de `rota_modelo`, mas sua causa operacional ainda precisa de evidência do ambiente.
+Os maiores riscos remanescentes são: ausência de ensaio de rollback da finalização transacional do wizard; rota mutável do modelo usada por ordens existentes; ausência de SLA por etapa na rota; ligação indireta entre máquina da peça e setor; setores fixos na construção da rota e na bipagem; datas sem padrão explícito de timezone. O erro `ROTA_NOT_FOUND` foi localizado na leitura de `rota_modelo`, mas sua causa operacional ainda precisa de evidência do ambiente.
 
 Módulos envolvidos: modelos, catálogo e peças de modelo, configuração de setores, construtor de rota, ordens, bipagem, conferência/checklist, qualidade, TV de rastreamento, Torre de Controle, navegação e autenticação/RBAC. Risco geral **alto**, pois rota, ordem e rastreamento já contêm dados históricos e são consumidos por várias telas.
 
@@ -34,15 +34,16 @@ O frontend está em `frontend/src/views`, `components`, `router` e `api`. `Wizar
 
 O backend está em `backend/src/routes`, `controllers`, `services`, `entities` e `migrations`. `auth.service.ts`, `rbac.service.ts`, `websocket.service.ts`, `etiqueta.service.ts`, `email.service.ts` e `dossie.service.ts` existem; a maior parte das regras de modelo/rota/ordem/rastreamento permanece nos controllers. Repositórios são obtidos via `AppDataSource.getRepository(...)`; não há camada própria de repositories para esses agregados. `database.ts` usa `synchronize: false`; `server.ts` verifica migrations pendentes.
 
-Persistência atual do wizard:
+Persistência atual do wizard, conferida no código integrado pelo PR #6:
 
 ```text
-Passo 1: POST /admin/modelos                  → commit de Modelo
-Passo 2: POST /pecas/modelo/:modeloId          → delete + insert de Peças
-Passo 3: PUT  /rotas/:modeloId                 → delete + insert de RotaModelo em transação
-Passo 4: POST /ordens-teste                    → commit de OrdemTeste
-Depois:  POST /etiquetas/gerar                 → PDF
+Passos 1–2: identificação e peças            → rascunho no frontend
+Passo 3: RouteBuilder em modo wizard         → emite rota/SLA, sem PUT
+Passo 4: POST /ordens-teste/wizard            → modelo + peças + rota + OT em transação
+Depois:  POST /etiquetas/gerar                → PDF após commit
 ```
+
+`backend/src/services/novo-teste.service.ts` implementa a transação. Os endpoints individuais continuam disponíveis; o catálogo ainda permite criar modelo sem rota. TASK-024 mudará esse cadastro. O fluxo antigo gravava modelo, peças, rota e OT separadamente nos passos 1–4; ele é o diagnóstico histórico de ISS-02, não o comportamento atual do wizard.
 
 `POST /ordens-teste` conta linhas de `rota_modelo` para o `modeloId`. A OT guarda `modeloId`, planta, `possuiCaixaTeste` e `slasPorSetor` em JSONB, mas **não guarda uma cópia da rota**. Bipagem e TV leem a rota atual do modelo. A gestão de ordens e a TV também recebem `modelo.rotas` nas respostas de `/lotes`.
 
@@ -59,7 +60,7 @@ Principais tabelas e relações conforme entidades/migrations:
 | `checklists`, `inspecoes`, `ocorrencias_producao`, `retrabalhos`, `anexos` | Associadas à OT, setor ou rastreamento | Alimentam validações, histórico e KPIs |
 | `usuarios`, `perfis`, `perfil_permissoes` | Usuário com planta/perfil/setor; ação global ou por setor | UI e API têm guardas; preserve ambos |
 
-**Dados reais pendentes:** cardinalidades, registros órfãos, códigos não numéricos, ordens em andamento, rotas alteradas após criação de OT, SLAs históricos, setores por planta e timezone. Nenhuma migration deve ser aplicada antes do inventário read-only da TASK-001.
+**Dados reais:** o inventário local de 2026-10-09 está registrado abaixo e não representa automaticamente o ambiente de execução de outra entrega. Antes de DDL, conferir no ambiente alvo cardinalidades, órfãos, códigos/duplicatas, ordens em andamento, rotas, SLAs, setores por planta e timezone; ensaiar a migration em cópia. A revisão documental de 2026-10-13 não consultou o banco nem verificou migrations aplicadas.
 
 ## 3. Mapeamento dos módulos
 
@@ -114,6 +115,8 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 ### ISS-02 — Wizard grava parcialmente e não volta com segurança
 
+**Diagnóstico histórico anterior ao PR #6. Estado atual:** a persistência intermediária foi substituída por rascunho e endpoint transacional nas TASK-011/013. Os problemas descritos abaixo explicam a alteração; rollback e regressões ainda aguardam validação. A gravação individual de peças/modelo permanece um caminho separado.
+
 - **Problema / atual:** modelo, peças e rota são gravados nos passos 1–3; voltar ao passo 1 e avançar tenta criar outro modelo. Peças são substituídas por `delete` seguido de `save` sem transação conjunta.
 - **Esperado:** quatro passos editáveis e uma gravação atômica ao finalizar; cadastros individuais preservados.
 - **Causa raiz:** **confirmada no fluxo do wizard**. `submitModelo` chama `POST /admin/modelos` e persiste na etapa 1; `submitPecasAndAdvance` chama `POST /pecas/modelo/:id` e persiste na etapa 2; o `RouteBuilder` persiste via `PUT /rotas/:modeloId` na etapa 3; `submitOrdem` cria a OT via `POST /ordens-teste` na etapa 4. O botão de voltar da etapa 2 só muda `currentStep` para 1; ao avançar novamente, `submitModelo` faz outro POST, que colide com o código já criado (`MODELO_DUPLICATE_CODE`). Se o usuário alterar o código e tentar de novo, um segundo modelo é criado e o ID atual do wizard é substituído; o modelo original permanece sem associação à conclusão posterior. A persistência das peças faz `delete(modeloId)` e depois `save` sem transação, permitindo perda/subconjunto em erro entre operações. Não há endpoint de finalização do agregado nem rollback/compensação do wizard. A tela individual também salva o modelo e, depois, as peças em duas gravações sem transação; esse caminho precisa continuar funcional, mas sua falha parcial deve ser preservada na revisão de escopo do serviço comum. Os 2 modelos locais sem rota são compatíveis com cadastros incompletos, mas sua origem não pode ser atribuída ao wizard sem logs.
@@ -125,6 +128,8 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 - **Risco:** crítico.
 
 ### ISS-03 — Código do produto e Temporada
+
+**Diagnóstico histórico anterior ao PR #6. Estado atual:** schema numérico e retirada de Temporada dos formulários estão implementados em TASK-006; coluna histórica preservada. A migration de CHECK foi criada, mas sua aplicação não foi verificada nesta revisão. Unicidade concorrente continua pendente em ISS-14/TASK-025.
 
 - **Problema / atual:** código é texto sem regra numérica no Zod/DB; Temporada ainda é editável no wizard e no cadastro individual. O catálogo também exibe/busca valores históricos de temporada.
 - **Esperado:** código composto só por dígitos; Temporada removida do fluxo ativo sem perder valores antigos.
@@ -148,6 +153,8 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 - **Limitação de ISS-02/03:** as causas de código foram confirmadas por leitura estática; a associação dos 2 modelos sem rota a abandono do wizard não foi inferida. As contagens descrevem apenas a base local consultada.
 
 ### ISS-04 — Busca de peça às vezes não apresenta sugestões
+
+**Atualização 2026-10-13:** TASK-004 implementada localmente: leitura para permissão de catálogo ou Novo Teste, cargas independentes e estados da busca. O diagnóstico abaixo descreve a base anterior; aceite funcional e integração pendentes.
 
 - **Problema / atual:** wizard busca todo o catálogo uma vez; filtro local depende dessa carga. GET interno exige `TELA_CATALOGO_PECAS`, mesmo para perfil que pode abrir o wizard; falha de uma das duas chamadas do `Promise.all` impede atribuir ambas as listas.
 - **Esperado:** resultado durante a digitação, com estados de carregamento, vazio e erro claros.
@@ -233,6 +240,8 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 ### ISS-11 — Ordem do menu, breadcrumb e perfil
 
+**Atualização 2026-10-13:** TASK-005 implementada localmente: rota antes de ordens, perfil/logout na sidebar e retirada da barra superior. Diagnóstico abaixo é anterior à entrega; validação visual/login/logout e integração pendentes.
+
 - **Problema / atual:** Gestão de Ordens aparece antes de Construtor de Rota; breadcrumb e perfil/logout ocupam a barra superior.
 - **Esperado:** navegação coerente, sem breadcrumb superior, perfil/logout no rodapé da sidebar expandida/recolhida.
 - **Causa raiz:** layout e lista de links em `DashboardView.vue` refletem organização anterior.
@@ -257,6 +266,8 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 ### ISS-13 — Lacunas de integração auxiliares
 
+**Atualização 2026-10-13:** TASK-021A alinha localmente a foto de ocorrência ao campo `file`; upload autenticado e integração pendentes. Endpoint de anexo de inspeção e módulos simulados continuam sem correção.
+
 - **Problema / atual:** foto de ocorrência é enviada no campo `foto`, rota espera `file`; upload de inspeção chama endpoint ausente; `/corte` e `/apoio` contêm respostas simuladas e não são consumidores identificados da tela operacional.
 - **Esperado:** telas ativas têm contratos reais; mocks não são apresentados como produção integrada.
 - **Causa raiz:** contratos frontend/backend divergentes e módulos auxiliares ainda parciais.
@@ -267,9 +278,15 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 - **Dependências:** TASK-021, TASK-022; não ampliar escopo sem TASK específica.
 - **Risco:** médio.
 
+### ISS-14 — Código do produto sem garantia de unicidade concorrente
+
+- **Observado em 2026-10-13:** `Modelo` e migrations não declaram unicidade de `codigo_produto`. `admin.controller.ts` e `novo-teste.service.ts` consultam duplicidade antes de inserir; duas transações podem passar pela consulta. A migration numérica adiciona somente CHECK, sem impedir duplicatas.
+- **Esperado:** a regra de código único deve ser garantida pelo banco, com erro de conflito consistente nos caminhos individual e agregado.
+- **Dependências / responsável:** TASK-025; responsável não definido. **Risco:** alto para integridade e compatibilidade histórica. Nenhuma correção de código ou DDL foi feita nesta revisão.
+
 ## 6. Plano de implementação por etapas
 
-**Convenção:** a marcação `[x] Não iniciado` significa que nenhuma implementação da TASK ocorreu. Diagnóstico estático deste plano não equivale a teste ou auditoria de dados. `Pode ser executada em paralelo` pressupõe branches/worktrees separados, responsáveis diferentes, nenhum arquivo crítico em comum e dependências já integradas. Cada TASK tem um dono exclusivo. Os nomes dos novos arquivos e endpoints são propostas a confirmar em TASK-003.
+**Convenção:** a marcação `[x] Não iniciado` significa que nenhuma implementação da TASK ocorreu. Diagnóstico estático deste plano não equivale a teste ou auditoria de dados. `Integrado — validação pendente` registra código na `main` sem comprovar aceite e não libera automaticamente sucessoras. `Concluído` exige os critérios da seção 16. `Pode ser executada em paralelo` pressupõe branches/worktrees separados, responsáveis diferentes, nenhum arquivo crítico em comum e dependências já integradas. Cada TASK tem um dono exclusivo. Os nomes dos novos arquivos e endpoints são propostas a confirmar em TASK-003.
 
 ### FASE 0 — Evidência e decisões de domínio
 
@@ -277,7 +294,7 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 **Status:** [ ] Não iniciado · [ ] Em andamento · [ ] Em revisão · [x] Concluído (inventário read-only e causa arquitetural; caso de rota salva com mesmo ID não reproduzido) · [ ] Bloqueado
 
-**Responsável:** Codex · **Branch:** análise registrada no plano · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `IMPLEMENTATION_PLAN.md`
+**Responsável:** Codex · **Branch:** análise registrada no plano · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** diagnóstico presente na `main` local em `b22b68e`; hash de introdução não verificado · **Arquivos alterados:** `IMPLEMENTATION_PLAN.md`
 
 - **Objetivo:** seguir um caso real de `PUT /rotas/:modeloId` até o `POST /ordens-teste`; comparar IDs, base/schema, linhas e respostas. Levantar contagens de modelos, rotas, peças, OTs em andamento, órfãos, códigos não numéricos, `temporada`, SLAs e timestamps. Inspecionar permissões, setor/planta e rotas históricas sem alterar registros.
 - **Arquivos prováveis:** frontend `RouteBuilder.vue`, `WizardCriacaoTesteView.vue`, `GestaoOrdensView.vue`; backend `rotas.controller.ts`, `lotes.controller.ts`, `config/database.ts`, entidades; banco `modelos`, `pecas`, `rota_modelo`, `ordens_teste`, `rastreamentos`, `setores` (somente SELECT). Registrar consultas e resultados agregados neste plano, sem dados pessoais.
@@ -313,36 +330,40 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-004 — Corrigir busca do catálogo no wizard
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+**Status:** [ ] Não iniciado · [ ] Em andamento · [x] Em revisão · [ ] Concluído · [ ] Bloqueado
 
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
+**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/WizardCriacaoTesteView.vue`, `backend/src/routes/pecas.routes.ts`
 
 - **Objetivo:** desacoplar cargas, alinhar RBAC da busca com uso permitido no wizard, mostrar sugestões durante digitação/foco, tratar loading/vazio/erro, respostas atrasadas e seleção.
 - **Arquivos prováveis:** frontend `frontend/src/views/WizardCriacaoTesteView.vue`; backend `backend/src/routes/pecas.routes.ts`; banco leitura `catalogo_pecas`.
 - **Dependências:** nenhuma para correção isolada; usar achados da TASK-001 se disponíveis. **Paralelo:** sim, com TASK-001/002/003/005; **não** com TASK-013 ou TASK-007 se estas alterarem `pecas.routes.ts`. **Risco:** médio.
 - **Aceite:** sugestões mudam ao digitar sem blur/refocus; seleção e acesso autorizado funcionam; erro de outra carga não apaga resultados. **Testes necessários:** digitação rápida, foco, vazio, permissão, busca de vários termos, cadastro individual de catálogo. **Rollback:** reverter branch/commit sem alterar DB.
 
+- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em revisão até integração/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
+
 #### TASK-005 — Reorganizar sidebar e layout
 
-**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+**Status:** [ ] Não iniciado · [ ] Em andamento · [x] Em revisão · [ ] Concluído · [ ] Bloqueado
 
-**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
+**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/DashboardView.vue`
 
 - **Objetivo:** ordenar navegação conforme dependências reais e páginas existentes; retirar breadcrumb; mover nome, perfil e sair ao rodapé da sidebar; adaptar estado recolhido/mobile sem alterar RBAC.
 - **Arquivos prováveis:** frontend `frontend/src/views/DashboardView.vue`, estilos locais e, apenas se necessário, `frontend/src/router/index.ts`; backend/banco nenhum.
 - **Dependências:** nenhuma. **Paralelo:** sim, com TASK-001/004; não com outra tarefa que altere `DashboardView.vue`. **Risco:** baixo/médio.
 - **Aceite:** menu reflete fluxo, perfis veem mesmas permissões, logout funciona, nenhum vazio no topo, responsivo. **Testes necessários:** desktop/mobile, sidebar aberta/fechada, login/logout e perfis. **Rollback:** reverter commit visual.
 
+- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em revisão até integração/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
+
 #### TASK-006 — Validar código numérico e retirar Temporada do uso ativo
 
-**Status:** [ ] Não iniciado · [ ] Em andamento · [ ] Em revisão · [x] Concluído (implementação local; aguardando aceite para commit/PR) · [ ] Bloqueado
+**Status:** Integrado — validação pendente (PR #6 na `main`; critérios de aceite ainda não comprovados)
 
-**Responsável:** Codex · **Branch:** `feature/iss-02-03-wizard-model` · **Commit:** — (aguardando aceite do usuário) · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/GestaoModelosView.vue`, `frontend/src/views/WizardCriacaoTesteView.vue`, `backend/src/controllers/admin.controller.ts`, `backend/src/schemas/modelo.schema.ts`, `backend/src/migrations/1791456500000-AddNumericProductCodeCheck.ts`
+**Responsável:** Codex · **Branch:** `feature/iss-02-03-wizard-model` · **Commits da entrega:** `a120995` (código/Temporada), `80d377f` (wizard transacional) · **PR:** [#6](https://github.com/hellennverenaa/erp-modelagem/pull/6) · **Revisor/aprovação:** não verificados · **Merge:** `0a0e590` · **Arquivos alterados:** `frontend/src/views/GestaoModelosView.vue`, `frontend/src/views/WizardCriacaoTesteView.vue`, `backend/src/controllers/admin.controller.ts`, `backend/src/schemas/modelo.schema.ts`, `backend/src/migrations/1791456500000-AddNumericProductCodeCheck.ts`
 
 - **Objetivo:** aplicar `^[0-9]+$` no backend e nas duas telas de modelo; fazer a migration interromper sem alterações se houver código histórico incompatível; retirar `temporada` de formulários/DTO novo mantendo coluna/dados antigos e o consumo histórico por e-mail. Preservar zeros à esquerda como texto.
 - **Arquivos prováveis:** frontend `GestaoModelosView.vue`, `WizardCriacaoTesteView.vue`; backend `admin.controller.ts`, possível schema compartilhado; banco `modelos`, migration de `CHECK` apenas se dados conformes.
 - **Dependências:** TASK-001; contrato específico desta mudança está registrado na seção 12. O contrato geral de dados continua em TASK-003. **Paralelo:** somente com TASK-005 ou outra sem wizard/admin/migrations. **Risco:** alto para dados legados.
-- **Aceite:** cadastros individuais e wizard rejeitam letras de modo igual; históricos são preservados/identificados; Temporada some das entradas. **Testes necessários:** criação/edição, zeros à esquerda, código legado, unicidade, API direta. **Rollback:** manter coluna e remover constraint nova se necessário; não apagar dados.
+- **Aceite:** cadastros individuais e wizard rejeitam letras de modo igual; históricos são preservados/identificados; Temporada some das entradas. **Testes necessários:** criação/edição, zeros à esquerda, código legado, rejeição de duplicidade em requisições sequenciais e API direta. A garantia concorrente pertence à TASK-025. **Rollback:** manter coluna e remover constraint nova se necessário; não apagar dados.
 
 ### FASE 2 — Identidade da peça e rota persistente
 
@@ -394,9 +415,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-011 — Finalização transacional do Novo Teste
 
-**Status:** [ ] Não iniciado · [ ] Em andamento · [ ] Em revisão · [x] Concluído (implementação local; aguardando aceite para commit/PR) · [ ] Bloqueado
+**Status:** Integrado — validação pendente (PR #6 na `main`; critérios de aceite ainda não comprovados)
 
-**Responsável:** Codex · **Branch:** `feature/iss-02-03-wizard-model` · **Commit:** — (aguardando aceite do usuário) · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `backend/src/controllers/lotes.controller.ts`, `backend/src/routes/lotes.routes.ts`, `backend/src/schemas/novo-teste.schema.ts`, `backend/src/services/novo-teste.service.ts`
+**Responsável:** Codex · **Branch:** `feature/iss-02-03-wizard-model` · **Commits da entrega:** `a120995` (código/Temporada), `80d377f` (wizard transacional) · **PR:** [#6](https://github.com/hellennverenaa/erp-modelagem/pull/6) · **Revisor/aprovação:** não verificados · **Merge:** `0a0e590` · **Arquivos alterados:** `backend/src/controllers/lotes.controller.ts`, `backend/src/routes/lotes.routes.ts`, `backend/src/schemas/novo-teste.schema.ts`, `backend/src/services/novo-teste.service.ts`
 
 - **Objetivo:** endpoint agregado para validar e criar modelo, peças, rota e ordem em uma transação. O escopo atual usa as tabelas e relacionamentos existentes; o snapshot da rota, vínculo de catálogo e correção do incidente ISS-01 continuam em TASKs separadas. Geração da etiqueta ocorre depois do commit.
 - **Arquivos prováveis:** `backend/src/routes/lotes.routes.ts`, `backend/src/controllers/lotes.controller.ts`, novo schema/service, `admin.controller.ts` para regra de código e `RouteBuilder.vue` apenas para emitir o rascunho; banco: tabelas existentes, mais constraint aditiva do código em TASK-006.
@@ -416,9 +437,9 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-013 — Tornar o wizard reversível e persistir só ao finalizar
 
-**Status:** [ ] Não iniciado · [ ] Em andamento · [ ] Em revisão · [x] Concluído (implementação local; aguardando aceite para commit/PR) · [ ] Bloqueado
+**Status:** Integrado — validação pendente (PR #6 na `main`; critérios de aceite ainda não comprovados)
 
-**Responsável:** Codex · **Branch:** `feature/iss-02-03-wizard-model` · **Commit:** — (aguardando aceite do usuário) · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/WizardCriacaoTesteView.vue`, `frontend/src/components/RouteBuilder.vue`
+**Responsável:** Codex · **Branch:** `feature/iss-02-03-wizard-model` · **Commits da entrega:** `a120995` (código/Temporada), `80d377f` (wizard transacional) · **PR:** [#6](https://github.com/hellennverenaa/erp-modelagem/pull/6) · **Revisor/aprovação:** não verificados · **Merge:** `0a0e590` · **Arquivos alterados:** `frontend/src/views/WizardCriacaoTesteView.vue`, `frontend/src/components/RouteBuilder.vue`
 
 - **Objetivo:** manter agregado temporário no frontend pelos quatro passos; avançar, voltar e editar sem chamadas de gravação; revisar tudo no passo 4 e finalizar no endpoint atômico. Tratar perda de sessão, retry e saída com rascunho local apenas se aprovado em contrato.
 - **Arquivos prováveis:** frontend `views/WizardCriacaoTesteView.vue`, `components/RouteBuilder.vue` se integração exigir, serviço de API específico; backend endpoint TASK-011; banco somente no POST final.
@@ -440,7 +461,7 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 - **Banco:** `modelos`, `pecas`, `rota_modelo`, `ordens_teste`. Não adicionar coluna booleana duplicando a existência da rota e não remover registros históricos. A relação permanece derivada das etapas existentes em `rota_modelo`; migration somente se a implementação revelar necessidade comprovada.
 - **Arquivos prováveis:** frontend `views/GestaoModelosView.vue`, `components/RouteBuilder.vue`, `views/GestaoOrdensView.vue`; backend `controllers/admin.controller.ts`, `controllers/rotas.controller.ts`, `controllers/lotes.controller.ts`, rotas correspondentes, schema e serviço agregado. Reservar os arquivos centrais, sem edição paralela.
 - **Contrato proposto a congelar na TASK-003:** novo `POST /admin/modelos/configuracao-completa`, request `{ modelo, pecas, rota }`, response `{ modelo, pecas, rota }` somente após commit. Consulta própria para as opções de modelo na criação de OT, baseada em modelo ativo, ausência de ordem existente e rota presente. Confirmar os nomes e formatos usando os handlers reais antes de codificar.
-- **Dependências:** TASK-003; integração das TASK-006/011/013 na `main`; diagnóstico de prontidão da TASK-001. **Paralelo:** não com TASK-009/011/012/013 nem com outra alteração em modelos, rota ou criação de ordens. **Risco:** alto.
+- **Dependências:** TASK-002/003; integração com aceite das TASK-006/011/013 na `main`; diagnóstico de prontidão da TASK-001. **Paralelo:** não com TASK-009/011/012/013 nem com outra alteração em modelos, rota ou criação de ordens. **Risco:** alto.
 - **Critérios de aceite:** (1) cadastro novo não gera linha de modelo antes da conclusão da rota; (2) erro em qualquer etapa não deixa modelo/peças/rota parciais; (3) o `RouteBuilder` confirma o rascunho sem gravar antes da conclusão; (4) a ordem não oferece modelos sem rota e a API também bloqueia chamadas diretas; (5) modelos históricos sem rota continuam acessíveis, sem exclusão, e passam a ser elegíveis depois de configurar a rota; (6) edição independente de modelo/rota e criação do Novo Teste continuam funcionando.
 - **Testes necessários:** criar agregado e reler a rota; injetar falha em cada gravação e conferir rollback; chamada direta aos endpoints legados; seleção de modelo sem rota; concluir rota de modelo histórico; criar ordem com/sem rota; regressão do wizard e dos cadastros de edição. **Rollback:** reverter frontend/API sem apagar dados; preservar endpoints de leitura e rota existentes; não executar DDL destrutivo.
 
@@ -525,6 +546,26 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 - **Dependências:** TASK-019/013/018 para evitar edição simultânea das telas. **Paralelo:** sim, com TASK-022 se nenhum arquivo comum. **Risco:** médio/alto.
 - **Aceite:** criação/visualização coerentes em duas zonas; OT antiga permanece como valor histórico interpretado conforme decisão. **Testes necessários:** Bahia, UTC, outra zona, virada de dia, editar prazo, exportações/etiquetas se mostram datas. **Rollback:** reverter conversor frontend mantendo contrato backend compatível.
 
+#### TASK-021A — Corrigir campo da foto de ocorrência
+
+**Status:** Em revisão (PR #8 aberto; upload autenticado pendente) · **Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8)
+
+- **Escopo:** somente alinhar o FormData da ocorrência ao `upload.single('file')` existente. Arquivo: `frontend/src/views/BipagemView.vue`. Não implementar anexos de inspeção nem mudar armazenamento/permissões.
+- **Exceção de dependência (2026-10-13):** antecipada em relação à TASK-015 por autorização do usuário para as três correções locais; não altera o fluxo de execução da OT. TASK-021 permanece não iniciada para o restante do escopo; reservar BipagemView sem edição concorrente.
+- **Aceite:** foto enviada no campo `file`, upload/leitura autorizados e rejeição sem permissão. Build frontend e conferência do contrato; teste autenticado de upload ainda necessário. Rollback: reverter a mudança do campo, sem remover anexos. Risco baixo.
+
+### TASK-025 — Garantir unicidade concorrente do código do produto
+
+**Status:** [x] Não iniciado · [ ] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+
+**Responsável:** Não definido · **Branch:** — · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** —
+
+- **Objetivo:** inventariar duplicatas no ambiente alvo e implementar unicidade no banco para `modelos.codigo_produto`, preservando texto e zeros à esquerda. Não apagar nem alterar códigos históricos automaticamente; se houver conflito, registrar decisão de compatibilidade antes da migration. Traduzir violação de unicidade para HTTP 409 / `MODELO_DUPLICATE_CODE` nos endpoints individual e agregado.
+- **Arquivos prováveis:** `backend/src/entities/Modelo.ts`, migration nova, `controllers/admin.controller.ts`, `services/novo-teste.service.ts` e serviço agregado de TASK-024 se já existir.
+- **Dependências:** inventário TASK-001 atualizado para o ambiente alvo e código TASK-006/011 integrado; contrato específico de unicidade registrado antes do DDL. Pode preceder TASK-024, mas não executar em paralelo com ela ou outra migration/alteração nos mesmos handlers.
+- **Aceite / testes:** duas criações concorrentes com mesmo código resultam em um único modelo e conflito 409 para a outra; no wizard a tentativa rejeitada não deixa peças/rota/OT parciais. Validar ambos os caminhos, zeros à esquerda e migration up/down em cópia.
+- **Rollback:** remover somente a constraint/índice novo e reverter tratamento de erro se necessário; preservar registros. **Risco:** alto. Correção planejada, ainda não implementada.
+
 ### FASE 6 — Contratos auxiliares e aceitação
 
 #### TASK-021 — Corrigir contratos de anexos ativos
@@ -557,7 +598,7 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 - **Objetivo:** percorrer modelo→peças→rota→OT→bipagem→Torre em banco de teste com casos novos e históricos; fechar checklist protegido, contrato e rollback operacional. Registrar pendências como TASKs novas.
 - **Arquivos prováveis:** documentação, fixtures e testes específicos; código somente para defeito novo registrado em outra TASK; banco de teste.
-- **Dependências:** TASK-004 a TASK-022 concluídas/integradas ou exceção documentada. **Paralelo:** não com mudanças de contrato. **Risco:** alto.
+- **Dependências:** TASK-004 a TASK-022, TASK-024 e TASK-025 concluídas/integradas com aceite ou exceção documentada por critério e risco. **Paralelo:** não com mudanças de contrato. **Risco:** alto.
 - **Aceite:** critérios do pedido original rastreados como aprovados, falhos ou bloqueados com evidência; nenhum dado histórico perdido. **Testes necessários:** matriz da seção 13. **Rollback:** reverter release por versão compatível e migrations aditivas preservadas.
 
 ## 7. Ordem obrigatória das dependências
@@ -571,15 +612,18 @@ Modelo → Peças → Rota do modelo/versionada → Ordem + snapshot
 | Gate | Tarefas que liberam | Tarefas bloqueadas até integrar o gate |
 |---|---|---|
 | Evidência de dados/erro | TASK-001 | TASK-002/003/006/007/008/009/010/019 |
-| Decisão operacional e contrato | TASK-002 + TASK-003 | TASK-007/008 e regra Bordado/Apoio; TASK-009/010/011/012/014 |
-| Peça e rota persistente | TASK-007 + TASK-008 + TASK-009 | TASK-010/011/012 e consumidores posteriores |
-| Ordem com snapshot | TASK-010 | TASK-011/014/016/017/019 |
-| Finalização e construtor | TASK-004 + TASK-006 + TASK-011 + TASK-012 | TASK-013 |
-| Cadastro integrado de modelo com rota | TASK-003 e integração de TASK-006/011/013 na `main` | TASK-024 |
+| Decisão operacional e contrato | TASK-002 + TASK-003 | TASK-007/008 e regra Bordado/Apoio; TASK-009/010/012/014/024 |
+| Peça e rota persistente | TASK-007 + TASK-008 + TASK-009 | TASK-010/012 e consumidores posteriores |
+| Ordem com snapshot | TASK-010 | TASK-014/016/017/019; adaptação futura de TASK-011 ao snapshot |
+| Wizard no contrato atual (exceção de escopo) | TASK-001 + TASK-006 + TASK-011 | TASK-013; TASK-004/012 continuam pendentes e não integram seu aceite atual |
+| Cadastro integrado de modelo com rota | TASK-002/003 e integração com aceite de TASK-006/011/013 na `main` | TASK-024 |
+| Código único em concorrência | inventário alvo TASK-001 e código TASK-006/011 integrado | TASK-025; aceite final de unicidade |
 | Execução operacional | TASK-014 | TASK-015/017/022 |
 | Torre confiável | TASK-017 + TASK-016 | TASK-018 |
 | Horário padronizado | TASK-019 + TASK-013 + TASK-018 | TASK-020 |
-| Integração completa | TASK-004…TASK-022 | TASK-023 |
+| Integração completa | TASK-004…TASK-022 + TASK-024 + TASK-025, com aceite | TASK-023 |
+
+**Exceção histórica de ISS-02/03:** TASK-011 foi implementada sobre tabelas existentes, sem esperar versionamento/snapshot de TASK-007…010; TASK-013 limitou o RouteBuilder a rascunho, sem esperar TASK-004/012. Essa exceção não conclui as tarefas adiadas nem autoriza alterar regras operacionais pendentes. Os gates acima refletem esse escopo; ao integrar snapshot/novo contrato, registrar nova subentrega e revisar serviço, consumidores e testes.
 
 `TASK-004` e `TASK-005` são isoláveis desde o início. Dependência significa **TASK concluída, commit integrado na branch base e contrato conferido**, não só código local. Uma nova necessidade de schema ou contrato reabre o gate correspondente, em vez de fazer alterações fora da TASK.
 
@@ -605,9 +649,9 @@ Modelo → Peças → Rota do modelo/versionada → Ordem + snapshot
 | Arquivo ou conjunto | Módulo | Tarefa(s) | Responsável | Pode alterar simultaneamente? |
 |---|---|---|---|---|
 | `IMPLEMENTATION_PLAN.md` | Coordenação | Todas, updates seriais | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `backend/src/migrations/*`, entidades novas | Banco | 006/007/008/010/014/017/019 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `backend/src/entities/{Modelo,Peca,RotaModelo,OrdemTeste,Rastreamento}.ts` | Domínio | 006–010/014/019 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `backend/src/controllers/admin.controller.ts` | Modelos/peças | 006/007/011/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/migrations/*`, entidades novas | Banco | 006/007/008/010/014/017/019/025 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/entities/{Modelo,Peca,RotaModelo,OrdemTeste,Rastreamento}.ts` | Domínio | 006–010/014/019/025 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/controllers/admin.controller.ts` | Modelos/peças | 006/007/011/024/025 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/controllers/rotas.controller.ts` | Rota | 009/011/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/controllers/lotes.controller.ts` | Ordem | 009/010/011/019/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/controllers/rastreamentos.controller.ts` | Operação | 014 | Não definido | **NÃO ALTERAR EM PARALELO** |
@@ -617,10 +661,11 @@ Modelo → Peças → Rota do modelo/versionada → Ordem + snapshot
 | `frontend/src/views/WizardCriacaoTesteView.vue` | Wizard | 004/006/007/013 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/components/RouteBuilder.vue` | Rota | 012/013/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/views/GestaoModelosView.vue` | Catálogo de Modelos | 006/024 | Não definido | **NÃO ALTERAR EM PARALELO** |
-| `frontend/src/views/BipagemView.vue` | Operação | 015/021 | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `frontend/src/views/BipagemView.vue` | Operação | 015/021/021A | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/views/DashboardGerencialView.vue` | Torre | 018/020 se data | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/views/{GestaoOrdens,RastreamentoOrdem,DashboardView}.vue` | Ordem/TV/layout | 005/016/020 conforme arquivo | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `frontend/src/api/{axios,auth.store}.ts`, `frontend/src/router/index.ts` | HTTP/sessão/rotas | Só TASK explicitamente relacionada | Não definido | **NÃO ALTERAR EM PARALELO** |
+| `backend/src/services/novo-teste.service.ts` e serviço agregado de modelo quando existir | Agregados | 011/024/025 e adaptação futura ao snapshot | Não definido | **NÃO ALTERAR EM PARALELO** |
 | `backend/src/services/{auth,rbac,websocket}.service.ts` | Infraestrutura | 017 apenas websocket, demais protegidos | Não definido | **NÃO ALTERAR EM PARALELO** |
 
 **Partes protegidas sem TASK específica:** autenticação JWT, tabelas/permissões RBAC, emissão de etiquetas, dossiê, exclusão de dados antigos e endpoints de cadastro individuais. Só tocá-las quando um teste demonstrar dependência e a alteração estiver registrada na TASK ou em nova TASK.
@@ -643,6 +688,7 @@ O procedimento de [`docs/GIT.md`](docs/GIT.md) prevalece para Git. Cada entrega 
 
 | Tabela atual | Alteração proposta e motivo | Impacto/compatibilidade | Migration/rollback |
 |---|---|---|---|
+| `modelos.codigo_produto` (unicidade) | TASK-025 propõe constraint/índice único após inventário de duplicatas | Consulta prévia não garante unicidade concorrente; HTTP 409 consistente nos caminhos individual/agregado | Migration ainda não criada; ensaio em cópia e nenhuma deduplicação automática |
 | `modelos.codigo_produto` (`varchar`) | Validar dígitos no frontend/API e adicionar `CHECK (codigo_produto ~ '^[0-9]+$')` pela migration `1791456500000-AddNumericProductCodeCheck` | Zeros à esquerda preservados. A migration conta históricos não numéricos e aborta sem alterar dados se encontrar algum; a base local analisada tinha 0 | Migration aditiva, não executada nesta implementação; rollback remove somente a constraint nova |
 | `modelos.temporada` | Parar de escrever/mostrar em formulários; manter coluna inicialmente | Valores históricos continuam disponíveis; checar relatórios antes de eventual descontinuação | Nenhuma remoção nesta demanda; eventual drop é outra TASK com migração/rollback próprios |
 | `pecas` | `catalogo_peca_id` nullable com FK/índice, se identidade não existir em outra coluna; preservar `setor_corte_opcao_id` | Peças legadas sem correspondência permanecem com nome e setor; backfill só em pares inequívocos | Adicionar FK/índice, leitura dual; rollback de aplicação sem apagar coluna preenchida |
@@ -679,20 +725,23 @@ O procedimento de [`docs/GIT.md`](docs/GIT.md) prevalece para Git. Cada entrega 
 
 ## 13. Testes de regressão
 
-Nenhum teste ou build foi executado durante a criação deste plano. O repositório não tem lint configurado; `backend npm test` é placeholder, e o build do frontend faz checagem de tipos e bundle. Na implementação, criar testes automatizados relevantes para serviços/transações/contratos alterados e registrar comandos/resultados reais. Se um script não existir, marcar **N/A com motivo**, não “aprovado”. Ensaiar migrations em cópia dos dados.
+Nenhum teste ou build foi executado durante a criação original deste plano; resultados da implementação posterior estão separados na seção 19. O repositório não tem lint configurado; `backend npm test` é placeholder, e o build do frontend faz checagem de tipos e bundle. Na implementação, criar testes automatizados relevantes para serviços/transações/contratos alterados e registrar comandos/resultados reais. Se um script não existir, marcar **N/A com motivo**, não “aprovado”. Ensaiar migrations em cópia dos dados.
 
 | Ao concluir | Testar alteração | Regressão cruzada obrigatória |
 |---|---|---|
 | TASK-004/005/006 | Busca, sidebar, código/Temporada | Cadastro individual, login, perfis, navegação desktop/mobile, wizard não finalizado |
 | TASK-007/008/009 | Peça↔catálogo/subsetor e save/read da rota | Modelo/peça individual, rota antiga, criar OT com rota, OT antiga, duas plantas, tempo de cada etapa |
-| TASK-010/011 | Snapshot e finalização atômica | CRUD individual, falha no passo 1/2/3/4, duplicidade/retry, rota editada após OT, etiqueta, auditoria |
+| TASK-010 | Snapshot | CRUD individual, rota editada após OT, leitura de OT antiga, etiqueta e auditoria |
+| TASK-011 (escopo atual) | Finalização atômica em tabelas existentes | Falha/rollback em cada gravação, releitura, duplicidade/retry conforme contrato sem idempotência durável, RBAC, etiqueta e CRUD individual; estabilidade após editar rota depende de TASK-010 |
 | TASK-012/013 | Construtor e wizard | Quatro passos avançar/voltar, saída antes de finalizar sem escrita, setores de corte, Serigrafia/Telas, criar OT, cadastro isolado |
 | TASK-024 | Criação integrada de modelo, peças e rota | Falha em cada etapa e rollback; modelo sem rota bloqueado pela UI e API; modelos históricos preservados; edição de rota e criação de OT sem regressão |
 | TASK-014/015/016 | Backend/UI bipagem e TV | OT sem/com Serigrafia, rota com Bordado, setor repetido, caixa de teste, crachá, RBAC, checklist, inspeção, retrabalho, OT antiga |
 | TASK-017/018 | Agregações e UX da Torre | Comparar KPIs com SQL, planta/período, evento Socket.IO, ocorrências, qualidade, filtros, carga, responsividade, TV |
 | TASK-019/020 | Datas | Persistir/ler em UTC, exibir em Bahia e outro fuso, virada de dia, prazos, OT antiga, etiqueta/exportação se consumir data |
+| TASK-021A | Campo da foto de ocorrência | Upload/leitura autorizados, rejeição sem permissão; não inclui anexo de inspeção |
 | TASK-021/022 | Anexos e mocks | Permissões, upload/leitura, falha, vínculo com OT/inspeção, ausência de dados fictícios em tela ativa |
-| TASK-023 | Jornada completa | Checklist da seção 4 e critérios do pedido, OTs novas/históricas, dados íntegros e contratos versionados |
+| TASK-025 | Código único no banco e erro de conflito | Concorrência nos endpoints individual/agregado, rollback integral, códigos históricos e zeros à esquerda |
+| TASK-023 | Jornada completa, incluindo TASK-024/025 | Checklist da seção 4 e critérios do pedido, OTs novas/históricas, dados íntegros e contratos versionados |
 
 Para cada falha, registrar reprodução, causa, TASK responsável e resultado após correção. Não “corrigir junto” fora da TASK autorizada. Critério de regressão inclui verificar ausência de escrita quando o wizard é abandonado e preservação de ordens antigas após alteração da rota do modelo.
 
@@ -725,9 +774,42 @@ Para cada falha, registrar reprodução, causa, TASK responsável e resultado ap
 
 ## 16. Regra de atualização contínua do plano
 
-Ao iniciar: `Status: Em andamento`, `Responsável: nome/dev`, `Branch: nome-da-branch`, data e arquivos reservados. Ao concluir: `Status: Concluído`, `Commit: hash`, `PR: link`, `Revisor: nome`, `Aprovação: data`, `Merge: hash`, arquivos alterados, testes executados/resultados, migração/rollback realizados e evidência de aceite. Enquanto o PR aguarda aprovação, registrar `Status: Em revisão`; só marcar `Concluído` após o merge na `main`. Ao bloquear: `Status: Bloqueado`, motivo, dado ou decisão faltante, impacto nas sucessoras. Apenas uma pessoa edita este arquivo por vez; a outra atualiza após a primeira integrar sua alteração.
+Estas regras são obrigatórias para qualquer desenvolvedor ou agente de IA trabalhando neste repositório. Não dependem da memória da conversa ou da ferramenta utilizada.
 
-Novo problema recebe um novo ID `ISS-XX` e nova `TASK-XXX`, com dependências, dono e risco, **antes** de alteração de código. Se a causa raiz mudar, atualizar diagnóstico, contrato, banco e testes afetados. Não apagar histórico de decisões; registrar data, decisão, evidência e consequência. Se uma TASK exceder os arquivos previstos, registrar extensão e colisões antes de prosseguir.
+1. **Antes de implementar:** ler `AGENTS.md`, `docs/GIT.md`, a TASK, gates, contratos e regressões. Comparar o plano com código e histórico local. Registrar divergências; evidência do repositório prevalece sobre status antigo. Não começar sucessora com gate pendente sem exceção explícita de escopo e risco.
+2. **Ao iniciar:** registrar data, responsável (dev e agente quando aplicável), branch, escopo e arquivos reservados. Não registrar uma branch ou sincronização remota que não foi criada/verificada. Atualizações documentais podem ser preparadas no checkout atual; commit/integração seguem o fluxo de PR.
+3. **Ao mudar escopo:** atualizar juntas descrição, dependências da TASK, seção 7, contratos, banco, matriz de regressão e rastreabilidade. Novo problema recebe ISS/TASK antes de alterar código. Não apagar diagnóstico histórico: rotular como histórico e acrescentar estado atual com data/evidência.
+4. **Ao entregar ou interromper:** registrar o que foi implementado, o que não foi, validações realizadas e resultados, verificações não executadas e motivos, migrations criadas/aplicadas, rollback e próximo passo. Abandono, bloqueio ou limite da sessão não significa conclusão. Deixar dados suficientes para outra pessoa/agente continuar sem a conversa anterior.
+5. **Ao constatar commit, PR ou merge:** atualizar hashes e links reais. Merge comprova integração, não aprovação nem aceite. Se não houver acesso ao PR, registrar revisor/aprovação como não verificados; não inventar nomes ou datas. Diferenciar histórico local de estado remoto verificado e registrar a data da consulta.
+6. **Antes de encerrar:** reler as seções afetadas e conferir que cabeçalho, status, gates, contratos e registro final concordam. Incluir as mudanças do plano na mesma entrega da implementação, sem exigir hash do próprio commit dentro dele: registrar o hash em atualização posterior quando existir. Apenas uma pessoa edita o plano por vez.
+
+| Estado da TASK | Quando usar | Libera sucessora? |
+|---|---|---|
+| Não iniciado | Proposta sem implementação | Não |
+| Em andamento | Implementação ou validação em curso | Não |
+| Em revisão | Entrega aguardando revisão/integração | Não |
+| Integrado — validação pendente | Código já na `main`, mas faltam critérios de aceite ou evidências exigidas | Não, salvo exceção documentada específica |
+| Bloqueado | Dependência, dado, decisão ou acesso impede o avanço; registrar motivo e impacto | Não |
+| Concluído | Escopo implementado, critérios de aceite comprovados, checks exigidos registrados e PR aprovado/integrado | Sim, para o contrato efetivamente entregue |
+
+**Tarefas somente de diagnóstico/documentação:** podem registrar diagnóstico concluído com resultados e limitações explícitos. Identificar o commit/PR que integrou o registro quando verificável; testes de runtime não aplicáveis devem ser marcados N/A com motivo. Isso não comprova comportamento de implementação ou ambiente não investigado.
+
+**Registro mínimo por entrega (copiar e preencher com fatos):**
+
+```text
+Data / TASK / responsável / branch:
+Estado de implementação: não iniciado | parcial | implementado
+Implementado (arquivos e comportamento):
+Não implementado / fora do escopo:
+Validação: comando ou cenário, ambiente, resultado e data
+Não validado: critério pendente e motivo
+Banco: migration criada, ensaiada e/ou aplicada; ambiente e resultado
+Commit / PR / revisor / aprovação / merge: evidência ou não verificado
+Dependências e seções atualizadas:
+Rollback / próximo passo:
+```
+
+Não tratar build como prova de rollback, schema como prova de integração, migration criada como aplicada, merge como aprovação ou ausência de erro observado como aceite funcional. Se necessário, reabrir a validação de uma TASK anteriormente marcada como concluída e preservar a razão da correção no histórico.
 
 **Registro inicial de decisões pendentes**
 
@@ -760,7 +842,8 @@ Novo problema recebe um novo ID `ISS-XX` e nova `TASK-XXX`, com dependências, d
 | Menu, breadcrumb, perfil/logout na sidebar | ISS-11 | 005 | Layout e RBAC em desktop/mobile |
 | Torre real, integrada e legível | ISS-12 | 017/018 | KPI auditável, eventos e UX revisados |
 | Contratos auxiliares de qualidade/Corte/Apoio | ISS-13 | 021/022 | Anexos ativos íntegros; mocks inventariados |
-| Integração e fonte única de verdade | ISS-01…ISS-13 | 003/007…023 | Jornada integral + regressão da seção 13 |
+| Unicidade concorrente de código | ISS-14 | 025 | Um modelo por código, conflito 409 e rollback do agregado rejeitado |
+| Integração e fonte única de verdade | ISS-01…ISS-14 | 003/007…025 | Jornada integral + regressão da seção 13 |
 
 ## 18. Fonte única de verdade por regra
 
@@ -778,11 +861,34 @@ Novo problema recebe um novo ID `ISS-XX` e nova `TASK-XXX`, com dependências, d
 
 **Compatibilidade:** a estrutura alvo é incremental. `rota_modelo`, `slas_por_setor`, `possui_caixa_teste` e `temporada` podem permanecer como legado enquanto houver consumidores/dados. Fonte única de verdade não significa apagar colunas antes de provar que não são necessárias.
 
-## 19. Modo de execução e parada
+## 19. Estado de execução e histórico de decisões
 
-ISS-02 e ISS-03 foram implementadas na única branch autorizada. ISS-01 continua sem causa específica reproduzida e não foi corrigida por suposição. A migration numérica foi criada, mas não foi executada no banco.
+### Reconciliação documental — 2026-10-13
 
-**Validação concluída:** `npm run build` no backend; `npm run build` no frontend; smoke test do schema confirmou `00042` válido e `12A`/string vazia inválidos; `git diff --check` sem erros. Não há suite de testes automatizados configurada no repositório. Nenhuma chamada de finalização ou migration foi executada contra o banco local para evitar gravar dados de teste.
+- **Evidência atual:** leitura estática e histórico Git local da `main`, sem consulta remota ou ao banco. PR #6 ([link](https://github.com/hellennverenaa/erp-modelagem/pull/6)), merge `0a0e590`, integra `a120995` e `80d377f`. PR #7 ([link](https://github.com/hellennverenaa/erp-modelagem/pull/7)), merge `b22b68e`, altera somente o plano de TASK-024. Revisores/aprovações não verificados.
+- **Implementado:** validação numérica de código, retirada de Temporada dos formulários, rascunho do wizard e transação de modelo/peças/rota/OT. Migration numérica criada; aplicação no ambiente atual não verificada.
+- **Não implementado na reconciliação anterior às correções locais abaixo:** cadastro integrado de TASK-024, unicidade concorrente de TASK-025, versionamento/snapshot e demais TASKs marcadas como não iniciadas. TASK-002/003 seguem pendentes; TASK-024 não está liberada.
+- **Validação histórica registrada pela entrega de ISS-02/03:** builds backend/frontend, smoke test do schema (`00042` válido; `12A`/vazio inválidos) e `git diff --check`. Resultados não foram reexecutados nesta reconciliação. Nenhuma chamada de finalização ou migration foi executada naquela entrega, segundo seu registro.
+- **Aceite pendente:** TASK-006 requer fluxos UI/API e ensaio da migration em cópia; TASK-011 requer falhas injetadas/rollback, releitura, RBAC e etiqueta; TASK-013 requer navegação/edição, abandono sem escrita, falha de API, duplo clique e regressões individuais. Código integrado não equivale a esses testes aprovados.
+- **Decisão:** substituir “Concluído, aguardando commit/PR” por “Integrado — validação pendente”; corrigir gates para o escopo reduzido de ISS-02/03, incluir TASK-024/025 na aceitação final e registrar ISS-14/TASK-025. Não modificar código ou dados nesta revisão documental.
+- **Próximo passo:** concluir a validação pendente e registrar evidências; resolver TASK-002/003 antes de implementar TASK-024. TASK-025 exige inventário alvo e contrato específico antes de DDL. **Validação desta atualização:** readback das seções afetadas e `git diff --check` sem erros. Apenas `AGENTS.md` e este plano foram alterados; builds/runtime são N/A para a alteração documental. Commit/PR desta atualização ainda não criados.
 
-A implementação foi autorizada e concluída. A branch está publicada e atualizada após `git fetch origin`; a `main` não tinha commits novos. A criação do PR via integração retornou HTTP 403 (`Resource not accessible by integration`), portanto o PR ainda não está aberto. Link para criá-lo: https://github.com/hellennverenaa/erp-modelagem/pull/new/feature/iss-02-03-wizard-model. Após abrir, aguardar a revisão e aprovação do outro desenvolvedor antes de fazer merge.
+### Histórico preservado — entrega anterior de ISS-02/03
 
+A entrega original registrou branch única autorizada, migration numérica não aplicada e incidente específico ISS-01 não reproduzido. Naquele momento, a criação do PR via integração retornou HTTP 403 (`Resource not accessible by integration`). Esse impedimento foi superado posteriormente: o histórico local registra o merge do PR #6. O erro antigo não é bloqueio atual nem motivo para abrir um PR duplicado.
+
+### Entrega local TASK-004/005/021A — 2026-10-13
+
+Implementação em andamento na branch `feature/task-004-005-021a-correcoes-locais`. `git fetch origin` executado; `git log HEAD..origin/main --oneline` não retornou commits. Alterações documentais anteriores preservadas. As três correções foram solicitadas juntas pelo usuário; preparadas na mesma branch para revisão local, sem commit/push/PR nesta etapa. A divisão em entregas/PRs pequenos permanece necessária antes da integração. Escopo: busca, sidebar e campo de foto; sem migration ou escrita no banco.
+
+**Resultado da entrega local:**
+
+- TASK-004: catálogo e máquinas carregam independentemente; falha em máquinas não elimina catálogo. Busca local reativa por número/nome/referência, reabertura ao digitar, Escape, loading/vazio/erro e tentativas independentes. Seleção por botão permite teclado; avanço bloqueado em erro de máquinas. Sem busca HTTP por termo, portanto sem respostas de termos concorrentes. GET de catálogo permite `TELA_CATALOGO_PECAS` ou `TELA_NOVA_ORDEM_TESTE`; POST mantém `EDITAR_TELA_CATALOGO_PECAS`.
+- TASK-005: Construtor de Rota antes de Gestão de Ordens; breadcrumb/barra superior removidos; nome/perfil/logout no rodapé da sidebar, com título no estado recolhido, rolagem de menu e ajuste mobile. Filtro de permissões e função de logout preservados.
+- TASK-021A: FormData de ocorrência usa `file`, conforme middleware existente. Anexos de inspeção não implementados.
+- **Checks executados em 2026-10-13:** `npm run build` em backend e frontend, ambos exit 0; `git diff --check` sem erros. Smoke test Node da rota compilada de catálogo com middleware real e consulta de permissões simulada: 5 cenários aprovados (leitura via Novo Teste/catalogo, rejeição 403 sem permissão, 401 sem sessão, escrita 403 com apenas permissão de Novo Teste). Não comprova permissões persistidas no banco.
+- **Não validado:** interface no navegador em desktop/mobile, login/logout real, busca com falhas de rede e upload/leitura autenticados. Nenhum teste escreveu no banco; nenhuma migration ou dependência nova. Lint N/A: não há script configurado. Testes funcionais são o próximo passo antes do aceite; commit, PR, aprovação e merge desta entrega ainda não realizados.
+
+### Publicação da entrega — 2026-10-13
+
+Por solicitação explícita do usuário, a entrega conjunta foi commitada em `d3257ad` e publicada no repositório `hellennverenaa/erp-modelagem`. [PR #8](https://github.com/hellennverenaa/erp-modelagem/pull/8) aberto pelo plugin GitHub, base `main`, branch `feature/task-004-005-021a-correcoes-locais`. TASK-004/005/021A em revisão; aprovação e merge pendentes. Os registros anteriores sem commit/PR descrevem a etapa local anterior. Validação funcional continua pendente conforme registrado; não marcar Concluído. Esta atualização documental acompanha o mesmo PR em commit posterior.
