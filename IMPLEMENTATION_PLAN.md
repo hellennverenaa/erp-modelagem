@@ -330,29 +330,29 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-004 — Corrigir busca do catálogo no wizard
 
-**Status:** [ ] Não iniciado · [x] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+**Status:** [ ] Não iniciado · [ ] Em andamento · [x] Em revisão · [ ] Concluído · [ ] Bloqueado
 
-**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/WizardCriacaoTesteView.vue`, `backend/src/routes/pecas.routes.ts`
+**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/WizardCriacaoTesteView.vue`, `backend/src/routes/pecas.routes.ts`
 
 - **Objetivo:** desacoplar cargas, alinhar RBAC da busca com uso permitido no wizard, mostrar sugestões durante digitação/foco, tratar loading/vazio/erro, respostas atrasadas e seleção.
 - **Arquivos prováveis:** frontend `frontend/src/views/WizardCriacaoTesteView.vue`; backend `backend/src/routes/pecas.routes.ts`; banco leitura `catalogo_pecas`.
 - **Dependências:** nenhuma para correção isolada; usar achados da TASK-001 se disponíveis. **Paralelo:** sim, com TASK-001/002/003/005; **não** com TASK-013 ou TASK-007 se estas alterarem `pecas.routes.ts`. **Risco:** médio.
 - **Aceite:** sugestões mudam ao digitar sem blur/refocus; seleção e acesso autorizado funcionam; erro de outra carga não apaga resultados. **Testes necessários:** digitação rápida, foco, vazio, permissão, busca de vários termos, cadastro individual de catálogo. **Rollback:** reverter branch/commit sem alterar DB.
 
-- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em andamento até revisão/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
+- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em revisão até integração/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
 
 #### TASK-005 — Reorganizar sidebar e layout
 
-**Status:** [ ] Não iniciado · [x] Em andamento · [ ] Em revisão · [ ] Concluído · [ ] Bloqueado
+**Status:** [ ] Não iniciado · [ ] Em andamento · [x] Em revisão · [ ] Concluído · [ ] Bloqueado
 
-**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** — · **PR:** — · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/DashboardView.vue`
+**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/DashboardView.vue`
 
 - **Objetivo:** ordenar navegação conforme dependências reais e páginas existentes; retirar breadcrumb; mover nome, perfil e sair ao rodapé da sidebar; adaptar estado recolhido/mobile sem alterar RBAC.
 - **Arquivos prováveis:** frontend `frontend/src/views/DashboardView.vue`, estilos locais e, apenas se necessário, `frontend/src/router/index.ts`; backend/banco nenhum.
 - **Dependências:** nenhuma. **Paralelo:** sim, com TASK-001/004; não com outra tarefa que altere `DashboardView.vue`. **Risco:** baixo/médio.
 - **Aceite:** menu reflete fluxo, perfis veem mesmas permissões, logout funciona, nenhum vazio no topo, responsivo. **Testes necessários:** desktop/mobile, sidebar aberta/fechada, login/logout e perfis. **Rollback:** reverter commit visual.
 
-- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em andamento até revisão/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
+- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em revisão até integração/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
 
 #### TASK-006 — Validar código numérico e retirar Temporada do uso ativo
 
@@ -548,7 +548,7 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-021A — Corrigir campo da foto de ocorrência
 
-**Status:** Em andamento (implementado localmente; upload autenticado pendente) · **Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit/PR:** ainda não criados
+**Status:** Em revisão (PR #8 aberto; upload autenticado pendente) · **Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8)
 
 - **Escopo:** somente alinhar o FormData da ocorrência ao `upload.single('file')` existente. Arquivo: `frontend/src/views/BipagemView.vue`. Não implementar anexos de inspeção nem mudar armazenamento/permissões.
 - **Exceção de dependência (2026-10-13):** antecipada em relação à TASK-015 por autorização do usuário para as três correções locais; não altera o fluxo de execução da OT. TASK-021 permanece não iniciada para o restante do escopo; reservar BipagemView sem edição concorrente.
@@ -888,3 +888,7 @@ Implementação em andamento na branch `feature/task-004-005-021a-correcoes-loca
 - TASK-021A: FormData de ocorrência usa `file`, conforme middleware existente. Anexos de inspeção não implementados.
 - **Checks executados em 2026-10-13:** `npm run build` em backend e frontend, ambos exit 0; `git diff --check` sem erros. Smoke test Node da rota compilada de catálogo com middleware real e consulta de permissões simulada: 5 cenários aprovados (leitura via Novo Teste/catalogo, rejeição 403 sem permissão, 401 sem sessão, escrita 403 com apenas permissão de Novo Teste). Não comprova permissões persistidas no banco.
 - **Não validado:** interface no navegador em desktop/mobile, login/logout real, busca com falhas de rede e upload/leitura autenticados. Nenhum teste escreveu no banco; nenhuma migration ou dependência nova. Lint N/A: não há script configurado. Testes funcionais são o próximo passo antes do aceite; commit, PR, aprovação e merge desta entrega ainda não realizados.
+
+### Publicação da entrega — 2026-10-13
+
+Por solicitação explícita do usuário, a entrega conjunta foi commitada em `d3257ad` e publicada no repositório `hellennverenaa/erp-modelagem`. [PR #8](https://github.com/hellennverenaa/erp-modelagem/pull/8) aberto pelo plugin GitHub, base `main`, branch `feature/task-004-005-021a-correcoes-locais`. TASK-004/005/021A em revisão; aprovação e merge pendentes. Os registros anteriores sem commit/PR descrevem a etapa local anterior. Validação funcional continua pendente conforme registrado; não marcar Concluído. Esta atualização documental acompanha o mesmo PR em commit posterior.
