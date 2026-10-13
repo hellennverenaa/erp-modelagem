@@ -66,7 +66,7 @@ router.post('/modelo/:modeloId', exigirAlgumaPermissao([
  * GET /api/catalogo-pecas ou /api/pecas
  * Lista peças técnicas do catálogo
  */
-router.get('/', exigirPermissao('TELA_CATALOGO_PECAS'), async (req: Request, res: Response) => {
+router.get('/', exigirAlgumaPermissao(['TELA_CATALOGO_PECAS', 'TELA_NOVA_ORDEM_TESTE']), async (req: Request, res: Response) => {
   try {
     const { CatalogoPeca } = await import('../entities/CatalogoPeca');
     const q = req.query.q as string;

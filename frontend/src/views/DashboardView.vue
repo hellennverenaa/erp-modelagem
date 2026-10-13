@@ -27,8 +27,8 @@ const navItems = [
   { to: '/dashboard/gerencial',      label: 'Torre de Controle',     icon: LayoutDashboard, permission: 'TELA_TORRE_CONTROLE' },
   { to: '/dashboard/modelos',        label: 'Catálogo de Modelos',   icon: Layers, permission: 'TELA_CATALOGO_MODELOS' },
   { to: '/dashboard/catalogo-pecas', label: 'Catálogo de Peças',     icon: Layers, permission: 'TELA_CATALOGO_PECAS' },
-  { to: '/dashboard/ordens',         label: 'Gestão de Ordens',     icon: ClipboardList, permission: 'TELA_GESTAO_ORDENS' },
   { to: '/dashboard/rotas',          label: 'Construtor de Rota',   icon: ListOrdered, permission: 'TELA_CONSTRUTOR_ROTA' },
+  { to: '/dashboard/ordens',         label: 'Gestão de Ordens',     icon: ClipboardList, permission: 'TELA_GESTAO_ORDENS' },
   { to: '/dashboard/bipagem',        label: 'Bipagem Operacional',  icon: Barcode, permission: 'TELA_BIPAGEM' },
   { to: '/dashboard/inspecao',       label: 'Inspeção de Qualidade', icon: ShieldCheck, permission: 'TELA_INSPECAO_QUALIDADE' },
   { to: '/dashboard/rastreamento',   label: 'TV Rastreamento',    icon: MonitorPlay, permission: 'TELA_RASTREAMENTO' },
@@ -39,20 +39,6 @@ const visibleNavItems = computed(() => {
   return navItems.filter(item => item.to === '/dashboard/rbac'
     ? authStore.isAdminAutomacao.value
     : authStore.hasPermission(item.permission))
-})
-
-const activeLabel = computed(() => {
-  if (route.path.endsWith('/gerencial'))      return 'Torre de Controle'
-  if (route.path.endsWith('/novo-teste'))     return 'Iniciar Novo Teste'
-  if (route.path.endsWith('/modelos'))        return 'Catálogo de Modelos'
-  if (route.path.endsWith('/catalogo-pecas')) return 'Catálogo de Peças'
-  if (route.path.endsWith('/ordens'))         return 'Gestão de Ordens'
-  if (route.path.endsWith('/rotas'))          return 'Construtor de Rota'
-  if (route.path.endsWith('/bipagem'))        return 'Bipagem Operacional'
-  if (route.path.endsWith('/inspecao'))       return 'Inspeção de Qualidade'
-  if (route.path.endsWith('/rbac'))           return 'Permissões RBAC'
-  if (route.path.includes('/rastreamento'))   return 'Rastreamento Dual'
-  return 'Dashboard'
 })
 
 function logout() {
@@ -113,6 +99,22 @@ function logout() {
         </RouterLink>
       </nav>
 
+      <div class="sidebar-footer">
+        <div class="user-chip" aria-label="Usuário logado" :title="!sidebarOpen ? `${user?.nomeCompleto || user?.usuario || 'Usuário'} — ${user?.perfilNome || ''}` : undefined">
+          <div class="user-avatar" aria-hidden="true">
+            {{ (user?.nomeCompleto || user?.usuario || 'U')[0].toUpperCase() }}
+          </div>
+          <div v-if="sidebarOpen" class="user-info">
+            <span class="user-name">{{ user?.nomeCompleto || user?.usuario || 'Usuário' }}</span>
+            <span v-if="user?.perfilNome" class="user-role">{{ user.perfilNome }}</span>
+          </div>
+        </div>
+        <button id="btn-logout" class="btn-logout" @click="logout" type="button" title="Sair do sistema" aria-label="Sair do sistema">
+          <LogOut :size="16" aria-hidden="true" />
+          <span v-if="sidebarOpen">Sair</span>
+        </button>
+      </div>
+
       <!-- Sidebar toggle -->
       <button
         id="btn-sidebar-toggle"
@@ -128,40 +130,6 @@ function logout() {
 
     <!-- ── MAIN AREA ── -->
     <div class="main-wrapper">
-      <!-- Top header bar -->
-      <header class="top-bar">
-        <div class="top-bar-left">
-          <LayoutDashboard :size="16" class="top-bar-icon" aria-hidden="true" />
-          <nav class="breadcrumb" aria-label="Localização atual">
-            <span class="breadcrumb-root">Painel Admin</span>
-            <ChevronRight :size="14" class="breadcrumb-sep" aria-hidden="true" />
-            <span class="breadcrumb-current">{{ activeLabel }}</span>
-          </nav>
-        </div>
-
-        <div class="top-bar-right">
-          <div class="user-chip" aria-label="Usuário logado">
-            <div class="user-avatar" aria-hidden="true">
-              {{ (user?.nomeCompleto || user?.usuario || 'U')[0].toUpperCase() }}
-            </div>
-            <div class="user-info">
-              <span class="user-name">{{ user?.nomeCompleto || user?.usuario || 'Usuário' }}</span>
-              <span v-if="user?.perfilNome" class="user-role">{{ user.perfilNome }}</span>
-            </div>
-          </div>
-          <button
-            id="btn-logout"
-            class="btn-logout"
-            @click="logout"
-            type="button"
-            title="Sair do sistema"
-          >
-            <LogOut :size="15" aria-hidden="true" />
-            <span>Sair</span>
-          </button>
-        </div>
-      </header>
-
       <!-- Content -->
       <main class="main-content" id="main-content">
         <RouterView />
@@ -259,6 +227,7 @@ function logout() {
 /* Nav */
 .sidebar-nav {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
@@ -339,47 +308,13 @@ function logout() {
   overflow: hidden;
 }
 
-/* ═══════════════════════════════════════
-   TOP BAR
-═══════════════════════════════════════ */
-.top-bar {
+/* Perfil e sessão no rodapé da navegação */
+.sidebar-footer {
+  padding: 0.75rem 0.5rem 0;
+  border-top: 1px solid rgba(255,255,255,0.07);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 1.5rem;
-  height: 3.75rem;
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-  flex-shrink: 0;
-  gap: 1rem;
-}
-
-.top-bar-left {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
-}
-
-.top-bar-icon { color: #94a3b8; flex-shrink: 0; }
-
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: 0.875rem;
-  min-width: 0;
-}
-
-.breadcrumb-root { color: #94a3b8; font-weight: 500; white-space: nowrap; }
-.breadcrumb-sep { color: #cbd5e1; flex-shrink: 0; }
-.breadcrumb-current { color: #0f172a; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.top-bar-right {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 0.5rem;
   flex-shrink: 0;
 }
 
@@ -388,9 +323,11 @@ function logout() {
   align-items: center;
   gap: 0.625rem;
   padding: 0.375rem 0.75rem 0.375rem 0.375rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 2rem;
+  min-width: 0;
+  overflow: hidden;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 0.5rem;
 }
 
 .user-avatar {
@@ -407,9 +344,9 @@ function logout() {
   flex-shrink: 0;
 }
 
-.user-info { display: flex; flex-direction: column; }
-.user-name { font-size: 0.8125rem; font-weight: 700; color: #0f172a; line-height: 1.2; }
-.user-role { font-size: 0.6875rem; color: #64748b; font-weight: 500; }
+.user-info { display: flex; flex-direction: column; min-width: 0; }
+.user-name { font-size: 0.8125rem; font-weight: 700; color: #e2e8f0; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-role { font-size: 0.6875rem; color: #94a3b8; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .btn-logout {
   display: flex;
@@ -419,9 +356,9 @@ function logout() {
   font-size: 0.8125rem;
   font-weight: 600;
   font-family: inherit;
-  color: #475569;
+  color: #cbd5e1;
   background: transparent;
-  border: 1px solid #e2e8f0;
+  border: 1px solid rgba(255,255,255,0.07);
   border-radius: 0.5rem;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
@@ -444,7 +381,6 @@ function logout() {
 @media (min-width: 1920px) {
   .sidebar { width: 18rem; }
   .sidebar--collapsed { width: 5rem; }
-  .top-bar { height: 4.5rem; font-size: 1.125rem; }
   .main-content { padding: 2.5rem; }
   .user-name { font-size: 1rem; }
   .btn-logout { font-size: 1rem; padding: 0.625rem 1.125rem; }
@@ -453,7 +389,6 @@ function logout() {
 @media (min-width: 2560px) {
   .sidebar { width: 22rem; }
   .sidebar--collapsed { width: 6rem; }
-  .top-bar { height: 5.5rem; }
   .nav-item { font-size: 1.25rem; padding: 0.875rem 1rem; }
   .main-content { padding: 3rem; }
 }
@@ -503,5 +438,13 @@ function logout() {
   justify-content: center;
   padding: 0.6875rem 0;
   width: 100%;
+}
+.sidebar--collapsed .user-chip,
+.sidebar--collapsed .btn-logout { justify-content: center; padding: 0.5rem 0; }
+
+@media (max-width: 767px) {
+  .sidebar { width: 12rem; }
+  .sidebar--collapsed { width: 3.75rem; }
+  .main-content { padding: 0.75rem; }
 }
 </style>
