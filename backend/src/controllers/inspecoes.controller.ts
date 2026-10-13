@@ -1,4 +1,7 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
+import { unlink } from 'node:fs/promises';
+import { Anexo } from '../entities/Anexo';
+import { perfilPossuiPermissao } from '../services/rbac.service';
 import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { Inspecao, TipoInspecao, ResultadoInspecao } from '../entities/Inspecao';
@@ -36,6 +39,69 @@ const createInspecaoSchema = z.object({
 });
 
 export class InspecoesController {
+  /** Autoriza o vínculo antes de receber/gravar o multipart. */
+  public validarAcessoAnexos = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
+      return;
+    }
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: 'Identificador de inspeção inválido.', code: 'INSPECAO_ID_INVALID' });
+      return;
+    }
+    try {
+      const todasPlantas = await perfilPossuiPermissao(req.user.perfilId, 'ACESSAR_TODAS_PLANTAS');
+      if (!todasPlantas && !req.user.plantaId) {
+        res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+        return;
+      }
+      const inspecao = await AppDataSource.getRepository(Inspecao).findOne({
+        where: todasPlantas ? { id: id.data } : { id: id.data, ordemTeste: { plantaId: req.user.plantaId } },
+        select: { id: true },
+      });
+      if (!inspecao) {
+        res.status(404).json({ error: 'Inspeção não encontrada neste escopo.', code: 'INSPECAO_NOT_FOUND' });
+        return;
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public getAnexos = async (req: Request, res: Response): Promise<Response> => {
+    const anexos = await AppDataSource.getRepository(Anexo).find({
+      where: { entidadeTipo: 'inspecoes', entidadeId: req.params.id as string },
+      order: { createdAt: 'ASC' },
+    });
+    return res.json(anexos);
+  };
+
+  public uploadAnexo = async (req: Request, res: Response): Promise<Response> => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo enviado.', code: 'FILE_MISSING' });
+    }
+    try {
+      const repo = AppDataSource.getRepository(Anexo);
+      const anexo = repo.create({
+        entidadeTipo: 'inspecoes',
+        entidadeId: req.params.id as string,
+        nomeArquivo: req.file.originalname,
+        caminhoArquivo: `uploads/${req.file.filename}`,
+        tipoMime: req.file.mimetype,
+        tamanhoBytes: req.file.size,
+        uploadedPorId: req.user!.userId,
+      });
+      return res.status(201).json(await repo.save(anexo));
+    } catch (error) {
+      // O arquivo desta requisição não deve ficar órfão se a gravação falhar.
+      await unlink(req.file.path).catch(() => console.error('[InspecoesController] Falha ao limpar arquivo de anexo.'));
+      console.error('[InspecoesController] Falha ao persistir anexo.');
+      return res.status(500).json({ error: 'Não foi possível salvar a foto.', code: 'INSPECAO_ATTACHMENT_FAILED' });
+    }
+  };
+
   /**
    * GET /api/inspecoes/pendentes
    * Lista os rastreamentos ativos (status EM_PROCESSO) de setores pertencentes à Categoria B (Gate Obrigatório)

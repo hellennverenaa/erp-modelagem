@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -72,6 +72,34 @@ const resultadoDecisao = ref<'APROVADO' | 'APROVADO_COM_CONCESSAO' | 'REPROVADO'
 const setorOrigemFalhaId = ref('')
 const observacaoDivergencia = ref('')
 const fotosEvidencias = ref<FotoEvidencia[]>([])
+const fotosPendentes = ref<FotoEvidencia[]>([])
+const inspecaoFotosPendentesId = ref('')
+const loadingFotosPendentes = ref(false)
+
+async function reenviarFotosPendentes() {
+  if (loadingFotosPendentes.value || !inspecaoFotosPendentesId.value) return
+  loadingFotosPendentes.value = true
+  try {
+    const falhas: FotoEvidencia[] = []
+    for (const foto of fotosPendentes.value) {
+      const formData = new FormData()
+      formData.append('file', foto.file)
+      try {
+        await api.post(`/inspecoes/${inspecaoFotosPendentesId.value}/anexos`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+        URL.revokeObjectURL(foto.previewUrl)
+      } catch {
+        falhas.push(foto)
+      }
+    }
+    fotosPendentes.value = falhas
+    if (falhas.length === 0) inspecaoFotosPendentesId.value = ''
+    triggerToast(falhas.length ? `${falhas.length} foto(s) ainda não foram enviadas. Tente novamente.` : 'Fotos de evidência enviadas.', falhas.length ? 'error' : 'success')
+  } finally {
+    loadingFotosPendentes.value = false
+  }
+}
 
 const showModalQuiosque = ref(false)
 const inspetoraAutenticada = ref<any>(null)
@@ -347,7 +375,7 @@ function aoSoltarArquivos(event: DragEvent) {
 }
 
 function processarArquivosFotos(files: File[]) {
-  const imagens = files.filter(f => f.type.startsWith('image/'))
+  const imagens = files.filter(f => ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(f.type))
   if (imagens.length === 0) {
     triggerToast('Selecione apenas arquivos de imagem válidos (PNG, JPG, WebP).', 'error')
     return
@@ -423,6 +451,10 @@ async function onInspetoraAutenticadaSucesso(inspetora: any) {
 async function executarSubmissaoInspecao(_inspetora: any) {
   if (!opAgrupadaAtiva.value || !resultadoDecisao.value) return
 
+  if (fotosPendentes.value.length) {
+    triggerToast('Reenvie as fotos pendentes antes de registrar outra inspeção.', 'error')
+    return
+  }
   loadingSubmissao.value = true
   try {
     const resultadoEnum = resultadoDecisao.value === 'APROVADO_COM_CONCESSAO'
@@ -453,20 +485,13 @@ async function executarSubmissaoInspecao(_inspetora: any) {
 
     const resArray = await Promise.all(promisesInspecao)
 
-    // Upload de Evidências Fotográficas (anexadas à primeira inspeção criada)
+    // A inspeção já está gravada. Retry de fotos não deve recriá-la.
     const primeiraInspecaoId = resArray[0]?.data?.inspecao?.id || resArray[0]?.data?.id
-    if (primeiraInspecaoId && fotosEvidencias.value.length > 0) {
-      for (const fotoItem of fotosEvidencias.value) {
-        const formData = new FormData()
-        formData.append('file', fotoItem.file)
-        try {
-          await api.post(`/inspecoes/${primeiraInspecaoId}/anexos`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          })
-        } catch (anexoErr) {
-          console.warn(`[InspecaoQualidade] Aviso ao anexar foto ${fotoItem.name}:`, anexoErr)
-        }
-      }
+    if (fotosEvidencias.value.length > 0) {
+      fotosPendentes.value = fotosEvidencias.value
+      fotosEvidencias.value = []
+      inspecaoFotosPendentesId.value = primeiraInspecaoId || ''
+      if (primeiraInspecaoId) await reenviarFotosPendentes()
     }
 
     const acaoTexto = resultadoDecisao.value === 'APROVADO'
@@ -475,9 +500,13 @@ async function executarSubmissaoInspecao(_inspetora: any) {
 
     triggerToast(
       `Inspeção (${acaoTexto}) concluída para ${itemsParaInspecionar.length} etapa(s) da OP ${opAgrupadaAtiva.value.codigoBarras} em 1 pancada só!`,
-      'success'
+      fotosPendentes.value.length ? 'info' : 'success'
     )
-    tocarSomSucesso()
+    if (fotosPendentes.value.length) {
+      triggerToast('Inspeção registrada, mas há fotos não enviadas. Use Reenviar fotos antes de sair.', 'error')
+    } else {
+      tocarSomSucesso()
+    }
 
     // Recarrega fila de pendentes e limpa tela
     await carregarDadosIniciais()
@@ -496,6 +525,11 @@ async function executarSubmissaoInspecao(_inspetora: any) {
 onMounted(() => {
   carregarDadosIniciais()
 })
+
+onUnmounted(() => {
+  limparFotosEvidencias()
+  for (const foto of fotosPendentes.value) URL.revokeObjectURL(foto.previewUrl)
+})
 </script>
 
 <template>
@@ -511,6 +545,12 @@ onMounted(() => {
     </Transition>
 
     <div class="w-full max-w-6xl space-y-6">
+      <div v-if="fotosPendentes.length" role="alert" class="p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-900">
+        <p>Inspeção registrada. {{ fotosPendentes.length }} foto(s) não foram enviadas; elas permanecem apenas nesta sessão.</p>
+        <button type="button" class="mt-2 underline font-semibold" @click="reenviarFotosPendentes" :disabled="loadingFotosPendentes || !inspecaoFotosPendentesId">
+          {{ loadingFotosPendentes ? 'Enviando...' : 'Reenviar fotos' }}
+        </button>
+      </div>
       <!-- ══ HEADER DA CENTRAL DE QUALIDADE ════════════════════════════════ -->
       <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-slate-900/90 border border-slate-800 backdrop-blur-md shadow-xl text-white">
         <div class="flex items-center gap-4">

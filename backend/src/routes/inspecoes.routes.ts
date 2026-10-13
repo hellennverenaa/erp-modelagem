@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { upload } from '../middlewares/upload.middleware';
 import { InspecoesController } from '../controllers/inspecoes.controller';
 import { exigirPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
@@ -222,5 +223,26 @@ router.get('/divergencias', inspecoesController.getDivergencias);
  *         description: Erro interno do servidor
  */
 router.post('/retrabalho', exigirPermissao('EDITAR_TELA_INSPECAO_QUALIDADE'), inspecoesController.createRetrabalho);
+
+/** Fotos de inspeção: mesmo contrato multipart `file`, imagens até 10 MB. */
+router.get('/:id/anexos', inspecoesController.validarAcessoAnexos, inspecoesController.getAnexos);
+router.post('/:id/anexos',
+  exigirPermissao('EDITAR_TELA_INSPECAO_QUALIDADE'),
+  inspecoesController.validarAcessoAnexos,
+  (req, res, next) => {
+    upload.single('file')(req, res, (error) => {
+      if (error) {
+        const limite = error.code === 'LIMIT_FILE_SIZE';
+        res.status(limite ? 413 : 400).json({
+          error: limite ? 'A imagem excede o limite de 10 MB.' : 'Envie uma imagem JPEG, PNG, GIF ou WebP no campo file.',
+          code: limite ? 'FILE_TOO_LARGE' : 'FILE_INVALID',
+        });
+        return;
+      }
+      next();
+    });
+  },
+  inspecoesController.uploadAnexo,
+);
 
 export default router;
