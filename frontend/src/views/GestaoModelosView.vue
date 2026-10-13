@@ -40,7 +40,6 @@ interface Modelo {
   id: string
   nome: string
   codigoProduto: string
-  temporada: string | null
   dataCorte: string | null
   status: string
   ativo: boolean
@@ -95,7 +94,6 @@ const form = ref({
   marcaId:       '',
   codigoProduto: '',
   nome:          '',
-  temporada:     '',
   dataCorte:     '',
 })
 const formErrors = ref<Record<string, string>>({})
@@ -134,8 +132,7 @@ const filteredModelos = computed(() => {
     (m) =>
       m.nome.toLowerCase().includes(q) ||
       m.codigoProduto.toLowerCase().includes(q) ||
-      (m.marca?.nome ?? '').toLowerCase().includes(q) ||
-      (m.temporada ?? '').toLowerCase().includes(q)
+      (m.marca?.nome ?? '').toLowerCase().includes(q)
   )
 })
 
@@ -163,6 +160,13 @@ function addToast(type: 'success' | 'error', message: string) {
   const id = ++toastCounter
   toasts.value.push({ id, type, message })
   setTimeout(() => { toasts.value = toasts.value.filter((t) => t.id !== id) }, 4500)
+}
+
+function sanitizeCodigoProduto(event: Event) {
+  const input = event.target as HTMLInputElement
+  const codigo = input.value.replace(/\D/g, '').slice(0, 50)
+  form.value.codigoProduto = codigo
+  input.value = codigo
 }
 
 // ─── Requisicoes ─────────────────────────────────────────────────────────────
@@ -224,6 +228,7 @@ function advanceToStep2() {
 
   if (!form.value.marcaId.trim())       formErrors.value.marcaId = 'Selecione uma marca.'
   if (!form.value.codigoProduto.trim()) formErrors.value.codigoProduto = 'Código do produto é obrigatório.'
+  else if (!/^[0-9]+$/.test(form.value.codigoProduto.trim())) formErrors.value.codigoProduto = 'Use somente números no código do produto.'
   if (!form.value.nome.trim())          formErrors.value.nome = 'Nome do modelo é obrigatório.'
 
   if (Object.keys(formErrors.value).length > 0) return
@@ -273,7 +278,6 @@ async function handleCreateModelo() {
       marcaId:       form.value.marcaId,
       codigoProduto: form.value.codigoProduto.trim(),
       nome:          form.value.nome.trim(),
-      temporada:     form.value.temporada.trim() || null,
       dataCorte:     form.value.dataCorte ? form.value.dataCorte : null,
       pecas:         pecasSelecionadas.value
     })
@@ -298,7 +302,7 @@ async function handleCreateModelo() {
 // ─── Modal ───────────────────────────────────────────────────────────────────
 function openModal() {
   modalStep.value = 1
-  form.value = { marcaId: '', codigoProduto: '', nome: '', temporada: '', dataCorte: '' }
+  form.value = { marcaId: '', codigoProduto: '', nome: '', dataCorte: '' }
   pecasSelecionadas.value = []
   formErrors.value = {}
   showModal.value = true
@@ -424,7 +428,7 @@ onUnmounted(() => {
           v-model="searchQuery"
           type="search"
           class="search-input"
-          placeholder="Buscar por nome, código, marca ou temporada..."
+          placeholder="Buscar por nome, código ou marca..."
           aria-label="Buscar modelos"
         />
       </div>
@@ -458,7 +462,6 @@ onUnmounted(() => {
               <th scope="col">Código</th>
               <th scope="col">Nome do Modelo</th>
               <th scope="col">Marca</th>
-              <th scope="col" class="text-center">Temporada</th>
               <th scope="col" class="text-center">Data de Corte</th>
               <th scope="col" class="text-center">Peças</th>
               <th scope="col" class="text-center">Status</th>
@@ -475,13 +478,6 @@ onUnmounted(() => {
               </td>
               <td>
                 <span class="marca-cell">{{ modelo.marca?.nome ?? '—' }}</span>
-              </td>
-              <td class="text-center">
-                <span v-if="modelo.temporada" class="temporada-pill">
-                  <Calendar :size="11" aria-hidden="true" />
-                  {{ modelo.temporada }}
-                </span>
-                <span v-else class="empty-dash">—</span>
               </td>
               <td class="text-center">
                 <span v-if="modelo.dataCorte" class="date-pill">
@@ -552,7 +548,7 @@ onUnmounted(() => {
             <!-- Body PASSO 1: Dados do Modelo -->
             <div v-if="modalStep === 1" class="modal-body">
               <p class="modal-description">
-                Passo 1: Informe a marca, código, nome, temporada e a previsão da data de corte do modelo.
+                Passo 1: Informe a marca, código, nome e a previsão da data de corte do modelo.
               </p>
 
               <!-- Marca -->
@@ -592,41 +588,26 @@ onUnmounted(() => {
                 </span>
               </div>
 
-              <div class="form-row-2">
-                <!-- Código do Produto -->
-                <div class="form-field">
-                  <label for="inp-codigo" class="form-label">
-                    Código do Produto <span class="required-star" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="inp-codigo"
-                    v-model="form.codigoProduto"
-                    type="text"
-                    class="form-input"
-                    :class="{ 'form-input--error': formErrors.codigoProduto }"
-                    placeholder="Ex: 502698"
-                    maxlength="50"
-                  />
-                  <span v-if="formErrors.codigoProduto" class="form-error" role="alert">
-                    <AlertCircle :size="12" aria-hidden="true" />
-                    {{ formErrors.codigoProduto }}
-                  </span>
-                </div>
-
-                <!-- Temporada -->
-                <div class="form-field">
-                  <label for="inp-temporada" class="form-label">
-                    Temporada <span class="optional-tag">opcional</span>
-                  </label>
-                  <input
-                    id="inp-temporada"
-                    v-model="form.temporada"
-                    type="text"
-                    class="form-input"
-                    placeholder="Ex: SS26"
-                    maxlength="50"
-                  />
-                </div>
+              <div class="form-field">
+                <label for="inp-codigo" class="form-label">
+                  Código do Produto <span class="required-star" aria-hidden="true">*</span>
+                </label>
+                <input
+                  id="inp-codigo"
+                  v-model="form.codigoProduto"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="[0-9]*"
+                  class="form-input"
+                  :class="{ 'form-input--error': formErrors.codigoProduto }"
+                  placeholder="Ex: 502698"
+                  maxlength="50"
+                  @input="sanitizeCodigoProduto"
+                />
+                <span v-if="formErrors.codigoProduto" class="form-error" role="alert">
+                  <AlertCircle :size="12" aria-hidden="true" />
+                  {{ formErrors.codigoProduto }}
+                </span>
               </div>
 
               <!-- Nome do Modelo -->
@@ -1040,7 +1021,7 @@ onUnmounted(() => {
 .date-cell  { font-size: 0.8125rem; color: #64748b; white-space: nowrap; }
 .empty-dash { color: #cbd5e1; }
 
-.temporada-pill, .date-pill, .pecas-pill {
+.date-pill, .pecas-pill {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;

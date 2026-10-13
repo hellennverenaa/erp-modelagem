@@ -256,7 +256,6 @@ router.get('/modelos/:id', exigirAlgumaPermissao([
  *               marcaId: { type: string, format: uuid }
  *               codigoProduto: { type: string, example: "2056985" }
  *               nome: { type: string, example: "KR LITE" }
- *               temporada: { type: string, example: "SS26" }
  *     responses:
  *       201:
  *         description: Modelo criado com sucesso
