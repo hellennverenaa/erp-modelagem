@@ -266,7 +266,7 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 ### ISS-13 — Lacunas de integração auxiliares
 
-**Atualização 2026-10-13:** TASK-021A alinha localmente a foto de ocorrência ao campo `file`; upload autenticado e integração pendentes. Endpoint de anexo de inspeção e módulos simulados continuam sem correção.
+**Atualização 2026-10-13:** TASK-021A alinha localmente a foto de ocorrência ao campo `file`; upload autenticado e integração pendentes. Endpoint de anexo de inspeção implementado localmente na TASK-021B, ainda sem aceite/integração; módulos simulados continuam sem correção.
 
 - **Problema / atual:** foto de ocorrência é enviada no campo `foto`, rota espera `file`; upload de inspeção chama endpoint ausente; `/corte` e `/apoio` contêm respostas simuladas e não são consumidores identificados da tela operacional.
 - **Esperado:** telas ativas têm contratos reais; mocks não são apresentados como produção integrada.
@@ -330,29 +330,29 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-004 — Corrigir busca do catálogo no wizard
 
-**Status:** [ ] Não iniciado · [ ] Em andamento · [x] Em revisão · [ ] Concluído · [ ] Bloqueado
+**Status:** Integrado — validação pendente (PR #8 merged; aceite funcional pendente)
 
-**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/WizardCriacaoTesteView.vue`, `backend/src/routes/pecas.routes.ts`
+**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** `hellennverenaa` comentou “ok” (COMMENTED); aprovação formal não confirmada · **Merge:** `63b88f3` · **Arquivos alterados:** `frontend/src/views/WizardCriacaoTesteView.vue`, `backend/src/routes/pecas.routes.ts`
 
 - **Objetivo:** desacoplar cargas, alinhar RBAC da busca com uso permitido no wizard, mostrar sugestões durante digitação/foco, tratar loading/vazio/erro, respostas atrasadas e seleção.
 - **Arquivos prováveis:** frontend `frontend/src/views/WizardCriacaoTesteView.vue`; backend `backend/src/routes/pecas.routes.ts`; banco leitura `catalogo_pecas`.
 - **Dependências:** nenhuma para correção isolada; usar achados da TASK-001 se disponíveis. **Paralelo:** sim, com TASK-001/002/003/005; **não** com TASK-013 ou TASK-007 se estas alterarem `pecas.routes.ts`. **Risco:** médio.
 - **Aceite:** sugestões mudam ao digitar sem blur/refocus; seleção e acesso autorizado funcionam; erro de outra carga não apaga resultados. **Testes necessários:** digitação rápida, foco, vazio, permissão, busca de vários termos, cadastro individual de catálogo. **Rollback:** reverter branch/commit sem alterar DB.
 
-- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em revisão até integração/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
+- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Integrado — validação pendente até aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
 
 #### TASK-005 — Reorganizar sidebar e layout
 
-**Status:** [ ] Não iniciado · [ ] Em andamento · [x] Em revisão · [ ] Concluído · [ ] Bloqueado
+**Status:** Integrado — validação pendente (PR #8 merged; aceite funcional pendente)
 
-**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** — · **Merge:** — · **Arquivos alterados:** `frontend/src/views/DashboardView.vue`
+**Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8) · **Revisor/aprovação:** `hellennverenaa` comentou “ok” (COMMENTED); aprovação formal não confirmada · **Merge:** `63b88f3` · **Arquivos alterados:** `frontend/src/views/DashboardView.vue`
 
 - **Objetivo:** ordenar navegação conforme dependências reais e páginas existentes; retirar breadcrumb; mover nome, perfil e sair ao rodapé da sidebar; adaptar estado recolhido/mobile sem alterar RBAC.
 - **Arquivos prováveis:** frontend `frontend/src/views/DashboardView.vue`, estilos locais e, apenas se necessário, `frontend/src/router/index.ts`; backend/banco nenhum.
 - **Dependências:** nenhuma. **Paralelo:** sim, com TASK-001/004; não com outra tarefa que altere `DashboardView.vue`. **Risco:** baixo/médio.
 - **Aceite:** menu reflete fluxo, perfis veem mesmas permissões, logout funciona, nenhum vazio no topo, responsivo. **Testes necessários:** desktop/mobile, sidebar aberta/fechada, login/logout e perfis. **Rollback:** reverter commit visual.
 
-- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Em revisão até integração/aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
+- **Entrega local (2026-10-13):** código implementado; builds backend/frontend aprovados. Validação funcional autenticada e PR/merge pendentes; manter Integrado — validação pendente até aceite, não marcar Concluído. Detalhes e limitações no registro final desta entrega.
 
 #### TASK-006 — Validar código numérico e retirar Temporada do uso ativo
 
@@ -548,7 +548,7 @@ Itens abaixo existem no código; marcar somente após regressão em ambiente apr
 
 #### TASK-021A — Corrigir campo da foto de ocorrência
 
-**Status:** Em revisão (PR #8 aberto; upload autenticado pendente) · **Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8)
+**Status:** Integrado — validação pendente (PR #8 merged em `63b88f3`; upload autenticado pendente) · **Responsável:** Codex · **Branch:** `feature/task-004-005-021a-correcoes-locais` · **Commit:** `d3257ad` · **PR:** [#8](https://github.com/hellennverenaa/erp-modelagem/pull/8)
 
 - **Escopo:** somente alinhar o FormData da ocorrência ao `upload.single('file')` existente. Arquivo: `frontend/src/views/BipagemView.vue`. Não implementar anexos de inspeção nem mudar armazenamento/permissões.
 - **Exceção de dependência (2026-10-13):** antecipada em relação à TASK-015 por autorização do usuário para as três correções locais; não altera o fluxo de execução da OT. TASK-021 permanece não iniciada para o restante do escopo; reservar BipagemView sem edição concorrente.
@@ -719,6 +719,8 @@ O procedimento de [`docs/GIT.md`](docs/GIT.md) prevalece para Git. Cada entrega 
 | **Proposto** `GET /ordens-teste/:id/fluxo` | Inexistente; leitores pegam `modelo.rotas` → ID da OT | Inexistente → etapas do snapshot, status de execução e sinalizador de legado | Bipagem, TV, Torre se necessário; fallback de OT antiga explicitado |
 | `POST /rastreamentos/bipar-entrada` e `/bipar-saida` | OT/setor/crachá/tipo → OT + identificador de etapa quando ambíguo | Rastreamento → rastreamento com etapa/status | `BipagemView`; payload legado aceito se etapa puder ser inferida sem ambiguidade |
 | `GET /dashboard/kpis` | Filtros atuais → planta/período/status com semântica documentada | KPIs atuais → KPIs com escopo, atualização e contagens da execução | `DashboardGerencialView`; contrato versionado ou campos aditivos |
+| `POST /inspecoes/:id/anexos` (TASK-021B) | Endpoint antes ausente → multipart com imagem no campo `file`, até 10 MB | 201 → metadados de Anexo (`entidadeTipo=inspecoes`, `entidadeId`, `caminhoArquivo`); erros 400/401/403/404/413/500 | JWT + tela de inspeção + edição no POST; escopo de planta antes do arquivo; UI retém falhas para retry, sem recriar inspeção |
+| `GET /inspecoes/:id/anexos` (TASK-021B) | UUID da inspeção | Lista de metadados ordenada por criação | JWT + tela de inspeção + escopo da planta da OT; nenhum novo acesso à rota estática de uploads |
 | Datas de OT em todos os endpoints | `datetime-local`/ISO ambíguo → ISO 8601 com offset no request | `timestamp` sem offset → ISO 8601 UTC para registros novos | `GestaoOrdensView`, wizard, Torre, TV; históricos tratados por estratégia TASK-019 |
 
 **Protocolo de mudança:** backend e frontend não mudam contrato em silêncio. Registrar JSON real de request/response, status HTTP, validação, permissão, versão e consumidores antes de cada PR. Campos novos são aditivos na fase de convivência; remoção de campo requer confirmação de zero consumidores e TASK separada.
@@ -739,6 +741,7 @@ Nenhum teste ou build foi executado durante a criação original deste plano; re
 | TASK-017/018 | Agregações e UX da Torre | Comparar KPIs com SQL, planta/período, evento Socket.IO, ocorrências, qualidade, filtros, carga, responsividade, TV |
 | TASK-019/020 | Datas | Persistir/ler em UTC, exibir em Bahia e outro fuso, virada de dia, prazos, OT antiga, etiqueta/exportação se consumir data |
 | TASK-021A | Campo da foto de ocorrência | Upload/leitura autorizados, rejeição sem permissão; não inclui anexo de inspeção |
+| TASK-021B | Anexos de inspeção | Upload/listagem, RBAC/planta, tamanho/tipo, limpeza após falha e retry de fotos sem nova inspeção |
 | TASK-021/022 | Anexos e mocks | Permissões, upload/leitura, falha, vínculo com OT/inspeção, ausência de dados fictícios em tela ativa |
 | TASK-025 | Código único no banco e erro de conflito | Concorrência nos endpoints individual/agregado, rollback integral, códigos históricos e zeros à esquerda |
 | TASK-023 | Jornada completa, incluindo TASK-024/025 | Checklist da seção 4 e critérios do pedido, OTs novas/históricas, dados íntegros e contratos versionados |
@@ -774,6 +777,8 @@ Para cada falha, registrar reprodução, causa, TASK responsável e resultado ap
 
 ## 16. Regra de atualização contínua do plano
 
+**Fluxo simplificado autorizado pelo usuário (2026-10-13): implementar → validar tecnicamente → commit → push → PR.** Documentação acompanha a mesma entrega. Não exigir aceite manual para publicar, nem criar commit adicional só para registrar aceite ou metadados de Git. Informar no PR os testes funcionais não executados. Não presumir que passaram e não omitir checks técnicos necessários. Pendências manuais não bloqueiam automaticamente sucessoras; gates de contrato, dados, segurança e integração continuam aplicáveis. Esta decisão substitui a exigência anterior de registrar aceite manual antes do commit/PR e de criar atualizações isoladas só com status/link. Estados “Integrado — validação pendente” continuam informativos; decidir avanço pelas dependências técnicas efetivas.
+
 Estas regras são obrigatórias para qualquer desenvolvedor ou agente de IA trabalhando neste repositório. Não dependem da memória da conversa ou da ferramenta utilizada.
 
 1. **Antes de implementar:** ler `AGENTS.md`, `docs/GIT.md`, a TASK, gates, contratos e regressões. Comparar o plano com código e histórico local. Registrar divergências; evidência do repositório prevalece sobre status antigo. Não começar sucessora com gate pendente sem exceção explícita de escopo e risco.
@@ -781,7 +786,7 @@ Estas regras são obrigatórias para qualquer desenvolvedor ou agente de IA trab
 3. **Ao mudar escopo:** atualizar juntas descrição, dependências da TASK, seção 7, contratos, banco, matriz de regressão e rastreabilidade. Novo problema recebe ISS/TASK antes de alterar código. Não apagar diagnóstico histórico: rotular como histórico e acrescentar estado atual com data/evidência.
 4. **Ao entregar ou interromper:** registrar o que foi implementado, o que não foi, validações realizadas e resultados, verificações não executadas e motivos, migrations criadas/aplicadas, rollback e próximo passo. Abandono, bloqueio ou limite da sessão não significa conclusão. Deixar dados suficientes para outra pessoa/agente continuar sem a conversa anterior.
 5. **Ao constatar commit, PR ou merge:** atualizar hashes e links reais. Merge comprova integração, não aprovação nem aceite. Se não houver acesso ao PR, registrar revisor/aprovação como não verificados; não inventar nomes ou datas. Diferenciar histórico local de estado remoto verificado e registrar a data da consulta.
-6. **Antes de encerrar:** reler as seções afetadas e conferir que cabeçalho, status, gates, contratos e registro final concordam. Incluir as mudanças do plano na mesma entrega da implementação, sem exigir hash do próprio commit dentro dele: registrar o hash em atualização posterior quando existir. Apenas uma pessoa edita o plano por vez.
+6. **Antes de encerrar:** reler as seções afetadas e conferir que cabeçalho, status, gates, contratos e registro final concordam. Incluir as mudanças do plano na mesma entrega da implementação, sem exigir hash do próprio commit dentro dele: registrar o hash em uma próxima atualização necessária, sem criar commit exclusivo de aceite/hash/link. Apenas uma pessoa edita o plano por vez.
 
 | Estado da TASK | Quando usar | Libera sucessora? |
 |---|---|---|
@@ -892,3 +897,30 @@ Implementação em andamento na branch `feature/task-004-005-021a-correcoes-loca
 ### Publicação da entrega — 2026-10-13
 
 Por solicitação explícita do usuário, a entrega conjunta foi commitada em `d3257ad` e publicada no repositório `hellennverenaa/erp-modelagem`. [PR #8](https://github.com/hellennverenaa/erp-modelagem/pull/8) aberto pelo plugin GitHub, base `main`, branch `feature/task-004-005-021a-correcoes-locais`. TASK-004/005/021A em revisão; aprovação e merge pendentes. Os registros anteriores sem commit/PR descrevem a etapa local anterior. Validação funcional continua pendente conforme registrado; não marcar Concluído. Esta atualização documental acompanha o mesmo PR em commit posterior.
+
+### Verificação do PR #8 — 2026-10-13
+
+Consulta ao GitHub confirmou PR #8 fechado e integrado à `main`, merge `63b88f3b9f1b2fe96a21bb443a2052942423a6db`. `hellennverenaa` registrou “ok” em revisão do tipo COMMENTED; isso não comprova aprovação formal APPROVED. TASK-004/005/021A passam a Integrado — validação pendente: implementadas e integradas, com os testes funcionais anteriores ainda pendentes. Checkout local permanece na feature em `c577900`; `main` local não foi sincronizada nesta consulta. Registros de publicação/revisão acima são históricos. Atualização documental local ainda sem commit.
+
+### TASK-021B — Anexos de inspeção — início em 2026-10-13
+
+**Status:** Em revisão (entrega preparada para publicação) · **Responsável:** Codex · **Branch:** `fix/task-021b-anexos-inspecao` · **Commit/PR:** não criados.
+
+- Escopo autorizado após recomendação: POST e GET `/inspecoes/:id/anexos`, reuso da tabela `anexos` e middleware de imagens; autorização de tela/edição e planta da OT antes do upload; limpeza do arquivo se a persistência falhar; UI informa falhas e permite reenviar fotos sem criar outra inspeção. Sem migration.
+- Exceção: antecipar parte de TASK-021, sem esperar TASK-015, pois o contrato de fotos de inspeção é independente da execução da rota. TASK-021A integrada, restante da TASK-021 não é automaticamente concluído.
+- Arquivos reservados: `backend/src/controllers/inspecoes.controller.ts`, `backend/src/routes/inspecoes.routes.ts`, `frontend/src/views/InspecaoQualidadeView.vue`; testes focados de anexos. Sem alteração do armazenamento público já existente de `/uploads`; proteção de arquivos estáticos é limitação preexistente, não comprovada por RBAC dos endpoints.
+- Aceite: autorização permitida/negada e planta, ID inexistente/inválido, arquivo ausente/inválido/excessivo, gravação e listagem por inspeção, limpeza após falha, feedback/retry de falha parcial. Ensaios com repositórios simulados não substituem teste autenticado real.
+- Validação anterior TASK-004/005/021A: builds e smoke RBAC já registrados; navegador/login/logout e upload autenticado permanecem pendentes. Sem credenciais/sessão de navegador disponíveis nesta execução; não declarar aceite.
+- Rollback: retirar endpoints/uso novo preservando anexos já gravados e leitura histórica. `git fetch origin` executado; branch criada de `origin/main` integrada com PR #8; atualização documental local anterior preservada.
+
+### TASK-021B — resultado local em 2026-10-13
+
+- Implementado: POST multipart `file` e GET de anexos de inspeção; autorização de leitura pela permissão de tela existente, edição exigida no POST, UUID e planta da OT verificados antes de escrever arquivo. Reuso de MIME/limite de 10 MB do middleware; respostas 400/413 para multipart rejeitado e limpeza do arquivo após falha na gravação do anexo.
+- UI: formatos aceitos alinhados ao backend, falhas visíveis, fotos pendentes preservadas na sessão e botão de retry sem recriar inspeção. Nova finalização bloqueada enquanto fotos anteriores aguardam envio; sair/recarregar perde arquivos locais, avisado na tela. Anexos vinculados à primeira inspeção do grupo, conforme fluxo existente. GET retorna metadados por inspeção; não foi criada tela nova de histórico de fotos.
+- Validação: builds backend/frontend passaram. Testes em `backend/tests/inspecao-anexos.test.cjs` usam repositórios/permissões simulados, rota e Multer reais, arquivos temporários em `/tmp`, sem conexão ou escrita no banco: 13 cenários aprovados mais o teste agregador (14 testes). Cenários: sessão, edição, UUID, planta, escopo, ausência/tipo/campo/tamanho de arquivo, persistência, listagem, acesso a todas plantas e limpeza após falha de persistência.
+- Comando reproduzível: `cd backend` e `npm run build`, depois `node --test --test-isolation=none tests/inspecao-anexos.test.cjs`. A primeira execução identificou um erro no fixture sem sessão (undefined acionava valor default); fixture corrigido para null, sem alterar assertions/controle de acesso. O processo isolado do runner não mostrou diagnóstico neste ambiente; execução sem isolamento passou.
+- Pendências: teste autenticado real de upload/listagem e de retry na interface; aceite das TASK-004/005/021A continua pendente. Armazenamento estático público existente de uploads não foi alterado. Sem migration. Commit/PR da TASK-021B não criados; Em andamento até revisão/aceite.
+
+**Readback final TASK-021B:** `git diff --check` sem erros; build frontend reexecutado após adicionar limpeza de URLs de preview e passou. Builds e testes são locais, não equivalem a aceite autenticado. A tentativa inicial de build na raiz falhou por ausência de package.json; builds corretos foram executados nas duas aplicações independentes.
+
+**Publicação TASK-021B:** autorizada pelo usuário em fluxo implementar/commit/push/PR, com documentação na mesma entrega e pendências funcionais no PR. Builds e testes técnicos já executados e registrados acima. Nenhum aceite manual é exigido para publicar. Commit e link efetivos serão informados na resposta/PR; sem commit adicional exclusivo de registro.
