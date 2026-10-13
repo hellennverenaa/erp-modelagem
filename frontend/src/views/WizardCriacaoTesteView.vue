@@ -62,6 +62,19 @@ interface PecaSelecionada {
   setorCorteOpcaoId: string
 }
 
+interface RotaRascunhoEtapa {
+  setorId: string
+  ordem: number
+  obrigatorio: boolean
+  tipoExecucao: 'SEQUENCIAL' | 'PARALELO'
+  bipagemApenasSaida: boolean
+}
+
+interface RotaRascunhoPayload {
+  rota: RotaRascunhoEtapa[]
+  slasPorSetor: Record<string, number>
+}
+
 // ─── Navegação e Roteamento ──────────────────────────────────────────────────
 const router = useRouter()
 const podeEditarWizard = computed(() =>
@@ -82,13 +95,10 @@ const showBrandManager = ref(false)
 const formModelo = ref({
   nome: '',
   codigoProduto: '',
-  marcaId: '',
-  temporada: 'SS26'
+  marcaId: ''
 })
-const createdModeloId = ref('')
 const createdModeloName = ref('')
 const createdModeloCode = ref('')
-const loadingModelo = ref(false)
 const errorModelo = ref('')
 
 // Passo 2: Peças Técnicas
@@ -125,7 +135,10 @@ function handleClickOutside(event: MouseEvent) {
 
 // Passo 3: Rota
 const routeBuilderRef = ref<any>(null)
+const routeBuilderReady = ref(false)
 const loadingRota = ref(false)
+const rotaRascunho = ref<RotaRascunhoEtapa[]>([])
+const slasPorSetorCapturados = ref<Record<string, number>>({})
 
 // Passo 4: Ordem
 const formOrdem = ref({
@@ -209,36 +222,21 @@ async function submitModelo() {
     errorModelo.value = 'Preencha todos os campos obrigatórios do modelo.'
     return
   }
-
-  loadingModelo.value = true
-  errorModelo.value = ''
-
-  try {
-    const response = await api.post('/admin/modelos', {
-      marcaId: formModelo.value.marcaId,
-      codigoProduto: formModelo.value.codigoProduto.trim(),
-      nome: formModelo.value.nome.trim(),
-      temporada: formModelo.value.temporada
-    })
-
-    const modelo = response.data.modelo || response.data
-    createdModeloId.value = modelo.id
-    createdModeloName.value = modelo.nome
-    createdModeloCode.value = modelo.codigoProduto
-
-    addToast('success', 'Modelo cadastrado com sucesso!')
-    currentStep.value = 2
-    await loadStep2Data()
-  } catch (err: any) {
-    console.error(err)
-    if (err.response?.status === 409) {
-      errorModelo.value = 'Falha: O código do modelo já está em uso.'
-    } else {
-      errorModelo.value = err.response?.data?.error || 'Erro ao cadastrar modelo.'
-    }
-  } finally {
-    loadingModelo.value = false
+  if (!/^[0-9]+$/.test(formModelo.value.codigoProduto.trim())) {
+    errorModelo.value = 'O código do produto deve conter somente números.'
+    return
   }
+
+  errorModelo.value = ''
+  currentStep.value = 2
+  await loadStep2Data()
+}
+
+function sanitizeCodigoProduto(event: Event) {
+  const input = event.target as HTMLInputElement
+  const codigo = input.value.replace(/\D/g, '').slice(0, 50)
+  formModelo.value.codigoProduto = codigo
+  input.value = codigo
 }
 
 // Passo 2: Carregar Catálogo e Opções de Máquinas
@@ -306,22 +304,14 @@ async function submitPecasAndAdvance() {
     addToast('error', 'Adicione pelo menos uma peça ao modelo antes de avançar.')
     return
   }
-
-  loadingModelo.value = true
-  try {
-    if (createdModeloId.value) {
-      await api.post(`/pecas/modelo/${createdModeloId.value}`, {
-        pecas: pecasSelecionadas.value
-      })
-    }
-    addToast('success', `${pecasSelecionadas.value.length} peças vinculadas ao modelo.`)
-    currentStep.value = 3 // Avança para Construtor de Rota
-  } catch (err: any) {
-    console.error('[submitPecasAndAdvance] Erro:', err)
-    addToast('error', 'Erro ao salvar peças do modelo.')
-  } finally {
-    loadingModelo.value = false
+  if (pecasSelecionadas.value.some((peca) => !peca.setorCorteOpcaoId)) {
+    addToast('error', 'Defina uma máquina de corte para cada peça antes de avançar.')
+    return
   }
+
+  addToast('success', `${pecasSelecionadas.value.length} peças prontas para salvar ao finalizar.`)
+  routeBuilderReady.value = true
+  currentStep.value = 3
 }
 
 // Salvar Rota (Passo 3 -> 4)
@@ -332,17 +322,14 @@ function triggerSaveRota() {
   }
   if (routeBuilderRef.value) {
     loadingRota.value = true
-    routeBuilderRef.value.salvarRota()
+    routeBuilderRef.value.salvarRota().finally(() => { loadingRota.value = false })
   }
 }
 
-const slasPorSetorCapturados = ref<Record<string, number>>({})
-
-function onRotaSalva(slas?: Record<string, number>) {
+function onRotaSalva(payload: RotaRascunhoPayload) {
   loadingRota.value = false
-  if (slas) {
-    slasPorSetorCapturados.value = slas
-  }
+  rotaRascunho.value = payload.rota.map((etapa) => ({ ...etapa }))
+  slasPorSetorCapturados.value = { ...payload.slasPorSetor }
   currentStep.value = 4
 }
 
@@ -353,27 +340,50 @@ async function submitOrdem() {
     errorOrdem.value = 'Selecione uma planta de fabricação.'
     return
   }
+  if (rotaRascunho.value.length === 0) {
+    errorOrdem.value = 'Conclua a construção da rota antes de finalizar o teste.'
+    currentStep.value = 3
+    return
+  }
 
   loadingOrdem.value = true
   errorOrdem.value = ''
 
   try {
-    const response = await api.post('/ordens-teste', {
-      modeloId: createdModeloId.value,
-      plantaId: formOrdem.value.plantaId,
-      prioridadePcp: formOrdem.value.prioridadePcp,
-      possuiCaixaTeste: formOrdem.value.possuiCaixaTeste,
-      observacoes: formOrdem.value.observacoes.trim() || null,
-      dataPrevistaProducao: formOrdem.value.dataPrevistaProducao || null,
-      slasPorSetor: Object.keys(slasPorSetorCapturados.value).length > 0 ? slasPorSetorCapturados.value : null,
-      pecas: pecasSelecionadas.value
+    const response = await api.post('/ordens-teste/wizard', {
+      modelo: {
+        marcaId: formModelo.value.marcaId,
+        codigoProduto: formModelo.value.codigoProduto.trim(),
+        nome: formModelo.value.nome.trim(),
+      },
+      pecas: pecasSelecionadas.value.map((peca) => ({
+        catalogoPecaId: peca.id,
+        setorCorteOpcaoId: peca.setorCorteOpcaoId,
+      })),
+      rota: rotaRascunho.value,
+      ordem: {
+        plantaId: formOrdem.value.plantaId,
+        prioridadePcp: formOrdem.value.prioridadePcp,
+        possuiCaixaTeste: formOrdem.value.possuiCaixaTeste,
+        observacoes: formOrdem.value.observacoes.trim() || null,
+        dataPrevistaProducao: formOrdem.value.dataPrevistaProducao || null,
+        slasPorSetor: Object.keys(slasPorSetorCapturados.value).length > 0
+          ? slasPorSetorCapturados.value
+          : null,
+      },
     })
 
     createdOrdem.value = response.data.lote || response.data
+    createdModeloName.value = response.data.modelo?.nome || formModelo.value.nome.trim()
+    createdModeloCode.value = response.data.modelo?.codigoProduto || formModelo.value.codigoProduto.trim()
     addToast('success', 'Ordem de teste gerada com sucesso!')
   } catch (err: any) {
     console.error(err)
-    errorOrdem.value = err.response?.data?.error || 'Erro ao gerar ordem de teste.'
+    if (err.response?.data?.code === 'MODELO_DUPLICATE_CODE') {
+      errorOrdem.value = 'Já existe um modelo com esse código. Volte ao passo 1 e revise o código do produto.'
+    } else {
+      errorOrdem.value = err.response?.data?.error || 'Erro ao finalizar o novo teste.'
+    }
   } finally {
     loadingOrdem.value = false
   }
@@ -413,11 +423,14 @@ async function imprimirEtiqueta(tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL' = 'LO
 
 function resetWizard() {
   currentStep.value = 1
-  formModelo.value = { nome: '', codigoProduto: '', marcaId: '', temporada: 'SS26' }
-  createdModeloId.value = ''
+  routeBuilderRef.value?.resetDraft()
+  routeBuilderReady.value = false
+  formModelo.value = { nome: '', codigoProduto: '', marcaId: '' }
   createdModeloName.value = ''
   createdModeloCode.value = ''
   pecasSelecionadas.value = []
+  rotaRascunho.value = []
+  slasPorSetorCapturados.value = {}
   createdOrdem.value = null
   formOrdem.value = { 
     plantaId: plantas.value[0]?.id || '', 
@@ -580,7 +593,7 @@ function resetWizard() {
       </div>
 
       <!-- PASSO 1: MODELO -->
-      <div v-else-if="currentStep === 1" class="wiz-step-panel">
+      <div v-if="!createdOrdem && currentStep === 1" class="wiz-step-panel">
         <div class="wiz-panel-header">
           <h2 class="wiz-panel-title">Passo 1: Cadastro do Novo Modelo</h2>
           <p class="wiz-panel-subtitle">Insira as informações do modelo a ser fabricado para o teste de produção.</p>
@@ -611,9 +624,13 @@ function resetWizard() {
               <input
                 id="codigoProduto"
                 type="text"
+                inputmode="numeric"
+                pattern="[0-9]*"
                 v-model="formModelo.codigoProduto"
                 placeholder="Ex: 502698"
                 class="form-input"
+                maxlength="50"
+                @input="sanitizeCodigoProduto"
                 required
               />
             </div>
@@ -630,37 +647,26 @@ function resetWizard() {
               />
             </div>
 
-            <div class="form-group col-span-2">
-              <label for="temporada" class="form-label">Temporada</label>
-              <input
-                id="temporada"
-                type="text"
-                v-model="formModelo.temporada"
-                placeholder="Ex: SS26"
-                class="form-input"
-              />
-            </div>
           </div>
 
           <div class="wiz-footer-actions">
             <button type="button" class="btn-secondary" @click="router.push('/dashboard/modelos')">
               <span>Cancelar</span>
             </button>
-            <button type="submit" class="btn-primary" :disabled="loadingModelo">
-              <Loader2 v-if="loadingModelo" :size="16" class="wiz-spinner" aria-hidden="true" />
+            <button type="submit" class="btn-primary">
               <span>Salvar e Avançar para Peças</span>
-              <ArrowRight v-if="!loadingModelo" :size="16" aria-hidden="true" />
+              <ArrowRight :size="16" aria-hidden="true" />
             </button>
           </div>
         </form>
       </div>
 
       <!-- PASSO 2 [NOVO]: CONSTRUÇÃO DE PEÇAS -->
-      <div v-else-if="currentStep === 2" class="wiz-step-panel">
+      <div v-if="!createdOrdem && currentStep === 2" class="wiz-step-panel">
         <div class="wiz-panel-header">
           <h2 class="wiz-panel-title">Passo 2: Construção de Peças do Modelo</h2>
           <p class="wiz-panel-subtitle">
-            Modelo: <strong class="text-slate-900">{{ createdModeloName }}</strong> ({{ createdModeloCode }}).
+            Modelo: <strong class="text-slate-900">{{ formModelo.nome }}</strong> ({{ formModelo.codigoProduto }}).
             Adicione as peças do catálogo e defina a máquina de corte de cada uma.
           </p>
         </div>
@@ -752,23 +758,23 @@ function resetWizard() {
               <ArrowLeft :size="16" aria-hidden="true" />
               <span>Voltar ao Modelo</span>
             </button>
-            <button type="button" class="btn-primary" @click="submitPecasAndAdvance" :disabled="loadingModelo">
-              <Loader2 v-if="loadingModelo" :size="16" class="wiz-spinner" aria-hidden="true" />
-              <span>Salvar Peças e Avançar para Rota</span>
-              <ArrowRight v-if="!loadingModelo" :size="16" aria-hidden="true" />
+            <button type="button" class="btn-primary" @click="submitPecasAndAdvance" :disabled="loadingStep2">
+              <Loader2 v-if="loadingStep2" :size="16" class="wiz-spinner" aria-hidden="true" />
+              <span>Avançar para Rota</span>
+              <ArrowRight v-if="!loadingStep2" :size="16" aria-hidden="true" />
             </button>
           </div>
         </div>
       </div>
 
       <!-- PASSO 3: ROTA DE PRODUÇÃO (antigo Passo 2) -->
-      <div v-else-if="currentStep === 3" class="wiz-step-panel">
+      <div v-show="!createdOrdem && currentStep === 3" class="wiz-step-panel">
         <div class="wiz-panel-header">
           <div class="flex justify-between items-center">
             <div>
               <h2 class="wiz-panel-title">Passo 3: Construtor de Rota de Produção</h2>
               <p class="wiz-panel-subtitle">
-                Modelo: <strong class="text-slate-900">{{ createdModeloName }}</strong> ({{ createdModeloCode }}).
+                Modelo: <strong class="text-slate-900">{{ formModelo.nome }}</strong> ({{ formModelo.codigoProduto }}).
                 Arraste os blocos flutuantes para desenhar o fluxo de fábrica.
               </p>
             </div>
@@ -777,8 +783,8 @@ function resetWizard() {
 
         <div class="wiz-route-builder-container">
           <RouteBuilder
+            v-if="routeBuilderReady"
             ref="routeBuilderRef"
-            :modeloId="createdModeloId"
             :isWizardMode="true"
             :autoEnableMaquinas="autoMaquinas"
             @rota-salva="onRotaSalva"
@@ -792,14 +798,14 @@ function resetWizard() {
           </button>
           <button type="button" class="btn-primary" @click="triggerSaveRota" :disabled="loadingRota">
             <Loader2 v-if="loadingRota" :size="16" class="wiz-spinner" aria-hidden="true" />
-            <span>Salvar Rota e Avançar</span>
+            <span>Avançar para Ordem</span>
             <ArrowRight v-if="!loadingRota" :size="16" aria-hidden="true" />
           </button>
         </div>
       </div>
 
       <!-- PASSO 4: GERAÇÃO DA ORDEM PCP (antigo Passo 3) -->
-      <div v-else-if="currentStep === 4" class="wiz-step-panel">
+      <div v-if="!createdOrdem && currentStep === 4" class="wiz-step-panel">
         <div class="wiz-panel-header">
           <h2 class="wiz-panel-title">Passo 4: Geração da Ordem de Teste</h2>
           <p class="wiz-panel-subtitle">Configure as opções PCP da fábrica para persistir o teste do modelo.</p>
@@ -816,11 +822,11 @@ function resetWizard() {
           <div class="wiz-summary-grid">
             <div class="wiz-sum-item">
               <span class="wiz-sum-label">Modelo:</span>
-              <strong class="wiz-sum-val">{{ createdModeloName }}</strong>
+              <strong class="wiz-sum-val">{{ formModelo.nome }}</strong>
             </div>
             <div class="wiz-sum-item">
               <span class="wiz-sum-label">Código:</span>
-              <strong class="wiz-sum-val">{{ createdModeloCode }}</strong>
+              <strong class="wiz-sum-val">{{ formModelo.codigoProduto }}</strong>
             </div>
             <div class="wiz-sum-item">
               <span class="wiz-sum-label">Peças Cadastradas:</span>
@@ -828,7 +834,7 @@ function resetWizard() {
             </div>
             <div class="wiz-sum-item">
               <span class="wiz-sum-label">Status da Rota:</span>
-              <strong class="wiz-sum-val text-green-700">Mapeada no Banco Local</strong>
+              <strong class="wiz-sum-val text-green-700">Pronta para salvar ao finalizar</strong>
             </div>
           </div>
         </div>
@@ -893,7 +899,7 @@ function resetWizard() {
             </button>
             <button type="submit" class="btn-primary" :disabled="loadingOrdem">
               <Loader2 v-if="loadingOrdem" :size="16" class="wiz-spinner" aria-hidden="true" />
-              <span>Gerar Ordem de Teste</span>
+              <span>Finalizar Novo Teste</span>
               <CheckCircle v-if="!loadingOrdem" :size="16" aria-hidden="true" />
             </button>
           </div>
