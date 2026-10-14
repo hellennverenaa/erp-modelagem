@@ -31,7 +31,7 @@ const adminController = new AdminController();
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/usuarios', exigirAdminAutomacao, adminController.getUsuarios);
+router.get('/usuarios', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.getUsuarios);
 
 /**
  * @swagger
@@ -48,7 +48,7 @@ router.get('/usuarios', exigirAdminAutomacao, adminController.getUsuarios);
  *       401:
  *         description: Não autorizado
  */
-router.get('/perfis', exigirAdminAutomacao, adminController.getPerfis);
+router.get('/perfis', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.getPerfis);
 
 /**
  * @swagger
@@ -74,7 +74,7 @@ router.get('/perfis', exigirAdminAutomacao, adminController.getPerfis);
  *       403: { description: Acesso restrito a administradores }
  *       409: { description: Nome duplicado ou reservado }
  */
-router.post('/perfis', exigirAdminAutomacao, adminController.createPerfil);
+router.post('/perfis', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.createPerfil);
 
 /**
  * @swagger
@@ -106,7 +106,7 @@ router.post('/perfis', exigirAdminAutomacao, adminController.createPerfil);
  *       404: { description: Perfil não encontrado }
  *       409: { description: Perfil protegido, nome duplicado ou usuários vinculados }
  */
-router.patch('/perfis/:id', exigirAdminAutomacao, adminController.updatePerfil);
+router.patch('/perfis/:id', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.updatePerfil);
 
 /**
  * @swagger
@@ -124,7 +124,7 @@ router.patch('/perfis/:id', exigirAdminAutomacao, adminController.updatePerfil);
  *         description: Não autorizado
  */
 router.get('/setores', exigirAlgumaPermissaoOuAdminAutomacao([
-  'TELA_BIPAGEM', 'TELA_INSPECAO_QUALIDADE', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE',
+  'TELA_BIPAGEM', 'TELA_INSPECAO_QUALIDADE', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_GESTAO_RBAC',
 ]), adminController.getSetores);
 
 /**
@@ -316,9 +316,9 @@ router.post('/modelos', exigirAlgumaPermissao([
  *       500:
  *         description: Erro interno do servidor
  */
-router.get('/permissoes/catalogo', exigirAdminAutomacao, adminController.getCatalogoPermissoes);
+router.get('/permissoes/catalogo', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.getCatalogoPermissoes);
 router.get('/auditoria/rbac', exigirAdminAutomacao, adminController.getAuditoriaRbac);
-router.get('/permissoes/:perfilId', exigirAdminAutomacao, adminController.getPermissoes);
+router.get('/permissoes/:perfilId', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.getPermissoes);
 
 /**
  * @swagger
@@ -382,7 +382,7 @@ router.get('/permissoes/:perfilId', exigirAdminAutomacao, adminController.getPer
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/permissoes', exigirAdminAutomacao, adminController.updatePermissoes);
+router.put('/permissoes', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.updatePermissoes);
 
 /**
  * @swagger
@@ -429,6 +429,6 @@ router.put('/permissoes', exigirAdminAutomacao, adminController.updatePermissoes
  *       500:
  *         description: Erro interno do servidor
  */
-router.put('/usuarios/:id/perfil', exigirAdminAutomacao, adminController.updateUsuarioPerfil);
+router.put('/usuarios/:id/perfil', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.updateUsuarioPerfil);
 
 export default router;

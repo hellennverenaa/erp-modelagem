@@ -13,6 +13,7 @@ import { EntityManager, In, IsNull } from 'typeorm';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 import { carregarCatalogoRbac } from '../services/rbac-catalog.service';
+import { perfilPossuiPermissao } from '../services/rbac.service';
 import { AuditLog } from '../entities/AuditLog';
 import { modeloIdentificacaoSchema } from '../schemas/modelo.schema';
 import { ModelPiecesError, ModelPieceInput, saveModelPieces } from '../services/model-pieces.service';
@@ -28,6 +29,13 @@ async function auditarRbac(manager: EntityManager, req: Request, acao: string, e
     dadosNovos: novos,
     ipAddress: req.ip || null,
   }));
+}
+
+function isAutomationActor(req: Request): boolean {
+  const user = req.user;
+  return !!user &&
+    user.perfilNome?.trim().toUpperCase() === PERFIL_ADMIN_AUTOMACAO &&
+    ehUsuarioAdminAutomacao(user.usuario || '');
 }
 
 // ─── Schema de validação para criação de Modelo ─────────────────────────────
@@ -156,13 +164,15 @@ export class AdminController {
   /**
    * Lista todos os perfis cadastrados no sistema.
    */
-  public async getPerfis(_req: Request, res: Response): Promise<Response> {
+  public async getPerfis(req: Request, res: Response): Promise<Response> {
     try {
       const perfilRepo = AppDataSource.getRepository(Perfil);
       const perfis = await perfilRepo.find({
         order: { nome: 'ASC' }
       });
-      return res.json(perfis);
+      return res.json(isAutomationActor(req)
+        ? perfis
+        : perfis.filter((perfil) => perfil.nome !== PERFIL_ADMIN_AUTOMACAO));
     } catch (error) {
       console.error('[AdminController] Erro ao listar perfis:', error);
       return res.status(500).json({ error: 'Erro ao listar perfis' });
@@ -236,6 +246,20 @@ export class AdminController {
       const perfil = await perfilRepo.findOne({ where: { id: id.data } });
       if (!perfil) {
         return res.status(404).json({ error: 'Perfil não encontrado.', code: 'PERFIL_NOT_FOUND' });
+      }
+
+      if (!isAutomationActor(req) && perfil.nome === PERFIL_ADMIN_AUTOMACAO) {
+        return res.status(403).json({
+          error: 'O perfil ADMIN_AUTOMACAO só pode ser administrado pela equipe de automação.',
+          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+        });
+      }
+
+      if (!isAutomationActor(req) && parsed.data.ativo === false && await perfilPossuiPermissao(perfil.id, 'TELA_GESTAO_RBAC')) {
+        return res.status(403).json({
+          error: 'Somente a equipe de automação pode revogar acesso à Matriz de Acessos.',
+          code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
+        });
       }
 
       if (['ADMIN', 'VISUALIZADOR', PERFIL_ADMIN_AUTOMACAO].includes(perfil.nome) && (
@@ -636,14 +660,19 @@ export class AdminController {
   /**
    * Lista todos os usuários cadastrados no sistema (com perfil e planta).
    */
-  public async getUsuarios(_req: Request, res: Response): Promise<Response> {
+  public async getUsuarios(req: Request, res: Response): Promise<Response> {
     try {
       const userRepo = AppDataSource.getRepository(Usuario);
       const users = await userRepo.find({
         relations: { perfil: true, setor: true, planta: true },
         order: { nomeCompleto: 'ASC' }
       });
-      return res.json(users.map((user) => ({
+      const visibleUsers = isAutomationActor(req)
+        ? users
+        : users.filter((user) =>
+          user.perfil?.nome !== PERFIL_ADMIN_AUTOMACAO && !ehUsuarioAdminAutomacao(user.usuario),
+        );
+      return res.json(visibleUsers.map((user) => ({
         id: user.id,
         nomeCompleto: user.nomeCompleto,
         usuario: user.usuario,
@@ -673,10 +702,24 @@ export class AdminController {
    */
   public async getPermissoes(req: Request, res: Response): Promise<Response> {
     try {
-      const { perfilId } = req.params;
+      const parsedPerfilId = z.string().uuid().safeParse(req.params.perfilId);
+      if (!parsedPerfilId.success) {
+        return res.status(400).json({ error: 'Identificador de perfil inválido.', code: 'PERFIL_ID_INVALID' });
+      }
+      const perfilId = parsedPerfilId.data;
+      const profile = await AppDataSource.getRepository(Perfil).findOne({ where: { id: perfilId } });
+      if (!profile) {
+        return res.status(404).json({ error: 'Perfil não encontrado.', code: 'PERFIL_NOT_FOUND' });
+      }
+      if (!isAutomationActor(req) && profile.nome === PERFIL_ADMIN_AUTOMACAO) {
+        return res.status(403).json({
+          error: 'A matriz do perfil ADMIN_AUTOMACAO é restrita à equipe de automação.',
+          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+        });
+      }
       const permissaoRepo = AppDataSource.getRepository(PerfilPermissao);
       const permissoes = await permissaoRepo.find({
-        where: { perfilId: perfilId as string },
+        where: { perfilId },
         relations: { setor: true }
       });
       return res.json(permissoes);
@@ -766,6 +809,14 @@ export class AdminController {
       normalizedItems.set(`${normalized.perfilId}|${normalized.setorId || ''}|${normalized.acao}`, normalized);
     }
 
+    const automationActor = isAutomationActor(req);
+    if (!automationActor && [...normalizedItems.values()].some((item) => item.acao === 'TELA_GESTAO_RBAC')) {
+      return res.status(403).json({
+        error: 'Somente a equipe de automação pode conceder ou revogar acesso à Matriz de Acessos.',
+        code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
+      });
+    }
+
     try {
       const savedItems = await AppDataSource.transaction(async (manager) => {
         const items = [...normalizedItems.values()];
@@ -823,6 +874,12 @@ export class AdminController {
         if (profiles.length !== profileIds.length) {
           throw Object.assign(new Error('Um ou mais perfis não existem ou estão inativos.'), { statusCode: 404, code: 'PERFIL_NOT_FOUND' });
         }
+        if (!automationActor && profiles.some((profile) => profile.nome === PERFIL_ADMIN_AUTOMACAO)) {
+          throw Object.assign(new Error('O perfil ADMIN_AUTOMACAO só pode ser administrado pela equipe de automação.'), {
+            statusCode: 403,
+            code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+          });
+        }
 
         const sectorIds = [...new Set(itemsToSave.map(({ setorId }) => setorId).filter((id): id is string => !!id))];
         if (sectorIds.length > 0) {
@@ -869,6 +926,9 @@ export class AdminController {
       if (error?.statusCode === 400) {
         return res.status(400).json({ error: error.message, code: error.code });
       }
+      if (error?.statusCode === 403) {
+        return res.status(403).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController.updatePermissoes] Erro crítico ao atualizar permissões:', error);
       return res.status(500).json({ error: 'Erro ao atualizar permissões no banco de dados.' });
     }
@@ -898,6 +958,15 @@ export class AdminController {
         return res.status(404).json({ error: 'Usuário não encontrado.' });
       }
 
+      if (!isAutomationActor(req) && (
+        user.perfil?.nome === PERFIL_ADMIN_AUTOMACAO || ehUsuarioAdminAutomacao(user.usuario)
+      )) {
+        return res.status(403).json({
+          error: 'Contas e perfil ADMIN_AUTOMACAO só podem ser alterados pela equipe de automação.',
+          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+        });
+      }
+
       const perfilIdValidado = z.string().uuid().safeParse(perfilId);
       if (!perfilIdValidado.success) {
         return res.status(400).json({ error: 'Identificador de perfil inválido.', code: 'PERFIL_ID_INVALID' });
@@ -906,6 +975,19 @@ export class AdminController {
       const novoPerfil = await perfilRepo.findOne({ where: { id: perfilIdValidado.data, ativo: true } });
       if (!novoPerfil) {
         return res.status(404).json({ error: 'Perfil não encontrado ou inativo.', code: 'PERFIL_NOT_FOUND' });
+      }
+
+      if (!isAutomationActor(req) && novoPerfil.id !== user.perfilId) {
+        const [origemTemAcessoRbac, destinoTemAcessoRbac] = await Promise.all([
+          perfilPossuiPermissao(user.perfilId, 'TELA_GESTAO_RBAC'),
+          perfilPossuiPermissao(novoPerfil.id, 'TELA_GESTAO_RBAC'),
+        ]);
+        if (origemTemAcessoRbac || destinoTemAcessoRbac) {
+          return res.status(403).json({
+            error: 'Somente a equipe de automação pode conceder ou revogar acesso à Matriz de Acessos.',
+            code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
+          });
+        }
       }
 
       const usuarioAdminAutomacao = ehUsuarioAdminAutomacao(user.usuario);

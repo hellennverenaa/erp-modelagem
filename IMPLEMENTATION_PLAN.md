@@ -152,7 +152,7 @@ Desativar a função de checklist no ERP inteiro enquanto ela não fizer parte d
 
 ### 28 — TASK-028: Reorganizar “Iniciar Novo Teste” para ordem PCP antes da configuração de Modelagem
 
-**Estado:** implementação realizada conforme autorização da usuária em 2026-10-14; validação funcional pela usuária pendente.
+**Estado:** implementação commitada na branch `feature/erp-pontos-criticos` em `405c1cf`; validação manual ponta a ponta ainda pendente. A usuária confirmou por captura de tela a criação do modelo e da ordem no fluxo anterior aos últimos ajustes visuais.
 
 **Regra informada pela usuária em 2026-10-14:** o PCP será responsável por gerar a ordem. A sequência deve ser: (1) criação do modelo, (2) criação da ordem pelo PCP e, depois, os passos de peças e rota que serão feitos pela Modelagem.
 
@@ -182,4 +182,16 @@ Desativar a função de checklist no ERP inteiro enquanto ela não fizer parte d
 
 **Feedback visual/fluxo da usuária em 2026-10-14 — implementado:** no PCP, a previsão de corte aparece somente no Passo 2, obrigatória e editável. O Passo 1 salva apenas a identificação do modelo. `Modelo.dataCorte` aceita nulo; a API grava a previsão enviada no Passo 2 e cria a ordem na mesma transação. O indicador do PCP apresenta apenas Modelo e Ordem; Peças e Rota continuam no indicador da Modelagem e na fila de pendências. O dropdown de Marca permanece sincronizado com as mudanças do modal: remove marcas inativas, inclui reativadas, atualiza renomeadas e limpa seleção inativa em novo cadastro, sem perder a identificação de um modelo existente já selecionado. **Verificação técnica:** builds do backend e frontend passaram e `git diff --check` passou; nenhum teste automatizado foi executado e nenhuma migration foi necessária. **Validação manual pendente:** conferir a previsão somente no Passo 2, salvar modelo e ordem, e verificar o dropdown depois de desativar, reativar e renomear marcas; concluir também a validação ponta a ponta da fila e liberação da Modelagem.
 
-**Organização Git:** permanecer na branch `feature/erp-pontos-criticos`, sem commit até a usuária validar este ponto ao iniciar o próximo, conforme o fluxo combinado.
+**Organização Git:** commit `405c1cf` (`feat(pcp): reorganiza cadastro e configuração de ordens`) criado a pedido da usuária. A branch continua `feature/erp-pontos-criticos`; não houve push ou PR.
+
+### 29 — TASK-029: Completar o acesso à fila da Modelagem e o vínculo de peças
+
+**Estado:** pendente de implementação e validação.
+
+**Escopo:** garantir o acesso da Modelagem à fila de ordens, permitir cadastrar/vincular peças por sub-setor e preservar o Catálogo de Peças como cadastro mestre.
+
+### 30 — TASK-030: Corrigir descarte e delegação de acesso RBAC
+
+**Estado:** validado pela usuária ao avançar para os próximos pontos; builds do backend e frontend passaram e `git diff --check` passou. Migrations criadas, ainda não aplicadas.
+
+**Escopo:** corrigir “Descartar rascunho” e delegar acesso à Matriz via RBAC. Somente a equipe de automação concede/revoga esse acesso e administra `ADMIN_AUTOMACAO`.

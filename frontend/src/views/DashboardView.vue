@@ -42,7 +42,7 @@ const navItems = [
   { to: '/dashboard/ordens', label: 'Gestão de Ordens', icon: ClipboardList, permission: 'TELA_GESTAO_ORDENS' },
   { to: '/dashboard/bipagem', label: 'Bipagem Operacional', icon: Barcode, permission: 'TELA_BIPAGEM' },
   { to: '/dashboard/inspecao', label: 'Inspeção de Qualidade', icon: ShieldCheck, permission: 'TELA_INSPECAO_QUALIDADE' },
-  { to: '/dashboard/rbac', label: 'Permissões RBAC', icon: ShieldCheck, permission: 'RBAC_ADMIN_AUTOMACAO' },
+  { to: '/dashboard/rbac', label: 'Permissões RBAC', icon: ShieldCheck, permission: 'TELA_GESTAO_RBAC' },
 ]
 
 const navSections = [
@@ -60,7 +60,7 @@ const visibleNavSections = computed(() => {
       ...section,
       items: section.items.filter(item => {
         const allowed = item.to === '/dashboard/rbac'
-          ? authStore.isAdminAutomacao.value
+          ? authStore.isAdminAutomacao.value || authStore.hasPermission(item.permission)
           : authStore.hasPermission(item.permission)
 
         return allowed && (!query || normalizeSearchText(item.label).includes(query))

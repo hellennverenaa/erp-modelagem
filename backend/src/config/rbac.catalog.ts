@@ -7,6 +7,7 @@ export interface RbacScreenDefinition {
 }
 
 export const RBAC_SCREENS: RbacScreenDefinition[] = [
+  { routeName: 'rbac', routePath: '/dashboard/rbac', label: 'Gestão de Perfis & Permissões', viewPermission: 'TELA_GESTAO_RBAC' },
   { routeName: 'gerencial', routePath: '/dashboard/gerencial', label: 'Torre de Controle', viewPermission: 'TELA_TORRE_CONTROLE' },
   { routeName: 'modelos', routePath: '/dashboard/modelos', label: 'Catálogo de Modelos', viewPermission: 'TELA_CATALOGO_MODELOS', editPermission: 'EDITAR_TELA_CATALOGO_MODELOS' },
   { routeName: 'catalogo-pecas', routePath: '/dashboard/catalogo-pecas', label: 'Catálogo de Peças', viewPermission: 'TELA_CATALOGO_PECAS', editPermission: 'EDITAR_TELA_CATALOGO_PECAS' },
