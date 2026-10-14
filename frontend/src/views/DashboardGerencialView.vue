@@ -235,28 +235,25 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="tc-root min-h-screen bg-[#F8FAFC] pb-20 text-slate-900 antialiased selection:bg-slate-900 selection:text-white">
-    <div class="max-w-[1780px] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+  <div class="tc-root min-h-full w-full bg-[#F8FAFC] pb-8 text-slate-900 antialiased selection:bg-slate-900 selection:text-white">
+    <div class="mx-auto w-full max-w-[1780px] space-y-5 px-4 py-4 sm:px-6 sm:py-5">
 
       <!-- Cabeçalho executivo -->
       <header class="flex flex-col gap-5 border-b border-[#E2E8F0] pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div class="flex min-w-0 items-start gap-3.5">
-          <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm">
+        <div class="flex min-w-0 items-center gap-3">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm">
             <Layers :size="21" />
           </div>
           <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Torre de Controle</span>
-              <span class="text-slate-300">·</span>
-              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-600">Telemetria industrial</span>
+            <div class="flex flex-wrap items-center gap-3">
+              <h1 class="text-2xl font-bold tracking-tight text-slate-900">
+                Torre de Controle de Produção
+              </h1>
               <span class="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">
                 Telemetria de Ciclo &amp; SLA
               </span>
             </div>
-            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">
-              Torre de Controle de Produção
-            </h1>
-            <p class="mt-1 text-xs text-slate-500">
+            <p class="mt-0.5 text-sm text-slate-500">
               Lead Time, Saúde Operacional, qualidade fabril e retrabalho
             </p>
           </div>
@@ -314,26 +311,26 @@ onUnmounted(() => {
 
       <!-- Skeleton alinhado à arquitetura 4 / 8-4 / 5-7 -->
       <div v-if="loading" class="grid grid-cols-1 gap-5 animate-pulse sm:grid-cols-2 lg:grid-cols-12" aria-label="Carregando indicadores">
-        <div v-for="item in 4" :key="'kpi-' + item" class="h-36 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-1 lg:col-span-3">
+        <div v-for="item in 4" :key="'kpi-' + item" class="h-[210px] rounded-xl border border-slate-200/80 bg-white p-5 sm:col-span-1 lg:col-span-3">
           <div class="h-3 w-24 rounded bg-slate-200"></div>
           <div class="mt-6 h-8 w-28 rounded bg-slate-200"></div>
           <div class="mt-5 h-2 w-full rounded bg-slate-100"></div>
         </div>
-        <div class="h-72 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-2 lg:col-span-8">
+        <div class="h-96 rounded-xl border border-slate-200/80 bg-white p-5 sm:col-span-2 lg:col-span-8">
           <div class="h-4 w-48 rounded bg-slate-200"></div>
           <div class="mt-7 h-48 rounded-xl bg-slate-100"></div>
         </div>
-        <div class="h-72 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-2 lg:col-span-4">
+        <div class="h-96 rounded-xl border border-slate-200/80 bg-white p-5 sm:col-span-2 lg:col-span-4">
           <div class="h-4 w-40 rounded bg-slate-200"></div>
           <div class="mt-5 h-20 rounded-lg bg-slate-100"></div>
           <div class="mt-4 h-20 rounded-lg bg-slate-100"></div>
         </div>
-        <div class="h-64 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-1 lg:col-span-5">
+        <div class="h-80 rounded-xl border border-slate-200/80 bg-white p-5 sm:col-span-1 lg:col-span-5">
           <div class="h-4 w-40 rounded bg-slate-200"></div>
           <div class="mx-auto mt-7 h-28 w-44 rounded-t-full bg-slate-100"></div>
           <div class="mt-5 h-2 rounded bg-slate-100"></div>
         </div>
-        <div class="h-64 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-1 lg:col-span-7">
+        <div class="h-80 rounded-xl border border-slate-200/80 bg-white p-5 sm:col-span-1 lg:col-span-7">
           <div class="h-4 w-56 rounded bg-slate-200"></div>
           <div class="mt-6 space-y-5">
             <div class="h-7 rounded bg-slate-100"></div>
@@ -372,10 +369,10 @@ onUnmounted(() => {
                   <ImageIcon :size="16" />
                 </div>
                 <div>
-                  <h3 class="text-sm font-mono font-bold text-white">
+                  <h3 class="text-sm font-bold text-white">
                     Registro de Não Conformidade
                   </h3>
-                  <span class="text-[11px] font-mono text-slate-400">
+                  <span class="text-[11px] tabular-nums text-slate-400">
                     Foto {{ fotoIndexAtiva + 1 }} de {{ modalGaleriaFotos.length }}
                   </span>
                 </div>
@@ -436,12 +433,12 @@ onUnmounted(() => {
 
             <!-- Footer do Modal -->
             <div class="flex items-center justify-between px-6 py-3.5 border-t border-slate-800 bg-slate-900/90">
-              <span class="text-[11px] font-mono text-slate-400">
+              <span class="text-[11px] text-slate-400">
                 Evidência vinculada à Ordem de Produção
               </span>
               <button
                 type="button"
-                class="px-4 py-2 bg-white hover:bg-slate-100 text-slate-900 text-xs font-mono font-bold rounded-xl transition-all active:scale-95 cursor-pointer shadow-xs"
+                class="px-4 py-2 bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold rounded-xl transition-all active:scale-95 cursor-pointer shadow-xs"
                 @click="fecharGaleria"
               >
                 Fechar Visualização

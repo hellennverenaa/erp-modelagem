@@ -34,6 +34,11 @@
 ### 23 — TASK-023: Validar a jornada integrada
 **Estado: pendente.** Validar o fluxo completo de modelo, peças, rota, ordem, bipagem e Torre, incluindo cadastros individuais, permissões, anexos, horários e integridade dos dados.
 
+### 24 — TASK-024: Refinar a integração visual da Torre de Controle
+**Estado: implementação concluída; validação visual pendente. Dependência: TASK-018.** `frontend/src/index.css` voltou a herdar a fonte global definida em `App.vue`; `DashboardView.vue` alinha a busca e remove o padding somente na rota gerencial; `DashboardGerencialView.vue` compacta o cabeçalho e o espaçamento do conteúdo; `DashboardGerencialMetrics.vue` aplica os cards com microinterações, melhora os KPIs, identifica pontos do gráfico e equilibra FPY/retrabalho. Contrato da API, WebSocket e galeria preservados. Sem alterações de backend ou migrations.
+
+**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros. Não foi possível iniciar o servidor Vite para inspeção visual: o sandbox bloqueou a abertura de `127.0.0.1:5173` (`EPERM`). A verificação visual responsiva em desktop/mobile permanece pendente; nenhum teste funcional foi executado.
+
 ## Migrations criadas e pendentes de aplicação
 
 - `1791980400000-ConcedeConfiguracaoModeloAdminAutomacao`: concede a ação de configuração do modelo ao perfil de automação.

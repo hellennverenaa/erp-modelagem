@@ -28,11 +28,15 @@ const emit = defineEmits<{
 const leadTimePoints = computed(() => {
   const values = props.kpiA.grafico
   const maxValue = Math.max(...values.map(item => item.leadTimeHoras), 1)
+  const xStart = 55
+  const xEnd = 485
+  const yTop = 18
+  const yBottom = 78
 
   return values.map((item, index) => ({
     item,
-    x: (index / Math.max(1, values.length - 1)) * 520,
-    y: 100 - (item.leadTimeHoras / maxValue) * 80
+    x: xStart + (index / Math.max(1, values.length - 1)) * (xEnd - xStart),
+    y: yBottom - (item.leadTimeHoras / maxValue) * (yBottom - yTop)
   }))
 })
 
@@ -46,7 +50,7 @@ const leadTimeAreaPath = computed(() => {
 
   const first = points[0]
   const last = points[points.length - 1]
-  return leadTimePath.value + ' L ' + last.x.toFixed(1) + ' 100 L ' + first.x.toFixed(1) + ' 100 Z'
+  return leadTimePath.value + ' L ' + last.x.toFixed(1) + ' 78 L ' + first.x.toFixed(1) + ' 78 Z'
 })
 
 const leadTimeMaxValue = computed(() => Math.max(...props.kpiA.grafico.map(item => item.leadTimeHoras), 1))
@@ -56,6 +60,22 @@ function larguraLeadTime(value: number) {
   const maxValue = Math.max(props.kpiA.mediaCaixaTeste, props.kpiA.mediaLotePrincipal, 0)
   if (maxValue <= 0) return 0
   return Math.min(100, Math.max(0, (value / maxValue) * 100))
+}
+
+function rotuloModelo(item: LeadTimeItem) {
+  const modelo = (item.modelo || '').trim().toLocaleUpperCase('pt-BR')
+  if (!modelo) return item.dataInicio ? props.formatDate(item.dataInicio) : item.codigoBarras || 'Ordem'
+  if (modelo.startsWith('AIR MAX')) return 'AIR MAX…'
+  if (modelo.startsWith('RACER CARBON')) {
+    const numeroModelo = modelo.match(/\d+$/)?.[0]
+    return numeroModelo ? 'RACER C. ' + numeroModelo : 'RACER C.'
+  }
+  if (modelo.startsWith('AIR WINFLO')) return 'AIR WINFLO'
+  return modelo.length > 12 ? modelo.slice(0, 11) + '…' : modelo
+}
+
+function rotuloLeadTime(value: number) {
+  return (Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)) + 'h'
 }
 
 function resumoGargalosPorSetorEGravidade() {
@@ -105,7 +125,7 @@ function tituloPonto(item: LeadTimeItem) {
 <template>
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-5">
     <!-- KPI A · WIP -->
-    <section class="sm:col-span-1 lg:col-span-3 rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-sm" aria-label="WIP total">
+    <section class="sm:col-span-1 lg:col-span-3 flex min-h-[210px] flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]" aria-label="WIP total">
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-xs font-semibold text-slate-500">WIP Total</p>
@@ -114,14 +134,22 @@ function tituloPonto(item: LeadTimeItem) {
         <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">Em rota</span>
       </div>
       <div class="mt-5 text-4xl font-bold tracking-tight text-slate-900 tabular-nums">{{ kpiA.totalOrdensAtivas }}</div>
-      <div class="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3 text-[11px] text-slate-500">
-        <span class="h-2 w-2 rounded-full bg-indigo-500"></span>
+      <div class="mt-auto border-t border-slate-100 pt-3">
+        <div class="flex items-center gap-2 text-[11px] text-slate-500">
+          <span class="relative flex h-2 w-2">
+            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-60"></span>
+            <span class="relative inline-flex h-2 w-2 rounded-full bg-indigo-600"></span>
+          </span>
         {{ kpiA.totalOrdensAtivas }} {{ kpiA.totalOrdensAtivas === 1 ? 'ordem ativa registrada' : 'ordens ativas registradas' }}
+        </div>
+        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100" aria-label="Atividade de ordens em acompanhamento">
+          <div class="h-full w-full origin-left rounded-full bg-indigo-500/70 animate-pulse"></div>
+        </div>
       </div>
     </section>
 
     <!-- KPI A · Lead Time Caixa Teste -->
-    <section class="sm:col-span-1 lg:col-span-3 rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-sm" aria-label="Lead time da Caixa Teste">
+    <section class="sm:col-span-1 lg:col-span-3 flex min-h-[210px] flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]" aria-label="Lead time da Caixa Teste">
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-xs font-semibold text-slate-500">Lead Time</p>
@@ -129,17 +157,17 @@ function tituloPonto(item: LeadTimeItem) {
         </div>
         <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">Média atual</span>
       </div>
-      <div class="mt-5 text-3xl font-bold tracking-tight text-indigo-700 tabular-nums">{{ formatHour(kpiA.mediaCaixaTeste) }}</div>
-      <div class="mt-5">
+      <div class="mt-5 text-3xl font-bold tracking-tight text-slate-900 tabular-nums">{{ formatHour(kpiA.mediaCaixaTeste) }}</div>
+      <div class="mt-auto pt-5">
         <div class="h-2 overflow-hidden rounded-full bg-slate-100" :title="'Proporção em relação à maior média exibida'">
-          <div class="h-full rounded-full bg-indigo-600 transition-all" :style="{ width: larguraLeadTime(kpiA.mediaCaixaTeste) + '%' }"></div>
+          <div class="h-full rounded-full bg-indigo-600 transition-all duration-500" :style="{ width: larguraLeadTime(kpiA.mediaCaixaTeste) + '%' }"></div>
         </div>
-        <p class="mt-2 text-[10px] text-slate-400">Comparação relativa entre as médias atuais</p>
+        <p class="mt-2 text-[10px] text-slate-400 tabular-nums">{{ Math.round(larguraLeadTime(kpiA.mediaCaixaTeste)) }}% da maior média atual</p>
       </div>
     </section>
 
     <!-- KPI A · Lead Time Lote Principal -->
-    <section class="sm:col-span-1 lg:col-span-3 rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-sm" aria-label="Lead time do Lote Principal">
+    <section class="sm:col-span-1 lg:col-span-3 flex min-h-[210px] flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]" aria-label="Lead time do Lote Principal">
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-xs font-semibold text-slate-500">Lead Time</p>
@@ -147,19 +175,19 @@ function tituloPonto(item: LeadTimeItem) {
         </div>
         <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">Média atual</span>
       </div>
-      <div class="mt-5 text-3xl font-bold tracking-tight text-indigo-700 tabular-nums">{{ formatHour(kpiA.mediaLotePrincipal) }}</div>
-      <div class="mt-5">
+      <div class="mt-5 text-3xl font-bold tracking-tight text-slate-900 tabular-nums">{{ formatHour(kpiA.mediaLotePrincipal) }}</div>
+      <div class="mt-auto pt-5">
         <div class="h-2 overflow-hidden rounded-full bg-slate-100" :title="'Proporção em relação à maior média exibida'">
-          <div class="h-full rounded-full bg-indigo-600 transition-all" :style="{ width: larguraLeadTime(kpiA.mediaLotePrincipal) + '%' }"></div>
+          <div class="h-full rounded-full bg-indigo-600 transition-all duration-500" :style="{ width: larguraLeadTime(kpiA.mediaLotePrincipal) + '%' }"></div>
         </div>
-        <p class="mt-2 text-[10px] text-slate-400">Comparação relativa entre as médias atuais</p>
+        <p class="mt-2 text-[10px] text-slate-400 tabular-nums">{{ Math.round(larguraLeadTime(kpiA.mediaLotePrincipal)) }}% da maior média atual</p>
       </div>
     </section>
 
     <!-- KPI A · Downtime -->
     <section
-      class="sm:col-span-1 lg:col-span-3 rounded-2xl border p-5 shadow-sm transition-colors"
-      :class="kpiA.downtimeTotalMin > 0 ? 'border-rose-200 bg-rose-50/50' : 'border-[#E2E8F0] bg-white'"
+      class="sm:col-span-1 lg:col-span-3 flex min-h-[210px] flex-col rounded-xl border p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]"
+      :class="kpiA.downtimeTotalMin > 0 ? 'border-rose-200 bg-rose-50/50 hover:border-rose-300' : 'border-slate-200/80 bg-white hover:border-slate-300/90'"
       aria-label="Downtime acumulado"
     >
       <div class="flex items-start justify-between gap-3">
@@ -182,14 +210,14 @@ function tituloPonto(item: LeadTimeItem) {
       <div class="mt-5 text-3xl font-bold tracking-tight tabular-nums" :class="kpiA.downtimeTotalMin > 0 ? 'text-rose-700' : 'text-slate-900'">
         {{ kpiA.downtimeTotalHoras }}h
       </div>
-      <div class="mt-4 border-t border-slate-100 pt-3 text-[11px]" :class="kpiA.downtimeTotalMin > 0 ? 'text-rose-700' : 'text-emerald-700'">
+      <div class="mt-auto border-t border-slate-100 pt-3 text-[11px]" :class="kpiA.downtimeTotalMin > 0 ? 'text-rose-700' : 'text-emerald-700'">
         {{ kpiA.downtimeTotalMin > 0 ? kpiA.motivosParada.length + (kpiA.motivosParada.length === 1 ? ' motivo registrado' : ' motivos registrados') : 'Sem pausas de SLA' }}
-        <span class="ml-1 font-mono tabular-nums text-slate-500">· {{ formatMin(kpiA.downtimeTotalMin) }}</span>
+        <span class="ml-1 tabular-nums text-slate-500">· {{ formatMin(kpiA.downtimeTotalMin) }}</span>
       </div>
     </section>
 
     <!-- Lead Time · 8 colunas -->
-    <section class="sm:col-span-2 lg:col-span-8 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:p-6 shadow-sm">
+    <section class="sm:col-span-2 lg:col-span-8 rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)] sm:p-6">
       <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
         <div>
           <div class="flex items-center gap-2 text-indigo-600">
@@ -211,23 +239,26 @@ function tituloPonto(item: LeadTimeItem) {
           >
             <defs>
               <linearGradient id="tc-lead-time-area" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#4F46E5" stop-opacity="0.16" />
-                <stop offset="100%" stop-color="#4F46E5" stop-opacity="0" />
+                <stop offset="0%" stop-color="#6366F1" stop-opacity="0.22" />
+                <stop offset="55%" stop-color="#6366F1" stop-opacity="0.06" />
+                <stop offset="100%" stop-color="#6366F1" stop-opacity="0" />
               </linearGradient>
             </defs>
-            <line x1="0" y1="20" x2="520" y2="20" stroke="#E2E8F0" stroke-dasharray="4 4" />
-            <line x1="0" y1="60" x2="520" y2="60" stroke="#E2E8F0" stroke-dasharray="4 4" />
-            <line x1="0" y1="100" x2="520" y2="100" stroke="#CBD5E1" />
-            <text x="0" y="14" fill="#94A3B8" font-size="9">{{ Math.round(leadTimeMaxValue) }}h</text>
-            <text x="0" y="56" fill="#94A3B8" font-size="9">{{ Math.round(leadTimeMaxValue / 2) }}h</text>
-            <text x="0" y="115" fill="#94A3B8" font-size="9">0h</text>
+            <line x1="45" y1="18" x2="500" y2="18" stroke="#E2E8F0" stroke-dasharray="4 4" />
+            <line x1="45" y1="48" x2="500" y2="48" stroke="#E2E8F0" stroke-dasharray="4 4" />
+            <line x1="45" y1="78" x2="500" y2="78" stroke="#CBD5E1" />
+            <text x="2" y="21" fill="#94A3B8" font-size="9">{{ Math.round(leadTimeMaxValue) }}h</text>
+            <text x="2" y="51" fill="#94A3B8" font-size="9">{{ Math.round(leadTimeMaxValue / 2) }}h</text>
+            <text x="2" y="81" fill="#94A3B8" font-size="9">0h</text>
             <path :d="leadTimeAreaPath" fill="url(#tc-lead-time-area)" />
             <path :d="leadTimePath" fill="none" stroke="#4F46E5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
             <g v-for="(point, index) in leadTimePoints" :key="point.item.codigoBarras + '-' + index">
               <circle :cx="point.x" :cy="point.y" r="8" fill="#4F46E5" fill-opacity="0.12" />
+              <text :x="point.x" :y="Math.max(10, point.y - 8)" text-anchor="middle" fill="#4338CA" font-size="9" font-weight="600" class="tabular-nums">{{ rotuloLeadTime(point.item.leadTimeHoras) }}</text>
               <circle :cx="point.x" :cy="point.y" r="3.5" fill="#FFFFFF" stroke="#4F46E5" stroke-width="2.5" tabindex="0">
                 <title>{{ tituloPonto(point.item) }}</title>
               </circle>
+              <text :x="point.x" y="101" text-anchor="middle" fill="#64748B" font-size="8.5" font-weight="500">{{ rotuloModelo(point.item) }}</text>
             </g>
           </svg>
         </div>
@@ -241,7 +272,7 @@ function tituloPonto(item: LeadTimeItem) {
     </section>
 
     <!-- Saúde Operacional · 4 colunas -->
-    <section class="sm:col-span-2 lg:col-span-4 rounded-2xl border border-[#E2E8F0] bg-white shadow-sm">
+    <section class="sm:col-span-2 lg:col-span-4 rounded-xl border border-slate-200/80 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]">
       <header class="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
         <div>
           <p class="text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-600">Visão de fábrica</p>
@@ -254,7 +285,7 @@ function tituloPonto(item: LeadTimeItem) {
         <section class="p-5">
           <div class="mb-3 flex items-center justify-between gap-2">
             <h3 class="text-xs font-semibold text-slate-800">Gargalos Operacionais</h3>
-            <span class="font-mono text-[10px] text-slate-400 tabular-nums">{{ kpiB.length }} ocorr.</span>
+            <span class="text-[10px] text-slate-400 tabular-nums">{{ kpiB.length }} ocorr.</span>
           </div>
 
           <p v-if="kpiB.length === 0" class="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-800">
@@ -268,7 +299,7 @@ function tituloPonto(item: LeadTimeItem) {
                   <span class="truncate text-[10px] font-medium text-slate-600">{{ grupo.setor }}</span>
                   <span class="shrink-0 rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase" :class="classeGravidade(grupo.gravidade)">{{ grupo.gravidade }}</span>
                 </div>
-                <span class="text-[10px] font-mono font-semibold text-slate-600 tabular-nums">{{ grupo.quantidade }}</span>
+                <span class="text-[10px] font-semibold text-slate-600 tabular-nums">{{ grupo.quantidade }}</span>
                 <div class="col-span-2 h-1 overflow-hidden rounded-full bg-slate-100">
                   <div class="h-full rounded-full bg-indigo-500" :style="{ width: (grupo.quantidade / Math.max(1, kpiB.length) * 100) + '%' }"></div>
                 </div>
@@ -319,14 +350,14 @@ function tituloPonto(item: LeadTimeItem) {
             <div v-for="item in kpiA.motivosParada" :key="item.motivo">
               <div class="flex items-center justify-between gap-2">
                 <span class="truncate text-[10px] font-medium text-slate-700" :title="item.motivo">{{ item.motivo }}</span>
-                <span class="shrink-0 text-[9px] font-mono text-slate-500 tabular-nums">{{ item.percentual }}%</span>
+                <span class="shrink-0 text-[9px] text-slate-500 tabular-nums">{{ item.percentual }}%</span>
               </div>
               <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
                 <div class="h-full rounded-full bg-rose-400" :style="{ width: Math.min(100, Math.max(0, item.percentual)) + '%' }"></div>
               </div>
               <div class="mt-1 flex justify-between gap-2 text-[9px] text-slate-400">
                 <span>{{ item.quantidade }} {{ item.quantidade === 1 ? 'registro' : 'registros' }}</span>
-                <span class="font-mono tabular-nums">{{ formatMin(item.minutos) }} · {{ item.horas }}h</span>
+                <span class="tabular-nums">{{ formatMin(item.minutos) }} · {{ item.horas }}h</span>
               </div>
             </div>
           </div>
@@ -335,7 +366,7 @@ function tituloPonto(item: LeadTimeItem) {
     </section>
 
     <!-- FPY · 5 colunas -->
-    <section class="sm:col-span-1 lg:col-span-5 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:p-6 shadow-sm">
+    <section class="sm:col-span-1 lg:col-span-5 flex min-h-[315px] flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)] sm:p-6">
       <header class="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
         <div class="flex items-center gap-2.5">
           <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
@@ -349,8 +380,9 @@ function tituloPonto(item: LeadTimeItem) {
         <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[9px] text-slate-500">Ciclo monitorado</span>
       </header>
 
-      <div class="flex flex-col items-center justify-center py-4">
-        <svg viewBox="0 0 200 120" class="w-56 max-w-full" role="img" :aria-label="fpySemDados ? 'FPY sem dados no ciclo' : 'Medidor semicircular de FPY'">
+      <div class="grid flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-center gap-2 py-3 sm:gap-4">
+        <div class="flex min-w-0 items-center justify-center">
+          <svg viewBox="0 0 200 120" class="w-full max-w-[210px]" role="img" :aria-label="fpySemDados ? 'FPY sem dados no ciclo' : 'Medidor semicircular de FPY'">
           <path
             d="M 18 98 A 82 82 0 0 1 182 98"
             fill="none"
@@ -371,39 +403,48 @@ function tituloPonto(item: LeadTimeItem) {
             :stroke-dashoffset="100 - Math.min(100, Math.max(0, kpiC.fpyGlobal))"
           />
           <circle v-if="kpiC.fpyGlobal === 0 && kpiC.totalInspecoes > 0" cx="18" cy="98" r="5" fill="#E11D48" />
-          <text x="100" y="82" text-anchor="middle" fill="#0F172A" font-size="27" font-weight="700" font-family="ui-monospace, monospace">
+          <text x="100" y="82" text-anchor="middle" fill="#0F172A" font-size="27" font-weight="700" class="tabular-nums">
             {{ kpiC.fpyGlobal === null ? '—' : kpiC.fpyGlobal + '%' }}
           </text>
-          <text x="100" y="101" text-anchor="middle" fill="#64748B" font-size="9" font-family="ui-monospace, monospace">FPY GLOBAL</text>
-        </svg>
+          <text x="100" y="101" text-anchor="middle" fill="#64748B" font-size="9">FPY GLOBAL</text>
+          </svg>
+        </div>
 
-        <span
-          class="mt-1 rounded-full border px-3 py-1 text-[10px] font-semibold"
-          :class="fpySemDados
-            ? 'border-slate-200 bg-slate-50 text-slate-500'
-            : kpiC.fpyGlobal === 0 && kpiC.totalInspecoes > 0
-              ? 'border-rose-200 bg-rose-50 text-rose-700'
-              : kpiC.fpyGlobal === null
-                ? 'border-slate-200 bg-slate-50 text-slate-500'
-                : 'border-emerald-200 bg-emerald-50 text-emerald-700'"
-        >
-          {{ fpySemDados
-            ? 'Sem dados no ciclo'
-            : kpiC.fpyGlobal === 0 && kpiC.totalInspecoes > 0
-              ? '0% de aprovação'
-              : kpiC.fpyGlobal === null
-                ? 'Percentual indisponível'
-                : 'Indicador calculado' }}
-        </span>
-        <p class="mt-1 text-[10px] text-slate-400 tabular-nums">{{ kpiC.totalInspecoes }} inspeções consideradas</p>
+        <div class="min-w-0 space-y-2">
+          <span
+            class="inline-flex rounded-full border px-2.5 py-1 text-[9px] font-semibold leading-tight"
+            :class="fpySemDados
+              ? 'border-slate-200 bg-slate-50 text-slate-500'
+              : kpiC.fpyGlobal === 0 && kpiC.totalInspecoes > 0
+                ? 'border-rose-200 bg-rose-50 text-rose-700'
+                : kpiC.fpyGlobal === null
+                  ? 'border-slate-200 bg-slate-50 text-slate-500'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-700'"
+          >
+            {{ fpySemDados
+              ? 'Sem dados no ciclo'
+              : kpiC.fpyGlobal === 0 && kpiC.totalInspecoes > 0
+                ? '0% de aprovação'
+                : kpiC.fpyGlobal === null
+                  ? 'Percentual indisponível'
+                  : 'Indicador calculado' }}
+          </span>
+          <div>
+            <p class="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">{{ kpiC.totalInspecoes }}</p>
+            <p class="text-[10px] leading-snug text-slate-500">{{ kpiC.totalInspecoes === 1 ? 'inspeção considerada' : 'inspeções consideradas' }}</p>
+          </div>
+          <p class="text-[10px] leading-snug text-slate-400">
+            {{ fpySemDados ? 'Aguardando inspeções consideradas no ciclo.' : 'Qualidade aprovada na primeira inspeção.' }}
+          </p>
+        </div>
       </div>
 
       <div class="border-t border-slate-100 pt-4">
-        <div v-if="kpiC.setores.length > 0" class="max-h-52 space-y-3 overflow-y-auto pr-1">
+        <div v-if="kpiC.setores.length > 0" class="max-h-24 space-y-2.5 overflow-y-auto pr-1">
           <div v-for="item in kpiC.setores" :key="item.setor">
             <div class="flex items-center justify-between gap-3">
               <span class="truncate text-[10px] font-semibold text-slate-700">{{ item.setor }}</span>
-              <span class="shrink-0 text-[10px] font-mono font-semibold text-slate-700 tabular-nums">{{ item.fpyPercentual }}%</span>
+              <span class="shrink-0 text-[10px] font-semibold text-slate-700 tabular-nums">{{ item.fpyPercentual }}%</span>
             </div>
             <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
               <div class="h-full rounded-full bg-emerald-500" :style="{ width: Math.min(100, Math.max(0, item.fpyPercentual)) + '%' }"></div>
@@ -418,7 +459,7 @@ function tituloPonto(item: LeadTimeItem) {
     </section>
 
     <!-- Retrabalho · 7 colunas -->
-    <section class="sm:col-span-1 lg:col-span-7 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:p-6 shadow-sm">
+    <section class="sm:col-span-1 lg:col-span-7 flex min-h-[315px] flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)] sm:p-6">
       <header class="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
         <div class="flex items-center gap-2.5">
           <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-50 text-orange-700">
@@ -434,18 +475,37 @@ function tituloPonto(item: LeadTimeItem) {
         </span>
       </header>
 
-      <div v-if="kpiD.totalRetrabalhos === 0" class="mt-4 flex items-center gap-3 rounded-lg border border-emerald-100 bg-emerald-50/70 px-4 py-3">
-        <Check :size="17" class="shrink-0 text-emerald-700" />
-        <div>
-          <p class="text-xs font-semibold text-emerald-800">0 casos registrados no histórico consultado</p>
-          <p class="mt-0.5 text-[10px] text-emerald-700">Sem ocorrências de retrabalho retornadas pela API.</p>
+      <div v-if="kpiD.totalRetrabalhos === 0" class="mt-4 flex flex-1 flex-col justify-center gap-4">
+        <div class="flex items-center gap-3 rounded-lg border border-emerald-100 bg-emerald-50/70 px-4 py-3">
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-emerald-700 ring-1 ring-emerald-100">
+            <Check :size="17" />
+          </span>
+          <div>
+            <p class="text-xs font-semibold text-emerald-800">Monitoramento estável</p>
+            <p class="mt-0.5 text-[10px] text-emerald-700">Nenhum caso retornado no histórico consultado.</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="rounded-lg border border-slate-200/80 bg-slate-50/70 px-4 py-3">
+            <p class="text-[10px] font-medium text-slate-500">Ocorrências</p>
+            <p class="mt-1 text-2xl font-bold tracking-tight text-slate-900 tabular-nums">0</p>
+            <p class="text-[9px] text-slate-400">no histórico</p>
+          </div>
+          <div class="rounded-lg border border-slate-200/80 bg-slate-50/70 px-4 py-3">
+            <p class="text-[10px] font-medium text-slate-500">Reprocessamento</p>
+            <p class="mt-1 text-2xl font-bold tracking-tight text-slate-900 tabular-nums">0 <span class="text-sm font-semibold text-slate-500">min</span></p>
+            <p class="text-[9px] text-slate-400">sem casos registrados</p>
+          </div>
+        </div>
+        <div class="h-1.5 overflow-hidden rounded-full bg-emerald-100" aria-label="Nenhum retrabalho registrado">
+          <div class="h-full w-full rounded-full bg-emerald-500/70"></div>
         </div>
       </div>
-      <div v-else-if="kpiD.setores.length > 0" class="mt-4 max-h-[340px] space-y-4 overflow-y-auto pr-1">
+      <div v-else-if="kpiD.setores.length > 0" class="mt-4 max-h-[340px] flex-1 space-y-4 overflow-y-auto pr-1">
         <div v-for="item in kpiD.setores" :key="item.setorOrigem">
           <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <span class="text-xs font-semibold text-slate-800">{{ item.setorOrigem }}</span>
-            <span class="font-mono text-[10px] font-semibold text-orange-700 tabular-nums">
+            <span class="text-[10px] font-semibold text-orange-700 tabular-nums">
               {{ item.totalRetrabalhos }} {{ item.totalRetrabalhos === 1 ? 'caso' : 'casos' }} · {{ item.percentualDoTotal }}% do total
             </span>
           </div>
