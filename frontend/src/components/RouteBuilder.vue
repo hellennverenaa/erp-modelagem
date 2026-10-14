@@ -1940,6 +1940,7 @@ defineExpose({
   flex-direction: column;
   gap: 1.5rem;
   width: 100%;
+  min-width: 0;
   position: relative;
 }
 
@@ -2094,22 +2095,24 @@ defineExpose({
 ═══════════════════════════════════════════════════════ */
 .rb-layout {
   display: grid;
-  grid-template-columns: 20rem 1fr;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
+  min-width: 0;
+  width: 100%;
 }
 
 @media (max-width: 1024px) {
-  .rb-layout { grid-template-columns: 1fr; }
+  .rb-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (min-width: 1920px) {
-  .rb-layout { grid-template-columns: 24rem 1fr; gap: 2rem; }
+  .rb-layout { grid-template-columns: minmax(0, 24rem) minmax(0, 1fr); gap: 2rem; }
   .rb-title { font-size: 1.75rem; }
 }
 
 @media (min-width: 2560px) {
-  .rb-layout { grid-template-columns: 30rem 1fr; gap: 2.5rem; }
+  .rb-layout { grid-template-columns: minmax(0, 30rem) minmax(0, 1fr); gap: 2.5rem; }
   .rb-title { font-size: 2.25rem; }
 }
 
@@ -2122,6 +2125,7 @@ defineExpose({
   gap: 1.25rem;
   position: sticky;
   top: 1.5rem;
+  min-width: 0;
 }
 
 .sidebar-section {
@@ -2314,18 +2318,24 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .timeline-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .timeline-label-text {
   display: flex;
   align-items: center;
   gap: 0.375rem;
+  min-width: 0;
   font-size: 0.6875rem;
   font-weight: 800;
   color: #475569;
@@ -2334,6 +2344,8 @@ defineExpose({
 }
 
 .timeline-count {
+  min-width: 0;
+  max-width: 100%;
   font-size: 0.75rem;
   font-weight: 700;
   color: #64748b;
@@ -2347,12 +2359,16 @@ defineExpose({
   display: flex;
   flex-direction: column;
   position: relative;
+  min-width: 0;
+  width: 100%;
 }
 
 .tl-item {
   display: flex;
   flex-direction: column;
   position: relative;
+  min-width: 0;
+  width: 100%;
 }
 
 /* Connectors */
@@ -2374,6 +2390,10 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  flex-wrap: wrap;
   padding: 0.875rem 1rem;
   border: 1.5px solid #e2e8f0;
   border-radius: 0.625rem;
@@ -2424,7 +2444,7 @@ defineExpose({
   align-items: center;
   gap: 0.875rem;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 12rem;
 }
 
 .tl-block-icon {
@@ -2461,7 +2481,8 @@ defineExpose({
   flex-direction: column;
   align-items: flex-end;
   gap: 0.25rem;
-  flex-shrink: 0;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .flex-row-layout {
@@ -2538,13 +2559,23 @@ defineExpose({
 
 /* ─── Dropzones Paralelas ─── */
 .tl-parallel-wrapper {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  align-items: stretch;
   gap: 0.75rem;
   width: 100%;
+  min-width: 0;
 }
 
 .tl-parallel-wrapper--active {
   position: relative;
+}
+
+.tl-block--parallel .tl-drag-handle {
+  position: static;
+  left: auto;
+  flex: 0 0 auto;
+  margin-right: -0.5rem;
 }
 
 .parallel-drop-area {
@@ -2552,10 +2583,12 @@ defineExpose({
   flex-direction: column;
   gap: 0.5rem;
   transition: all 0.2s ease;
+  min-width: 0;
+  width: 100%;
 }
 
 .parallel-drop-area--active {
-  flex: 1;
+  width: 100%;
 }
 
 .parallel-drop-area--visible {
@@ -2563,8 +2596,8 @@ defineExpose({
   background: #f8fafc;
   border-radius: 0.625rem;
   min-height: 4.25rem;
-  min-width: 12rem;
-  flex: 1;
+  min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;

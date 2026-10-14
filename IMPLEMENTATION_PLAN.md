@@ -82,6 +82,8 @@ Persistir modelo, peças, rota e ordem em uma única transação ao finalizar o 
 ### 12 — TASK-012: Corrigir o Construtor e o preview da rota
 Usar os setores de corte definidos nas peças para pré-configurar a rota. Manter identificador e estado próprios para cada etapa, para que editar o tempo ou outra configuração de um setor não altere os demais; incluir as regras de Serigrafia e Conferência Inicial definidas na TASK-002.
 
+**Estado:** ajuste visual implementado; build do frontend e `git diff --check` passaram. Considerado validado pela usuária ao iniciar a revisão seguinte, conforme fluxo acordado.
+
 ### 13 — TASK-013: Tornar o wizard reversível
 Organizar “Iniciar Novo Teste” em quatro passos: modelo, peças, rota e ordem. Manter as informações como rascunho enquanto o usuário avança, volta, revisa e altera os passos; enviar para persistência somente ao finalizar.
 

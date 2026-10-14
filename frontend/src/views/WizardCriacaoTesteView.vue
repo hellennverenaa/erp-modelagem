@@ -1043,7 +1043,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 .btn-remove-peca { display: grid; place-items: center; width: 2rem; height: 2rem; margin: auto; border: 0; border-radius: .5rem; background: transparent; color: #64748b; cursor: pointer; }
 .btn-remove-peca:hover:not(:disabled) { background: #fee2e2; color: #b91c1c; }
 .btn-remove-peca:disabled { opacity: .35; cursor: not-allowed; }
-.route-builder-host { margin: 1rem 0; }
+.route-builder-host { margin: 1rem 0; width: 100%; min-width: 0; }
 .wiz-loading-block { display: flex; align-items: center; justify-content: center; gap: .75rem; min-height: 16rem; color: #64748b; }
 .wiz-spinner { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
