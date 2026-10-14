@@ -116,19 +116,25 @@ const errorMaquinas = ref('')
 
 // ─── Inteligência Reativa (Passo 2 -> Passo 3) ──────────────────────────────
 const autoMaquinas = computed(() => {
+  let atom = false
   let cn = false
   let couro = false
   let laser = false
+  let lectra = false
+  let ponte = false
 
   for (const peca of pecasSelecionadas.value) {
     const opt = maquinasCorte.value.find(m => m.id === peca.setorCorteOpcaoId)
     const label = (opt?.label || opt?.valor || '').toUpperCase()
+    if (label.includes('ATOM')) atom = true
     if (label.includes('CN')) cn = true
     if (label.includes('COURO')) couro = true
     if (label.includes('LASER')) laser = true
+    if (label.includes('LECTRA')) lectra = true
+    if (label.includes('PONTE')) ponte = true
   }
 
-  return { cn, couro, laser }
+  return { atom, cn, couro, laser, lectra, ponte }
 })
 
 function handleClickOutside(event: MouseEvent) {
@@ -153,6 +159,7 @@ const formOrdem = ref({
   dataPrevistaProducao: '',
   slaDefaultMinutos: 120
 })
+const plantaSelecionadaNome = computed(() => plantas.value.find((planta) => planta.id === formOrdem.value.plantaId)?.nome || 'Não selecionada')
 const loadingOrdem = ref(false)
 const errorOrdem = ref('')
 const createdOrdem = ref<{ id: string; codigoBarras: string; possuiCaixaTeste?: boolean } | null>(null)
@@ -201,7 +208,11 @@ onMounted(async () => {
       api.get<Planta[]>('/admin/plantas')
     ])
     marcas.value = marcasRes.data || []
-    plantas.value = plantasRes.data || []
+    const podeAcessarTodasPlantas = authStore.hasPermission('ACESSAR_TODAS_PLANTAS')
+    const plantaUsuarioId = authStore.user.value?.plantaId
+    plantas.value = (plantasRes.data || []).filter((planta) =>
+      podeAcessarTodasPlantas || planta.id === plantaUsuarioId
+    )
     
     if (plantas.value.length > 0) {
       formOrdem.value.plantaId = plantas.value[0].id
@@ -329,6 +340,10 @@ async function submitPecasAndAdvance() {
     addToast('error', 'Defina uma máquina de corte para cada peça antes de avançar.')
     return
   }
+  if (!autoMaquinas.value.lectra || !autoMaquinas.value.ponte) {
+    addToast('error', 'Vincule ao menos uma peça a Lectra e uma peça à Ponte antes de avançar.')
+    return
+  }
 
   addToast('success', `${pecasSelecionadas.value.length} peças prontas para salvar ao finalizar.`)
   routeBuilderReady.value = true
@@ -352,6 +367,12 @@ function onRotaSalva(payload: RotaRascunhoPayload) {
   rotaRascunho.value = payload.rota.map((etapa) => ({ ...etapa }))
   slasPorSetorCapturados.value = { ...payload.slasPorSetor }
   currentStep.value = 4
+}
+
+function onPlantaDaRotaAlterada() {
+  rotaRascunho.value = []
+  slasPorSetorCapturados.value = {}
+  errorOrdem.value = ''
 }
 
 // Salvar Ordem (Passo 4 -> Conclusão)
@@ -817,11 +838,22 @@ function resetWizard() {
           </div>
         </div>
 
+        <div class="form-group col-span-2" style="margin: 0 0 1rem;">
+          <label for="plantaRota" class="form-label">Planta da Rota <span class="required">*</span></label>
+          <select id="plantaRota" v-model="formOrdem.plantaId" class="wiz-select" required @change="onPlantaDaRotaAlterada">
+            <option value="">Selecione a planta</option>
+            <option v-for="p in plantas" :key="p.id" :value="p.id">{{ p.nome }} {{ p.cidade ? `(${p.cidade})` : '' }}</option>
+          </select>
+          <span class="field-hint">A rota será salva para esta planta.</span>
+        </div>
+
         <div class="wiz-route-builder-container">
           <RouteBuilder
             v-if="routeBuilderReady"
+            :key="formOrdem.plantaId"
             ref="routeBuilderRef"
             :isWizardMode="true"
+            :plantaId="formOrdem.plantaId"
             :autoEnableMaquinas="autoMaquinas"
             @rota-salva="onRotaSalva"
           />
@@ -878,12 +910,8 @@ function resetWizard() {
         <form @submit.prevent="submitOrdem" class="wiz-form">
           <div class="form-grid">
             <div class="form-group col-span-2">
-              <label for="plantaId" class="form-label">Planta de Fabricação <span class="required">*</span></label>
-              <select id="plantaId" v-model="formOrdem.plantaId" class="wiz-select" required>
-                <option v-for="p in plantas" :key="p.id" :value="p.id">
-                  {{ p.nome }} {{ p.cidade ? `(${p.cidade})` : '' }}
-                </option>
-              </select>
+              <span class="form-label">Planta da rota</span>
+              <strong>{{ plantaSelecionadaNome }}</strong>
             </div>
 
             <div class="form-group">

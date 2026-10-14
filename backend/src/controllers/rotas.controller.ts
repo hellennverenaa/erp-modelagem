@@ -5,6 +5,9 @@ import { RotaModelo, TipoExecucao } from '../entities/RotaModelo';
 import { Modelo } from '../entities/Modelo';
 import { Setor } from '../entities/Setor';
 import { In } from 'typeorm';
+import { Peca } from '../entities/Peca';
+import { RouteIntegrityError, validateRouteIntegrity } from '../services/route-integrity.service';
+import { perfilPossuiPermissao } from '../services/rbac.service';
 
 const itemRotaSchema = z.object({
   setorId: z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
@@ -15,6 +18,7 @@ const itemRotaSchema = z.object({
 });
 
 const salvarRotaSchema = z.object({
+  plantaId: z.string().uuid(),
   // Uma rota vazia apagaria a configuração existente na transação abaixo.
   rota: z.array(itemRotaSchema).min(1, { message: 'A rota deve conter ao menos um setor.' })
 });
@@ -40,9 +44,14 @@ export class RotasController {
       });
     }
 
-    const { rota } = parseResult.data;
+    const { rota, plantaId } = parseResult.data;
 
     try {
+      if (!req.user) return res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
+      const acessoTodasPlantas = await perfilPossuiPermissao(req.user.perfilId, 'ACESSAR_TODAS_PLANTAS');
+      if (!acessoTodasPlantas && plantaId !== req.user.plantaId) {
+        return res.status(403).json({ error: 'Não é permitido editar a rota de outra planta.', code: 'PLANTA_FORBIDDEN' });
+      }
       const modeloRepo = AppDataSource.getRepository(Modelo);
       const modelo = await modeloRepo.findOne({ where: { id: modeloId } });
       if (!modelo) {
@@ -67,16 +76,19 @@ export class RotasController {
       }
 
       // Executa tudo dentro de uma transação
-      await AppDataSource.transaction(async (transactionalEntityManager) => {
+      const itensSalvos = await AppDataSource.transaction(async (transactionalEntityManager) => {
         const rotaRepo = transactionalEntityManager.getRepository(RotaModelo);
+        const pecas = await transactionalEntityManager.getRepository(Peca).find({ where: { modeloId } });
+        await validateRouteIntegrity(transactionalEntityManager, rota, pecas, plantaId);
 
         // 1. Remove toda a rota existente para este modelo
-        await rotaRepo.delete({ modeloId });
+        await rotaRepo.delete({ modeloId, plantaId });
 
         // 2. Insere os novos itens da rota
         const novosItens = rota.map((item) => {
           return rotaRepo.create({
             modeloId,
+            plantaId,
             setorId: item.setorId,
             ordem: item.ordem,
             obrigatorio: item.obrigatorio,
@@ -85,15 +97,21 @@ export class RotasController {
           });
         });
 
-        await rotaRepo.save(novosItens);
+        return rotaRepo.save(novosItens);
       });
 
       return res.status(200).json({
         message: 'Rota de produção salva com sucesso.',
-        totalSetores: rota.length
+        totalSetores: itensSalvos.length,
+        modeloId,
+        plantaId,
+        rota: itensSalvos,
       });
 
     } catch (error: any) {
+      if (error instanceof RouteIntegrityError) {
+        return res.status(400).json({ error: error.message, code: error.code });
+      }
       console.error('[RotasController.salvarRota] Erro interno:', error.message || error);
       return res.status(500).json({
         error: 'Erro interno ao salvar a rota de produção. ' + (error.message || ''),
@@ -108,21 +126,31 @@ export class RotasController {
    */
   public getRota = async (req: Request, res: Response): Promise<Response> => {
     const modeloId = req.params.modeloId as string;
+    const plantaId = String(req.query.plantaId || '');
 
     if (!modeloId || !/^[0-9a-f-]{36}$/i.test(String(modeloId))) {
       return res.status(400).json({ error: 'modeloId inválido.', code: 'VALIDATION_ERROR' });
     }
+    if (!z.string().uuid().safeParse(plantaId).success) {
+      return res.status(400).json({ error: 'plantaId é obrigatório.', code: 'VALIDATION_ERROR' });
+    }
 
     try {
+      if (!req.user) return res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
+      const acessoTodasPlantas = await perfilPossuiPermissao(req.user.perfilId, 'ACESSAR_TODAS_PLANTAS');
+      if (!acessoTodasPlantas && plantaId !== req.user.plantaId) {
+        return res.status(403).json({ error: 'Não é permitido consultar a rota de outra planta.', code: 'PLANTA_FORBIDDEN' });
+      }
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
       const rota = await rotaRepo.find({
-        where: { modeloId },
+        where: { modeloId, plantaId },
         relations: { setor: true },
         order: { ordem: 'ASC' }
       });
 
       return res.status(200).json({
         modeloId,
+        plantaId,
         rota
       });
 

@@ -9,7 +9,7 @@ const rotasController = new RotasController();
  * @swagger
  * /api/rotas/{modeloId}:
  *   put:
- *     summary: Salva a rota de produção de um modelo
+ *     summary: Salva a rota de produção de um modelo em uma planta
  *     tags: [Rota]
  *     security:
  *       - bearerAuth: []
@@ -26,8 +26,9 @@ const rotasController = new RotasController();
  *         application/json:
  *           schema:
  *             type: object
- *             required: [rota]
+ *             required: [plantaId, rota]
  *             properties:
+ *               plantaId: { type: string, format: uuid }
  *               rota:
  *                 type: array
  *                 items:
@@ -65,6 +66,12 @@ router.put(
  *     parameters:
  *       - in: path
  *         name: modeloId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: plantaId
  *         required: true
  *         schema:
  *           type: string

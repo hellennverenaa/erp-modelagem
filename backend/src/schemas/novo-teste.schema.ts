@@ -17,7 +17,7 @@ export const finalizarNovoTesteSchema = z.object({
   pecas: z.array(z.object({
     catalogoPecaId: uuidSchema,
     setorCorteOpcaoId: uuidSchema,
-  })).min(1, 'Adicione ao menos uma peça ao modelo.'),
+  })).min(2, 'Adicione peças para Lectra e Ponte ao modelo.'),
   rota: z.array(etapaRotaSchema).min(1, 'A rota deve conter ao menos um setor.'),
   ordem: z.object({
     plantaId: uuidSchema,

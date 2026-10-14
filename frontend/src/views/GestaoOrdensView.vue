@@ -725,15 +725,16 @@ async function abrirManutencao(ordem: OrdemTeste) {
   // Se a rota ainda nao estiver carregada na ordem, busca via API
   let rotaSetores: Array<{ id: string; nome: string; ordem: number }> = []
 
-  if (Array.isArray(ordem.modelo?.rotas) && ordem.modelo!.rotas!.length > 0) {
-    // Usa a rota ja carregada (TypeORM relation eager/explicit)
+  if (Array.isArray(ordem.modelo?.rotas) && ordem.modelo!.rotas!.some((r: any) => (r.plantaId || r.planta?.id) === ordem.plantaId)) {
+    // Usa somente a rota da planta desta ordem.
     rotaSetores = ordem.modelo!.rotas!
+      .filter((r: any) => (r.plantaId || r.planta?.id) === ordem.plantaId)
       .sort((a, b) => a.ordem - b.ordem)
       .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem }))
   } else if (ordem.modeloId) {
     // Fallback: busca a rota via API caso nao tenha vindo na listagem principal
     try {
-      const resRota = await api.get(`/rotas/${ordem.modeloId}`).catch(() => api.get(`/admin/modelos/${ordem.modeloId}`))
+      const resRota = await api.get(`/rotas/${ordem.modeloId}`, { params: { plantaId: ordem.plantaId } })
       const rotaData = resRota.data.rota || resRota.data.rotas || resRota.data.modelo?.rotas || resRota.data
       if (Array.isArray(rotaData) && rotaData.length > 0) {
         rotaSetores = (rotaData as any[])

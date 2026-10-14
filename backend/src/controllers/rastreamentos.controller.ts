@@ -213,6 +213,7 @@ export class RastreamentosController {
       const pertenceARota = await rotaRepo.findOne({
         where: {
           modeloId: ordem.modeloId,
+          plantaId: ordem.plantaId,
           setorId: setorId,
         },
       });
@@ -229,7 +230,10 @@ export class RastreamentosController {
 
       if (inputStatus !== RastreamentoStatus.EM_RETRABALHO) {
         const queryBuilder = rastreamentoRepo.createQueryBuilder('r')
-          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId', { modeloId: ordem.modeloId })
+          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId AND rm.plantaId = :plantaId', {
+            modeloId: ordem.modeloId,
+            plantaId: ordem.plantaId,
+          })
           .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
           .andWhere('r.tipoLote = :tipoLote', { tipoLote })
           .andWhere('r.dataEntrada IS NOT NULL')
@@ -269,6 +273,7 @@ export class RastreamentosController {
           const rotaAnterior = await rotaRepo.findOne({
             where: {
               modeloId: ordem.modeloId,
+              plantaId: ordem.plantaId,
               ordem: pertenceARota.ordem - 1,
             },
           });
@@ -521,6 +526,7 @@ export class RastreamentosController {
       const pertenceARota = await rotaRepo.findOne({
         where: {
           modeloId: ordem.modeloId,
+          plantaId: ordem.plantaId,
           setorId: setorId,
         },
       });
@@ -754,6 +760,7 @@ export class RastreamentosController {
             const rotaAtual = await rotaRepo.findOne({
               where: {
                 modeloId: ordemObj.modeloId,
+                plantaId: ordemObj.plantaId,
                 setorId: setorId,
               },
             });
@@ -763,6 +770,7 @@ export class RastreamentosController {
               const setoresMesmaOrdem = await rotaRepo.find({
                 where: {
                   modeloId: ordemObj.modeloId,
+                  plantaId: ordemObj.plantaId,
                   ordem: rotaAtual.ordem,
                 },
               });
@@ -816,6 +824,7 @@ export class RastreamentosController {
               const proximasRotas = await rotaRepo.find({
                 where: {
                   modeloId: ordemObj.modeloId,
+                  plantaId: ordemObj.plantaId,
                   ordem: rotaAtual.ordem + 1,
                 },
               });

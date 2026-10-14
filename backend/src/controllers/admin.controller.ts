@@ -10,11 +10,11 @@ import { Planta } from '../entities/Planta';
 import { Marca } from '../entities/Marca';
 import { EntityManager, In, IsNull } from 'typeorm';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
-import { Peca } from '../entities/Peca';
 import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 import { carregarCatalogoRbac } from '../services/rbac-catalog.service';
 import { AuditLog } from '../entities/AuditLog';
 import { modeloIdentificacaoSchema } from '../schemas/modelo.schema';
+import { ModelPiecesError, ModelPieceInput, saveModelPieces } from '../services/model-pieces.service';
 
 async function auditarRbac(manager: EntityManager, req: Request, acao: string, entidadeTipo: string, entidadeId: string, anteriores: Record<string, unknown> | null, novos: Record<string, unknown> | null) {
   await manager.getRepository(AuditLog).save(manager.getRepository(AuditLog).create({
@@ -36,14 +36,10 @@ const createModeloSchema = z.object({
   fichaTecnicaUrl:  z.string().url().optional().nullable(),
   pecas: z.array(
     z.object({
-      id: z.string().optional(),
-      numero: z.string().optional(),
-      nome: z.string(),
-      codigoOriginal: z.string().optional().nullable(),
-      setorCorteOpcaoId: z.string().optional().nullable(),
-      descricao: z.string().optional().nullable(),
+      catalogoPecaId: z.string().uuid(),
+      setorCorteOpcaoId: z.string().uuid(),
     })
-  ).optional(),
+  ).min(2),
 });
 
 const createMarcaSchema = z.object({
@@ -344,7 +340,7 @@ export class AdminController {
     try {
       const modelo = await AppDataSource.getRepository(Modelo).findOne({
         where: { id: id.data },
-        relations: { marca: true, pecas: { setorCorteOpcao: true }, rotas: { setor: true } },
+        relations: { marca: true, pecas: { setorCorteOpcao: true, catalogoPeca: true }, rotas: { setor: true, planta: true } },
       });
       if (!modelo) {
         return res.status(404).json({ error: 'Modelo não encontrado.', code: 'MODELO_NOT_FOUND' });
@@ -373,56 +369,62 @@ export class AdminController {
 
       const { marcaId, codigoProduto, nome, dataCorte, mfmReferenciaUrl, fichaTecnicaUrl, pecas } = parse.data;
 
-      const modeloRepo = AppDataSource.getRepository(Modelo);
-      const marcaRepo  = AppDataSource.getRepository(Marca);
+      const saved = await AppDataSource.transaction(async (manager) => {
+        const marca = await manager.getRepository(Marca).findOne({ where: { id: marcaId, ativo: true } });
+        if (!marca) throw Object.assign(new Error('Marca não encontrada ou inativa.'), { code: 'MARCA_NOT_FOUND', status: 404 });
 
-      // Verifica existência da marca
-      const marca = await marcaRepo.findOne({ where: { id: marcaId } });
-      if (!marca) {
-        return res.status(404).json({ error: 'Marca não encontrada.', code: 'MARCA_NOT_FOUND' });
-      }
+        const existe = await manager.getRepository(Modelo).findOne({ where: { codigoProduto } });
+        if (existe) throw Object.assign(new Error('Já existe um modelo com este código de produto.'), { code: 'MODELO_DUPLICATE_CODE', status: 409 });
 
-      // Verifica duplicidade de codigoProduto
-      const existe = await modeloRepo.findOne({ where: { codigoProduto } });
-      if (existe) {
-        return res.status(409).json({
-          error: 'Já existe um modelo com este código de produto.',
-          code: 'MODELO_DUPLICATE_CODE',
-        });
-      }
-
-      const modelo = modeloRepo.create({
-        marcaId,
-        codigoProduto,
-        nome,
-        temporada:        null,
-        dataCorte:        dataCorte        ? new Date(dataCorte) : null,
-        mfmReferenciaUrl: mfmReferenciaUrl || null,
-        fichaTecnicaUrl:  fichaTecnicaUrl  || null,
-        ativo: true,
-      });
-
-      const saved = await modeloRepo.save(modelo);
-
-      // Se houver lista de peças enviadas no payload unificado, salva na tabela `pecas`
-      if (pecas && Array.isArray(pecas) && pecas.length > 0) {
-        const pecaRepo = AppDataSource.getRepository(Peca);
-        const novasPecas = pecas.map((p: any) => pecaRepo.create({
-          modeloId: saved.id,
-          nome: p.nome || `${p.numero} - ${p.nome}`,
-          setorCorteOpcaoId: p.setorCorteOpcaoId || null,
-          descricao: p.descricao || p.codigoOriginal || null
+        const modeloRepo = manager.getRepository(Modelo);
+        const modelo = await modeloRepo.save(modeloRepo.create({
+          marcaId,
+          codigoProduto,
+          nome,
+          temporada: null,
+          dataCorte: dataCorte ? new Date(dataCorte) : null,
+          mfmReferenciaUrl: mfmReferenciaUrl || null,
+          fichaTecnicaUrl: fichaTecnicaUrl || null,
+          ativo: true,
         }));
-        await pecaRepo.save(novasPecas);
-      }
-
-      return res.status(201).json({
-        message: 'Modelo criado com sucesso.',
-        modelo: saved,
+        await saveModelPieces(manager, modelo.id, pecas as ModelPieceInput[]);
+        return modelo;
       });
+
+      return res.status(201).json({ message: 'Modelo criado com sucesso.', modelo: saved });
     } catch (error: any) {
+      if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
+      if (error?.code === 'MODELO_DUPLICATE_CODE' || error?.code === 'MARCA_NOT_FOUND') {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController] Erro ao criar modelo:', error);
       return res.status(500).json({ error: 'Erro ao criar modelo.' });
+    }
+  }
+
+  /** Atualiza vínculos de catálogo e sub-setores sem apagar IDs de peças históricos. */
+  public async atualizarPecasModelo(req: Request, res: Response): Promise<Response> {
+    const modeloId = z.string().uuid().safeParse(req.params.id);
+    const parsed = z.object({ pecas: z.array(z.object({
+      id: z.string().uuid().optional(),
+      catalogoPecaId: z.string().uuid(),
+      setorCorteOpcaoId: z.string().uuid(),
+    })).min(2) }).safeParse(req.body);
+    if (!modeloId.success || !parsed.success) {
+      return res.status(400).json({ error: 'Informe peças e sub-setores válidos para o modelo.', code: 'VALIDATION_ERROR' });
+    }
+    try {
+      const pecas = await AppDataSource.transaction(async (manager) => {
+        const modelo = await manager.getRepository(Modelo).findOne({ where: { id: modeloId.data }, select: { id: true } });
+        if (!modelo) throw Object.assign(new Error('Modelo não encontrado.'), { code: 'MODELO_NOT_FOUND', status: 404 });
+        return saveModelPieces(manager, modelo.id, parsed.data.pecas);
+      });
+      return res.json({ message: 'Peças do modelo atualizadas com sucesso.', pecas });
+    } catch (error: any) {
+      if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
+      if (error?.code === 'MODELO_NOT_FOUND') return res.status(404).json({ error: error.message, code: error.code });
+      console.error('[AdminController] Erro ao atualizar peças do modelo:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar as peças do modelo.' });
     }
   }
 

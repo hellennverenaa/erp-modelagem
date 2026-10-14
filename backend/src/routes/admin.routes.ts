@@ -184,7 +184,7 @@ router.get('/modelos', exigirAlgumaPermissao([
  *       401:
  *         description: Não autorizado
  */
-router.get('/plantas', exigirAlgumaPermissao(['TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE']), adminController.getPlantas);
+router.get('/plantas', exigirAlgumaPermissao(['TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE', 'TELA_CONSTRUTOR_ROTA']), adminController.getPlantas);
 
 /**
  * @swagger
@@ -236,6 +236,9 @@ router.get('/modelos/catalogo', exigirAlgumaPermissao([
 router.get('/modelos/:id', exigirAlgumaPermissao([
   'TELA_GESTAO_ORDENS', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_CATALOGO_MODELOS',
 ]), adminController.getModeloPorId);
+router.put('/modelos/:id/pecas', exigirAlgumaPermissao([
+  'EDITAR_TELA_CATALOGO_MODELOS',
+]), adminController.atualizarPecasModelo);
 
 /**
  * @swagger

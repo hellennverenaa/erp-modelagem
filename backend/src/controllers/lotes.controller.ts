@@ -9,6 +9,7 @@ import { Usuario } from '../entities/Usuario';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { perfilPossuiPermissao } from '../services/rbac.service';
 import { finalizarNovoTeste, NovoTesteServiceError } from '../services/novo-teste.service';
+import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 import { finalizarNovoTesteSchema } from '../schemas/novo-teste.schema';
 
 // ═══ Schemas de Validação Zod ═══
@@ -69,10 +70,10 @@ export class LotesController {
         },
         order: { createdAt: 'DESC' }
       });
-      const lotesComSla = lotes.map(l => ({
-        ...l,
-        slasPorSetor: l.slasPorSetor || null
-      }));
+      const lotesComSla = lotes.map(l => {
+        if (l.modelo?.rotas) l.modelo.rotas = l.modelo.rotas.filter((rota) => rota.plantaId === l.plantaId);
+        return { ...l, slasPorSetor: l.slasPorSetor || null };
+      });
       return res.json(lotesComSla);
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordens de teste:', error);
@@ -107,6 +108,8 @@ export class LotesController {
           code: 'LOTE_NOT_FOUND'
         });
       }
+
+      if (lote.modelo?.rotas) lote.modelo.rotas = lote.modelo.rotas.filter((rota) => rota.plantaId === lote.plantaId);
 
       const auditRepo = AppDataSource.getRepository(AuditLog);
       const auditLogs = await auditRepo.find({
@@ -179,6 +182,9 @@ export class LotesController {
         totalEtapasRota: resultado.totalEtapasRota,
       });
     } catch (error) {
+      if (error instanceof RouteIntegrityError) {
+        return res.status(400).json({ error: error.message, code: error.code });
+      }
       if (error instanceof NovoTesteServiceError) {
         return res.status(error.status).json({
           error: error.message,
@@ -249,13 +255,14 @@ export class LotesController {
       }
 
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
-      const countRotas = await rotaRepo.count({ where: { modeloId } });
+      const countRotas = await rotaRepo.count({ where: { modeloId, plantaId } });
       if (countRotas === 0) {
         return res.status(400).json({
           error: 'Falha: O modelo não possui uma rota de produção definida. Acesse o Construtor de Rota para mapear o fluxo do modelo antes de gerar a Ordem.',
           code: 'ROTA_NOT_FOUND'
         });
       }
+      await validatePersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
 
       const lote = loteRepo.create({
         modeloId,
@@ -280,6 +287,9 @@ export class LotesController {
       });
 
     } catch (error: any) {
+      if (error instanceof RouteIntegrityError) {
+        return res.status(400).json({ error: error.message, code: error.code });
+      }
       console.error('[LotesController] Erro ao criar ordem de teste:', error);
       return res.status(400).json({
         error: error.message || 'Erro ao criar ordem de teste.',
@@ -425,7 +435,7 @@ export class LotesController {
         if (modeloSlaMap && typeof modeloSlaMap === 'object') {
           Object.assign(slasAnterioresEfetivos, modeloSlaMap);
         } else if (Array.isArray(lote.modelo?.rotas)) {
-          for (const r of lote.modelo!.rotas!) {
+          for (const r of lote.modelo!.rotas!.filter((rota) => rota.plantaId === lote!.plantaId)) {
             const key = r.setor?.id || r.setorId || r.setor?.nome;
             if (key) {
               slasAnterioresEfetivos[key] = (r as any).tempoSla || (r as any).tempo_sla || 0;
@@ -547,6 +557,9 @@ export class LotesController {
         where: { id },
         relations: { modelo: { pecas: true, marca: true, rotas: { setor: true } }, planta: true, criadoPor: true }
       });
+      if (loteAtualizado?.modelo?.rotas) {
+        loteAtualizado.modelo.rotas = loteAtualizado.modelo.rotas.filter((rota) => rota.plantaId === loteAtualizado.plantaId);
+      }
 
       const auditRepo = AppDataSource.getRepository(AuditLog);
       const auditLogs = await auditRepo.find({
