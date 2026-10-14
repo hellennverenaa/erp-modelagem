@@ -2,91 +2,25 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { io } from 'socket.io-client'
 import api, { getApiOrigin, getApiSocketPath } from '../api/axios'
+import DashboardGerencialMetrics from '../components/DashboardGerencialMetrics.vue'
+import type { FpySetor, GargaloItem, KpiAData, KpiCData, KpiDData, MotivoParada, RetrabalhoSetor } from '../types/dashboardGerencial'
 import {
-  Clock,
-  AlertTriangle,
-  TrendingUp,
-  RotateCcw,
   Image as ImageIcon,
   X,
-  PauseCircle,
-  Wrench,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
   Wifi,
   WifiOff,
-  Check,
-  Activity,
-  Layers,
-  ShieldCheck
+  Layers
 } from '@lucide/vue'
-
-// ==========================================
-// INTERFACES (PRESERVADAS 100%)
-// ==========================================
-interface MotivoParada {
-  motivo: string
-  minutos: number
-  horas: number
-  quantidade: number
-  percentual: number
-}
-
-interface LeadTimeItem {
-  codigoBarras: string
-  tipoLote: string
-  leadTimeHoras: number
-  downtimeHoras: number
-  modelo: string
-  marca: string
-  dataInicio: string
-}
-
-interface KpiAData {
-  totalOrdensAtivas: number
-  mediaCaixaTeste: number
-  mediaLotePrincipal: number
-  downtimeTotalMin: number
-  downtimeTotalHoras: number
-  motivosParada: MotivoParada[]
-  grafico: LeadTimeItem[]
-}
-
-interface GargaloItem {
-  id: string
-  titulo: string
-  descricao: string
-  tipoOcorrencia: string
-  gravidade: string
-  status: string
-  dataOcorrencia: string
-  setor: string
-  reportadoPor: string
-  totalFotos: number
-  fotos: string[]
-}
-
-interface FpySetor {
-  setor: string
-  totalInspecoes: number
-  totalRastreamentos: number
-  aprovadasPrimeira: number
-  fpyPercentual: number
-}
-
-interface RetrabalhoSetor {
-  setorOrigem: string
-  totalRetrabalhos: number
-  tempoMedioMin: number
-  tiposDivergencia: string
-  percentualDoTotal: number
-}
 
 // ==========================================
 // ESTADO REATIVO (PRESERVADO 100%)
 // ==========================================
 const loading = ref(true)
+const fetchError = ref(false)
+const hasSuccessfulFetch = ref(false)
 const liveStatus = ref<'CONNECTED' | 'DISCONNECTED'>('DISCONNECTED')
 let socket: any = null
 
@@ -102,13 +36,13 @@ const kpiA = ref<KpiAData>({
 
 const kpiB = ref<GargaloItem[]>([])
 
-const kpiC = ref<{ fpyGlobal: number | null; totalInspecoes: number; setores: FpySetor[] }>({
+const kpiC = ref<KpiCData>({
   fpyGlobal: null,
   totalInspecoes: 0,
   setores: []
 })
 
-const kpiD = ref<{ totalRetrabalhos: number; setores: RetrabalhoSetor[] }>({
+const kpiD = ref<KpiDData>({
   totalRetrabalhos: 0,
   setores: []
 })
@@ -121,6 +55,9 @@ const fotoIndexAtiva = ref(0)
 // BUSCA DE DADOS (PRESERVADA 100%)
 // ==========================================
 async function fetchKpis() {
+  fetchError.value = false
+  if (!hasSuccessfulFetch.value) loading.value = true
+
   try {
     const res = await api.get('/dashboard/kpis')
     const raw = res.data
@@ -132,7 +69,7 @@ async function fetchKpis() {
       mediaLotePrincipal: raw.kpiA?.mediaLotePrincipal ?? 0,
       downtimeTotalMin: raw.kpiA?.downtimeTotalMin ?? 0,
       downtimeTotalHoras: raw.kpiA?.downtimeTotalHoras ?? 0,
-      motivosParada: (raw.kpiA?.motivosParada ?? []).map((m: any) => ({
+      motivosParada: (raw.kpiA?.motivosParada ?? []).map((m: any): MotivoParada => ({
         motivo: m.motivo ?? 'Desconhecido',
         minutos: m.minutos ?? 0,
         horas: m.horas ?? 0,
@@ -167,7 +104,7 @@ async function fetchKpis() {
     kpiC.value = {
       fpyGlobal: raw.kpiC?.fpyGlobal ?? null,
       totalInspecoes: raw.kpiC?.totalInspecoes ?? 0,
-      setores: (raw.kpiC?.setores ?? []).map((s: any) => ({
+      setores: (raw.kpiC?.setores ?? []).map((s: any): FpySetor => ({
         setor: s.setor ?? 'N/A',
         totalInspecoes: s.totalInspecoes ?? 0,
         totalRastreamentos: s.totalRastreamentos ?? 0,
@@ -178,7 +115,7 @@ async function fetchKpis() {
 
     kpiD.value = {
       totalRetrabalhos: raw.kpiD?.totalRetrabalhos ?? 0,
-      setores: (raw.kpiD?.setores ?? []).map((d: any) => ({
+      setores: (raw.kpiD?.setores ?? []).map((d: any): RetrabalhoSetor => ({
         setorOrigem: d.setorOrigem ?? 'N/A',
         totalRetrabalhos: d.totalRetrabalhos ?? 0,
         tempoMedioMin: d.tempoMedioMin ?? 0,
@@ -186,7 +123,9 @@ async function fetchKpis() {
         percentualDoTotal: d.percentualDoTotal ?? 0
       }))
     }
+    hasSuccessfulFetch.value = true
   } catch (error) {
+    fetchError.value = true
     console.error('[Dashboard] Erro ao buscar KPIs:', error)
   } finally {
     loading.value = false
@@ -296,690 +235,125 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="tc-root min-h-screen bg-slate-50/60 pb-20 text-slate-900 antialiased selection:bg-slate-900 selection:text-white">
+  <div class="tc-root min-h-screen bg-[#F8FAFC] pb-20 text-slate-900 antialiased selection:bg-slate-900 selection:text-white">
     <div class="max-w-[1780px] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
 
-      <!-- ─── CABEÇALHO EXECUTIVO INDUSTRIAL (TELEMETRIA DE ALTO PADRÃO) ─── -->
-      <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-6 border-b border-slate-200/80 gap-5">
-        <div class="flex items-center gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-xs ring-1 ring-slate-800 flex-shrink-0">
-            <Layers :size="22" class="stroke-[2.2]" />
+      <!-- Cabeçalho executivo -->
+      <header class="flex flex-col gap-5 border-b border-[#E2E8F0] pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex min-w-0 items-start gap-3.5">
+          <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm">
+            <Layers :size="21" />
           </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">TORRE DE CONTROLE</span>
-              <span class="text-slate-300">•</span>
-              <span class="text-[10px] font-mono uppercase tracking-widest text-blue-600 font-bold">TELEMETRIA INDUSTRIAL BI</span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Torre de Controle</span>
+              <span class="text-slate-300">·</span>
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-600">Telemetria industrial</span>
+              <span class="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">
+                Telemetria de Ciclo &amp; SLA
+              </span>
             </div>
-            <h1 class="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-slate-900 mt-0.5">
+            <h1 class="mt-1 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">
               Torre de Controle de Produção
             </h1>
-            <p class="text-xs text-slate-500 font-medium tracking-tight mt-0.5">
-              Telemetria gerencial em tempo real · Lead Time, Gargalos Operacionais, FPY e Retrabalho
+            <p class="mt-1 text-xs text-slate-500">
+              Lead Time, Saúde Operacional, qualidade fabril e retrabalho
             </p>
           </div>
         </div>
 
-        <div class="flex items-center gap-3 self-end sm:self-center">
-          <!-- LIVE SYNC STATUS BADGE COM PULSO SUAVE -->
+        <div class="flex items-center gap-2 self-end sm:self-auto">
           <div
-            class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold tracking-tight transition-all duration-300 shadow-xs"
+            class="inline-flex items-center gap-2 rounded-full border px-3 py-2 text-[10px] font-semibold transition-colors"
             :class="liveStatus === 'CONNECTED'
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/90'
-              : 'bg-slate-100 text-slate-500 border border-slate-200'"
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'border-slate-200 bg-white text-slate-500'"
           >
-            <span v-if="liveStatus === 'CONNECTED'" class="relative flex h-2 w-2">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span v-else class="w-2 h-2 rounded-full bg-slate-400"></span>
-
-            <Wifi v-if="liveStatus === 'CONNECTED'" :size="13" class="stroke-[2.5]" />
-            <WifiOff v-else :size="13" class="stroke-[2.5]" />
+            <span class="h-2 w-2 rounded-full" :class="liveStatus === 'CONNECTED' ? 'bg-emerald-500' : 'bg-slate-400'"></span>
+            <Wifi v-if="liveStatus === 'CONNECTED'" :size="13" />
+            <WifiOff v-else :size="13" />
             <span>{{ liveStatus === 'CONNECTED' ? 'Live Sync Ativo' : 'Offline' }}</span>
           </div>
-
-          <!-- BOTÃO ATUALIZAR -->
           <button
-            class="inline-flex items-center gap-2 px-4 py-1.5 rounded-xl bg-white border border-slate-200/90 hover:bg-slate-50 hover:border-slate-300 text-slate-700 hover:text-slate-900 text-xs font-bold font-mono tracking-tight shadow-xs transition-all active:scale-95 cursor-pointer"
             type="button"
+            class="inline-flex items-center gap-2 rounded-lg border border-[#E2E8F0] bg-white px-3.5 py-2 text-[11px] font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
             @click="fetchKpis"
-            aria-label="Sincronizar KPIs"
+            :disabled="loading"
+            aria-label="Atualizar indicadores"
           >
-            <RefreshCw :size="13" class="stroke-[2.5]" />
+            <RefreshCw :size="13" :class="{ 'animate-spin': loading }" />
             <span>Atualizar</span>
           </button>
         </div>
       </header>
 
-      <!-- ─── SKELETON LOADING (BENTO WIREFRAME INDUSTRIAL) ───────────── -->
-      <div v-if="loading" class="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-pulse">
-        <div class="lg:col-span-12 h-96 rounded-3xl bg-white border border-slate-200/80 p-6 flex flex-col justify-between">
-          <div class="h-6 w-72 bg-slate-200 rounded-md"></div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="h-28 bg-slate-100 rounded-2xl"></div>
-            <div class="h-28 bg-slate-100 rounded-2xl"></div>
-            <div class="h-28 bg-slate-100 rounded-2xl"></div>
-            <div class="h-28 bg-slate-100 rounded-2xl"></div>
-          </div>
-          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            <div class="lg:col-span-5 h-32 bg-slate-100 rounded-2xl"></div>
-            <div class="lg:col-span-7 h-32 bg-slate-100 rounded-2xl"></div>
-          </div>
+      <!-- Erro de comunicação -->
+      <div
+        v-if="fetchError"
+        role="alert"
+        class="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div>
+          <p class="text-xs font-semibold text-rose-800">
+            {{ hasSuccessfulFetch ? 'Falha ao atualizar os indicadores.' : 'Não foi possível carregar os indicadores.' }}
+          </p>
+          <p class="mt-0.5 text-[11px] text-rose-700">
+            {{ hasSuccessfulFetch ? 'Os últimos dados carregados continuam visíveis.' : 'Verifique a conexão e tente novamente.' }}
+          </p>
         </div>
-        <div class="lg:col-span-7 h-96 rounded-3xl bg-white border border-slate-200/80 p-6">
-          <div class="h-6 w-48 bg-slate-200 rounded-md mb-4"></div>
-          <div class="space-y-3">
-            <div class="h-20 bg-slate-100 rounded-2xl"></div>
-            <div class="h-20 bg-slate-100 rounded-2xl"></div>
-          </div>
+        <button
+          type="button"
+          class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-rose-200 bg-white px-3 py-2 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-wait disabled:opacity-60"
+          @click="fetchKpis"
+          :disabled="loading"
+        >
+          <RefreshCw :size="13" :class="{ 'animate-spin': loading }" />
+          Tentar novamente
+        </button>
+      </div>
+
+      <!-- Skeleton alinhado à arquitetura 4 / 8-4 / 5-7 -->
+      <div v-if="loading" class="grid grid-cols-1 gap-5 animate-pulse sm:grid-cols-2 lg:grid-cols-12" aria-label="Carregando indicadores">
+        <div v-for="item in 4" :key="'kpi-' + item" class="h-36 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-1 lg:col-span-3">
+          <div class="h-3 w-24 rounded bg-slate-200"></div>
+          <div class="mt-6 h-8 w-28 rounded bg-slate-200"></div>
+          <div class="mt-5 h-2 w-full rounded bg-slate-100"></div>
         </div>
-        <div class="lg:col-span-5 h-96 rounded-3xl bg-white border border-slate-200/80 p-6">
-          <div class="h-6 w-48 bg-slate-200 rounded-md mb-4"></div>
-          <div class="h-28 bg-slate-100 rounded-2xl mb-4"></div>
-          <div class="space-y-2">
-            <div class="h-8 bg-slate-100 rounded-xl"></div>
-            <div class="h-8 bg-slate-100 rounded-xl"></div>
-          </div>
+        <div class="h-72 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-2 lg:col-span-8">
+          <div class="h-4 w-48 rounded bg-slate-200"></div>
+          <div class="mt-7 h-48 rounded-xl bg-slate-100"></div>
         </div>
-        <div class="lg:col-span-12 h-64 rounded-3xl bg-white border border-slate-200/80 p-6">
-          <div class="h-6 w-60 bg-slate-200 rounded-md mb-4"></div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="h-24 bg-slate-100 rounded-2xl"></div>
-            <div class="h-24 bg-slate-100 rounded-2xl"></div>
-            <div class="h-24 bg-slate-100 rounded-2xl"></div>
-            <div class="h-24 bg-slate-100 rounded-2xl"></div>
+        <div class="h-72 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-2 lg:col-span-4">
+          <div class="h-4 w-40 rounded bg-slate-200"></div>
+          <div class="mt-5 h-20 rounded-lg bg-slate-100"></div>
+          <div class="mt-4 h-20 rounded-lg bg-slate-100"></div>
+        </div>
+        <div class="h-64 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-1 lg:col-span-5">
+          <div class="h-4 w-40 rounded bg-slate-200"></div>
+          <div class="mx-auto mt-7 h-28 w-44 rounded-t-full bg-slate-100"></div>
+          <div class="mt-5 h-2 rounded bg-slate-100"></div>
+        </div>
+        <div class="h-64 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:col-span-1 lg:col-span-7">
+          <div class="h-4 w-56 rounded bg-slate-200"></div>
+          <div class="mt-6 space-y-5">
+            <div class="h-7 rounded bg-slate-100"></div>
+            <div class="h-7 rounded bg-slate-100"></div>
+            <div class="h-7 rounded bg-slate-100"></div>
           </div>
         </div>
       </div>
 
-      <!-- ─── BENTO GRID DOS 4 KPIs DE NEGÓCIO ────────────────────────── -->
-      <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <!-- KPI A · LEAD TIME EFETIVO & DOWNTIME (Span 12)               -->
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <section class="lg:col-span-12 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs hover:border-slate-300/80 transition-all duration-300 relative overflow-hidden">
-          <!-- Header do Card -->
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-6 mb-6 border-b border-slate-100 gap-4">
-            <div class="flex items-center gap-3.5">
-              <div class="w-11 h-11 rounded-2xl bg-slate-100 border border-slate-200/90 text-slate-800 flex items-center justify-center flex-shrink-0 shadow-2xs">
-                <Clock :size="20" class="stroke-[2.2]" />
-              </div>
-              <div>
-                <div class="flex items-center gap-2">
-                  <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI A · DESEMPENHO CRÍTICO</span>
-                  <span class="text-slate-300">•</span>
-                  <span class="text-[10px] font-mono uppercase tracking-widest text-blue-600 font-bold">CICLO & PARADAS</span>
-                </div>
-                <h2 class="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mt-0.5">
-                  Lead Time Efetivo & Downtime Acumulado
-                </h2>
-                <p class="text-xs text-slate-500 font-medium">
-                  Tempo absoluto de permanência por lote e paradas operacionais que ativaram o SLA
-                </p>
-              </div>
-            </div>
-
-            <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80 text-[11px] font-mono font-bold text-slate-700 self-start sm:self-center shadow-2xs">
-              <Activity :size="13" class="text-blue-600 stroke-[2.5]" />
-              <span>SLA Dinâmico Descontado</span>
-            </div>
-          </div>
-
-          <!-- Quarteto de Métricas Numéricas de Alto Impacto -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4.5 mb-6">
-            <!-- 1. Ordens Ativas (WIP) -->
-            <div class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-white hover:shadow-xs group border-l-4 border-l-slate-900">
-              <div class="flex justify-between items-start">
-                <div>
-                  <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold block">WIP TOTAL (CHÃO DE FÁBRICA)</span>
-                  <span class="text-[11px] text-slate-500 font-medium block mt-0.5">Ordens ativas em rota</span>
-                </div>
-                <span class="w-2.5 h-2.5 rounded-full bg-slate-900 ring-4 ring-slate-100"></span>
-              </div>
-              <div class="mt-4">
-                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-slate-900 tabular-nums">
-                  {{ kpiA.totalOrdensAtivas }}
-                </span>
-              </div>
-              <span class="text-[11px] font-mono text-slate-400 font-medium block mt-1.5">
-                Total de OPs em andamento
-              </span>
-            </div>
-
-            <!-- 2. Caixa Teste (Piloto) -->
-            <div class="bg-blue-50/20 border border-blue-100 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-white hover:shadow-xs group border-l-4 border-l-blue-600">
-              <div class="flex justify-between items-start">
-                <div>
-                  <span class="text-[10px] font-mono uppercase tracking-widest text-blue-600 font-bold block">LEAD TIME · CAIXA TESTE</span>
-                  <span class="text-[11px] text-slate-500 font-medium block mt-0.5">Ciclo piloto antecipado</span>
-                </div>
-                <span class="w-2.5 h-2.5 rounded-full bg-blue-600 ring-4 ring-blue-50"></span>
-              </div>
-              <div class="mt-4">
-                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-blue-600 tabular-nums">
-                  {{ formatHour(kpiA.mediaCaixaTeste) }}
-                </span>
-              </div>
-              <span class="text-[11px] font-mono text-slate-400 font-medium block mt-1.5">
-                Média de ciclo da caixa piloto
-              </span>
-            </div>
-
-            <!-- 3. Lote Principal (Volume) -->
-            <div class="bg-indigo-50/20 border border-indigo-100 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-white hover:shadow-xs group border-l-4 border-l-indigo-600">
-              <div class="flex justify-between items-start">
-                <div>
-                  <span class="text-[10px] font-mono uppercase tracking-widest text-indigo-600 font-bold block">LEAD TIME · LOTE PRINCIPAL</span>
-                  <span class="text-[11px] text-slate-500 font-medium block mt-0.5">Média de escala fabril</span>
-                </div>
-                <span class="w-2.5 h-2.5 rounded-full bg-indigo-600 ring-4 ring-indigo-50"></span>
-              </div>
-              <div class="mt-4">
-                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-indigo-600 tabular-nums">
-                  {{ formatHour(kpiA.mediaLotePrincipal) }}
-                </span>
-              </div>
-              <span class="text-[11px] font-mono text-slate-400 font-medium block mt-1.5">
-                Ciclo fabril em escala de volume
-              </span>
-            </div>
-
-            <!-- 4. Downtime Acumulado -->
-            <div class="bg-rose-50/30 border border-rose-200/80 rounded-2xl p-5 relative overflow-hidden transition-all duration-200 hover:bg-rose-50/60 hover:shadow-xs group border-l-4 border-l-rose-500">
-              <div class="flex justify-between items-start">
-                <div>
-                  <div class="flex items-center gap-1.5">
-                    <PauseCircle :size="13" class="text-rose-600 stroke-[2.5]" />
-                    <span class="text-[10px] font-mono uppercase tracking-widest text-rose-600 font-bold block">DOWNTIME TOTAL ACUMULADO</span>
-                  </div>
-                  <span class="text-[11px] text-rose-500/90 font-medium block mt-0.5">Paradas com pausa de SLA</span>
-                </div>
-                <span class="w-2.5 h-2.5 rounded-full bg-rose-500 ring-4 ring-rose-100" :class="{ 'animate-pulse': kpiA.downtimeTotalMin > 0 }"></span>
-              </div>
-              <div class="mt-4">
-                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter text-rose-600 tabular-nums">
-                  {{ kpiA.downtimeTotalHoras }}h
-                </span>
-              </div>
-              <span class="text-[11px] font-mono text-rose-600 font-bold block mt-1.5">
-                {{ kpiA.downtimeTotalMin }} min acumulados
-              </span>
-            </div>
-          </div>
-
-          <!-- Sub-grid: Motivos de Parada + Sparkline SVG -->
-          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-6 border-t border-slate-100">
-
-            <!-- LADO ESQUERDO: Motivos Reais de Parada -->
-            <div class="lg:col-span-5 flex flex-col justify-between">
-              <div>
-                <div class="flex items-center justify-between mb-4">
-                  <div class="flex items-center gap-2">
-                    <Wrench :size="14" class="text-slate-600" />
-                    <span class="text-xs font-mono font-bold uppercase tracking-wider text-slate-700">
-                      Motivos Reais de Parada (30 dias)
-                    </span>
-                  </div>
-                  <span class="text-[10px] font-mono text-slate-400 font-bold uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-full">
-                    {{ kpiA.motivosParada.length }} {{ kpiA.motivosParada.length === 1 ? 'motivo' : 'motivos' }}
-                  </span>
-                </div>
-
-                <div v-if="kpiA.motivosParada.length === 0" class="text-center py-10 px-4 bg-slate-50/70 border border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2">
-                  <div class="w-9 h-9 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                    <Check :size="18" class="stroke-[3]" />
-                  </div>
-                  <span class="text-[10px] font-mono uppercase tracking-widest text-emerald-700 font-bold">Fluxo Contínuo</span>
-                  <p class="text-xs font-mono font-bold text-slate-700">
-                    Sem paradas impeditivas no período.
-                  </p>
-                  <p class="text-[11px] text-slate-400 font-medium">
-                    Nenhuma ocorrência ativou a pausa de SLA nas últimas ordens.
-                  </p>
-                </div>
-
-                <div v-else class="space-y-2.5 max-h-[290px] overflow-y-auto pr-1">
-                  <div
-                    v-for="item in kpiA.motivosParada"
-                    :key="item.motivo"
-                    class="bg-slate-50/70 border border-slate-200/80 rounded-xl p-3.5 hover:border-slate-300 hover:bg-white transition-all shadow-2xs"
-                  >
-                    <div class="flex justify-between items-start gap-2 mb-2">
-                      <span class="text-xs font-bold text-slate-900 line-clamp-1">{{ item.motivo }}</span>
-                      <div class="flex items-center gap-2 flex-shrink-0">
-                        <span class="text-[10px] font-mono font-bold bg-slate-200/70 text-slate-700 px-2 py-0.5 rounded">
-                          {{ item.quantidade }} ocorr.
-                        </span>
-                        <span class="text-xs font-mono font-bold text-slate-800 tabular-nums">
-                          {{ formatMin(item.minutos) }}
-                        </span>
-                        <span class="text-xs font-mono font-black text-rose-600 tabular-nums">
-                          {{ item.percentual }}%
-                        </span>
-                      </div>
-                    </div>
-                    <!-- Barra de progresso industrial -->
-                    <div class="w-full h-1.5 bg-slate-200/70 rounded-full overflow-hidden">
-                      <div
-                        class="h-full bg-gradient-to-r from-rose-500 to-amber-500 rounded-full transition-all duration-500"
-                        :style="{ width: `${Math.min(100, item.percentual)}%` }"
-                      ></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- LADO DIREITO: Sparkline da Curva de Lead Time -->
-            <div class="lg:col-span-7 flex flex-col justify-between bg-slate-50/60 border border-slate-200/80 rounded-2xl p-4 sm:p-5">
-              <div class="flex items-center justify-between mb-2">
-                <div class="flex items-center gap-2">
-                  <Activity :size="14" class="text-slate-600" />
-                  <span class="text-xs font-mono font-bold uppercase tracking-wider text-slate-700">
-                    Variação do Lead Time (Últimas Ordens)
-                  </span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="inline-flex items-center gap-1.5 text-[10px] font-mono text-slate-500 font-bold uppercase tracking-wider">
-                    <span class="w-2 h-2 rounded-full bg-slate-900 inline-block"></span>
-                    Lead Time (Horas)
-                  </span>
-                </div>
-              </div>
-
-              <!-- Gráfico SVG Vetorial de Alta Fidelidade -->
-              <div class="w-full h-44 sm:h-52 flex items-center justify-center my-1 relative">
-                <svg viewBox="0 0 520 120" class="w-full h-full overflow-visible" aria-hidden="true">
-                  <defs>
-                    <linearGradient id="tc-lead-grad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#0f172a" stop-opacity="0.18" />
-                      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.0" />
-                    </linearGradient>
-                  </defs>
-
-                  <!-- Linhas Guia Sutis -->
-                  <line x1="0" y1="20" x2="520" y2="20" stroke="#e2e8f0" stroke-dasharray="4 4" stroke-width="1" />
-                  <line x1="0" y1="60" x2="520" y2="60" stroke="#e2e8f0" stroke-dasharray="4 4" stroke-width="1" />
-                  <line x1="0" y1="100" x2="520" y2="100" stroke="#cbd5e1" stroke-width="1" />
-
-                  <!-- Área Sombreada -->
-                  <path
-                    v-if="kpiA.grafico.length > 1"
-                    fill="url(#tc-lead-grad)"
-                    :d="(() => {
-                      const g = kpiA.grafico
-                      const maxV = Math.max(...g.map(x => x.leadTimeHoras), 1)
-                      const pts = g.map((item, i) => {
-                        const x = (i / Math.max(1, g.length - 1)) * 520
-                        const y = 100 - (item.leadTimeHoras / maxV) * 80
-                        return `${x.toFixed(1)},${y.toFixed(1)}`
-                      })
-                      const first = pts[0].split(',')
-                      const last = pts[pts.length - 1].split(',')
-                      return `M ${pts.join(' L ')} L ${last[0]},100 L ${first[0]},100 Z`
-                    })()"
-                  />
-
-                  <!-- Linha Principal Contínua -->
-                  <path
-                    v-if="kpiA.grafico.length > 1"
-                    fill="none"
-                    stroke="#0f172a"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    :d="kpiA.grafico
-                      .map((item, i) => {
-                        const maxV = Math.max(...kpiA.grafico.map(x => x.leadTimeHoras), 1)
-                        const x = (i / Math.max(1, kpiA.grafico.length - 1)) * 520
-                        const y = 100 - (item.leadTimeHoras / maxV) * 80
-                        return `${x.toFixed(1)},${y.toFixed(1)}`
-                      })
-                      .reduce((acc, curr, idx) => idx === 0 ? `M ${curr}` : `${acc} L ${curr}`, '')"
-                  />
-
-                  <!-- Nós de Dados Interativos com Tooltip -->
-                  <circle
-                    v-for="(item, i) in kpiA.grafico"
-                    :key="i"
-                    :cx="(i / Math.max(1, kpiA.grafico.length - 1)) * 520"
-                    :cy="100 - (item.leadTimeHoras / Math.max(...kpiA.grafico.map(x => x.leadTimeHoras), 1)) * 80"
-                    r="4.5"
-                    fill="#ffffff"
-                    stroke="#0f172a"
-                    stroke-width="2.5"
-                    class="transition-transform duration-150 hover:scale-150 cursor-pointer"
-                  >
-                    <title>{{ item.tipoLote }} - {{ item.modelo }}: {{ item.leadTimeHoras }}h</title>
-                  </circle>
-                </svg>
-
-                <div v-if="kpiA.grafico.length <= 1" class="absolute inset-0 flex items-center justify-center">
-                  <span class="text-xs font-mono text-slate-400">Dados históricos insuficientes para curva temporal.</span>
-                </div>
-              </div>
-
-              <!-- Legenda Temporal Inferior -->
-              <div class="flex justify-between items-center text-[10px] font-mono text-slate-400 border-t border-slate-200/60 pt-2 font-bold uppercase tracking-wider">
-                <span>← Lotes Recentes</span>
-                <span class="text-slate-300">|</span>
-                <span>Lotes Anteriores →</span>
-              </div>
-            </div>
-
-          </div>
-        </section>
-
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <!-- KPI B · GARGALOS OPERACIONAIS (Span 7)                       -->
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <section class="lg:col-span-7 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-7 shadow-xs hover:border-slate-300/80 transition-all duration-300 flex flex-col justify-between">
-          <div>
-            <!-- Header do Card -->
-            <div class="flex items-start justify-between pb-5 mb-5 border-b border-slate-100 gap-3">
-              <div class="flex items-center gap-3.5">
-                <div class="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200/90 text-amber-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
-                  <AlertTriangle :size="20" class="stroke-[2.2]" />
-                </div>
-                <div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI B · CONTROLE DE DESVIOS</span>
-                  </div>
-                  <h2 class="text-xl font-black text-slate-900 tracking-tight mt-0.5">
-                    Gargalos Operacionais
-                  </h2>
-                  <p class="text-xs text-slate-500 font-medium">
-                    Ocorrências ativas em aberto ou em análise no chão de fábrica
-                  </p>
-                </div>
-              </div>
-
-              <!-- Badge Contador de Gargalos -->
-              <span
-                class="font-mono text-xs font-black px-3 py-1 rounded-full border tracking-tight flex-shrink-0 shadow-2xs"
-                :class="kpiB.length > 0
-                  ? 'bg-amber-50 text-amber-800 border-amber-200'
-                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'"
-              >
-                {{ kpiB.length }} {{ kpiB.length === 1 ? 'ativo' : 'ativos' }}
-              </span>
-            </div>
-
-            <!-- Lista de Gargalos -->
-            <div class="space-y-3 max-h-[440px] overflow-y-auto pr-1">
-              <!-- Empty State (Padrão Caminho Livre) -->
-              <div v-if="kpiB.length === 0" class="text-center py-12 px-4 bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2">
-                <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                  <Check :size="20" class="stroke-[3]" />
-                </div>
-                <span class="text-[10px] font-mono uppercase tracking-widest text-emerald-700 font-bold">Fluxo Desimpedido</span>
-                <p class="text-xs font-mono font-bold text-slate-700">
-                  Zero gargalos ativos no momento.
-                </p>
-                <p class="text-[11px] text-slate-400 font-medium">
-                  Produção fluindo normalmente em todas as células de modelagem e corte.
-                </p>
-              </div>
-
-              <!-- Item da Lista de Gargalos -->
-              <div
-                v-else
-                v-for="oc in kpiB"
-                :key="oc.id"
-                class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-4.5 flex items-start justify-between gap-4 transition-all duration-200 hover:bg-white hover:shadow-xs hover:border-slate-300"
-                :class="{
-                  'border-l-4 border-l-rose-500 bg-rose-50/10': oc.gravidade === 'CRITICA',
-                  'border-l-4 border-l-orange-500 bg-orange-50/10': oc.gravidade === 'ALTA',
-                  'border-l-4 border-l-amber-500 bg-amber-50/10': oc.gravidade === 'MEDIA',
-                  'border-l-4 border-l-slate-400': oc.gravidade === 'BAIXA'
-                }"
-              >
-                <div class="flex-1 min-w-0">
-                  <!-- Meta row -->
-                  <div class="flex items-center gap-2 mb-2 flex-wrap">
-                    <span
-                      class="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded border"
-                      :class="{
-                        'bg-rose-50 text-rose-700 border-rose-200': oc.gravidade === 'CRITICA',
-                        'bg-orange-50 text-orange-700 border-orange-200': oc.gravidade === 'ALTA',
-                        'bg-amber-50 text-amber-700 border-amber-200': oc.gravidade === 'MEDIA',
-                        'bg-slate-100 text-slate-600 border-slate-200': oc.gravidade === 'BAIXA'
-                      }"
-                    >
-                      {{ oc.gravidade }}
-                    </span>
-                    <span class="text-xs font-mono font-bold text-slate-800 uppercase tracking-wide">
-                      {{ oc.setor }}
-                    </span>
-                    <span class="text-[11px] font-mono text-slate-400 ml-auto font-medium">
-                      {{ formatDate(oc.dataOcorrencia) }}
-                    </span>
-                  </div>
-
-                  <!-- Título & Descrição -->
-                  <h3 class="text-sm font-bold text-slate-900 tracking-tight truncate mb-1">
-                    {{ oc.titulo }}
-                  </h3>
-                  <p class="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-2 font-normal">
-                    {{ oc.descricao }}
-                  </p>
-
-                  <!-- Reporter -->
-                  <p class="text-[11px] font-mono text-slate-400">
-                    Registrado por: <strong class="text-slate-700 font-semibold">{{ oc.reportadoPor }}</strong>
-                  </p>
-                </div>
-
-                <!-- Botão Tátil de 48px para Fotos -->
-                <button
-                  v-if="oc.fotos && oc.fotos.length > 0"
-                  type="button"
-                  class="w-12 h-12 flex-shrink-0 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white flex flex-col items-center justify-center gap-0.5 shadow-xs transition-all active:scale-95 cursor-pointer group"
-                  @click="abrirGaleria(oc.fotos)"
-                  :aria-label="`Ver ${oc.fotos.length} fotos da ocorrência`"
-                  :title="`Visualizar ${oc.fotos.length} registros fotográficos do desvio`"
-                >
-                  <ImageIcon :size="17" class="group-hover:scale-110 transition-transform" />
-                  <span class="text-[10px] font-mono font-black tabular-nums">{{ oc.fotos.length }}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <!-- KPI C · FIRST PASS YIELD (FPY) (Span 5)                      -->
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <section class="lg:col-span-5 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-7 shadow-xs hover:border-slate-300/80 transition-all duration-300 flex flex-col justify-between">
-          <div>
-            <!-- Header do Card -->
-            <div class="flex items-start justify-between pb-5 mb-5 border-b border-slate-100 gap-3">
-              <div class="flex items-center gap-3.5">
-                <div class="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-200/90 text-emerald-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
-                  <ShieldCheck :size="20" class="stroke-[2.2]" />
-                </div>
-                <div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI C · QUALIDADE FABRIL</span>
-                  </div>
-                  <h2 class="text-xl font-black text-slate-900 tracking-tight mt-0.5">
-                    First Pass Yield (FPY)
-                  </h2>
-                  <p class="text-xs text-slate-500 font-medium">
-                    Aprovação na primeira passagem de inspeção
-                  </p>
-                </div>
-              </div>
-
-              <div class="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200/70 text-slate-400 flex items-center justify-center flex-shrink-0">
-                <TrendingUp :size="16" class="stroke-[2.2]" />
-              </div>
-            </div>
-
-            <!-- Spotlight: FPY Global -->
-            <div class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 mb-5 flex items-center justify-between shadow-2xs">
-              <div>
-                <span class="text-4xl sm:text-5xl font-black font-mono tracking-tighter tabular-nums block"
-                  :class="kpiC.fpyGlobal == null ? 'text-slate-400' : kpiC.fpyGlobal >= 90 ? 'text-emerald-700' : 'text-rose-600'"
-                >
-                  {{ kpiC.fpyGlobal == null ? '—' : `${kpiC.fpyGlobal}%` }}
-                </span>
-                <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold mt-1 block">
-                  {{ kpiC.totalInspecoes }} inspeções consideradas
-                </span>
-              </div>
-
-              <!-- Pill de Meta -->
-              <span
-                class="font-mono text-xs font-bold px-3.5 py-1.5 rounded-full border tracking-tight flex items-center gap-1.5 shadow-2xs"
-                :class="kpiC.fpyGlobal == null
-                  ? 'bg-slate-100 text-slate-600 border-slate-200'
-                  : kpiC.fpyGlobal >= 90
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                  : 'bg-rose-50 text-rose-800 border-rose-200'"
-              >
-                <Check v-if="kpiC.fpyGlobal != null && kpiC.fpyGlobal >= 90" :size="13" class="stroke-[3]" />
-                <Activity v-else-if="kpiC.fpyGlobal == null" :size="13" class="stroke-[2.5]" />
-                <AlertTriangle v-else :size="13" class="stroke-[2.5]" />
-                <span>{{ kpiC.fpyGlobal == null ? 'Sem dados' : kpiC.fpyGlobal >= 90 ? 'Meta ≥90%' : 'Abaixo da Meta' }}</span>
-              </span>
-            </div>
-
-            <!-- Lista de Setores -->
-            <div class="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
-              <div v-if="kpiC.setores.length === 0" class="text-center py-8 px-4 bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl">
-                <p class="text-xs font-mono font-medium text-slate-500">
-                  Sem inspeções de saída registradas.
-                </p>
-              </div>
-
-              <div
-                v-else
-                v-for="item in kpiC.setores"
-                :key="item.setor"
-                class="bg-slate-50/60 border border-slate-200/80 rounded-xl p-3.5 hover:bg-white hover:border-slate-300 transition-all shadow-2xs"
-              >
-                <div class="flex justify-between items-center mb-1.5">
-                  <span class="text-xs font-bold text-slate-900 uppercase tracking-wide">{{ item.setor }}</span>
-                  <span
-                    class="text-xs font-mono font-black tabular-nums"
-                    :class="item.fpyPercentual >= 90 ? 'text-emerald-700' : 'text-rose-600'"
-                  >
-                    {{ item.fpyPercentual }}%
-                  </span>
-                </div>
-
-                <!-- Barra de Progresso FPY -->
-                <div class="w-full h-2 bg-slate-200/70 rounded-full overflow-hidden">
-                  <div
-                    class="h-full rounded-full transition-all duration-700"
-                    :class="item.fpyPercentual >= 90 ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-gradient-to-r from-amber-500 to-rose-500'"
-                    :style="{ width: `${Math.min(100, item.fpyPercentual)}%` }"
-                  ></div>
-                </div>
-
-                <p class="text-[10px] font-mono text-slate-400 mt-1.5 font-medium">
-                  {{ item.aprovadasPrimeira }} aprovadas de {{ item.totalInspecoes > 0 ? item.totalInspecoes : item.totalRastreamentos }} inspecionadas
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <!-- KPI D · RETRABALHO POR ORIGEM (Span 12)                      -->
-        <!-- ══════════════════════════════════════════════════════════════ -->
-        <section class="lg:col-span-12 bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs hover:border-slate-300/80 transition-all duration-300">
-          <!-- Header do Card -->
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-6 mb-6 border-b border-slate-100 gap-4">
-            <div class="flex items-center gap-3.5">
-              <div class="w-11 h-11 rounded-2xl bg-orange-50 border border-orange-200/90 text-orange-700 flex items-center justify-center flex-shrink-0 shadow-2xs">
-                <RotateCcw :size="20" class="stroke-[2.2]" />
-              </div>
-              <div>
-                <div class="flex items-center gap-2">
-                  <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">KPI D · REINCIDÊNCIA & RETORNO CIRÚRGICO</span>
-                </div>
-                <h2 class="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mt-0.5">
-                  Índice de Retrabalho por Setor de Origem
-                </h2>
-                <p class="text-xs text-slate-500 font-medium">
-                  Mapeamento dos setores que geraram maior volume de reprocessamento (últimos 30 dias)
-                </p>
-              </div>
-            </div>
-
-            <!-- Totalizador Geral de Retrabalhos -->
-            <div class="flex items-baseline gap-2 self-start sm:self-center bg-slate-50 border border-slate-200/80 rounded-2xl px-4 py-2 shadow-2xs">
-              <span class="text-2xl sm:text-3xl font-black font-mono tracking-tighter text-slate-900 tabular-nums">
-                {{ kpiD.totalRetrabalhos }}
-              </span>
-              <span class="text-xs font-mono font-bold text-slate-500 uppercase tracking-wider">
-                casos totais
-              </span>
-            </div>
-          </div>
-
-          <!-- Empty State (Padrão Caminho Livre) -->
-          <div v-if="kpiD.setores.length === 0" class="text-center py-12 px-4 bg-slate-50/60 border border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-2">
-            <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
-              <Check :size="20" class="stroke-[3]" />
-            </div>
-            <span class="text-[10px] font-mono uppercase tracking-widest text-emerald-700 font-bold">Conformidade Plena</span>
-            <p class="text-xs font-mono font-bold text-slate-700">
-              Nenhum retrabalho apontado nos últimos 30 dias.
-            </p>
-            <p class="text-[11px] text-slate-400 font-medium">
-              Zero reincidência de peças com retorno cirúrgico.
-            </p>
-          </div>
-
-          <!-- Grid de Cards de Retrabalho por Setor -->
-          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4.5">
-            <div
-              v-for="item in kpiD.setores"
-              :key="item.setorOrigem"
-              class="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 border-l-4 border-l-orange-500 hover:bg-white hover:shadow-xs hover:border-slate-300 transition-all flex flex-col justify-between"
-            >
-              <div>
-                <div class="flex justify-between items-start gap-2 mb-2">
-                  <span class="text-sm font-black text-slate-900 uppercase tracking-tight truncate">
-                    {{ item.setorOrigem }}
-                  </span>
-                  <span class="text-xs font-mono font-black text-orange-700 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full flex-shrink-0 tabular-nums">
-                    {{ item.totalRetrabalhos }} {{ item.totalRetrabalhos === 1 ? 'caso' : 'casos' }}
-                  </span>
-                </div>
-
-                <!-- Barra de Participação -->
-                <div class="w-full h-2 bg-slate-200/70 rounded-full overflow-hidden mt-3 mb-2">
-                  <div
-                    class="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-700"
-                    :style="{ width: `${Math.min(100, item.percentualDoTotal)}%` }"
-                  ></div>
-                </div>
-
-                <!-- Footer com Métricas -->
-                <div class="flex justify-between items-center text-[11px] font-mono text-slate-500 mt-2 font-medium">
-                  <span class="font-bold text-slate-700">{{ item.percentualDoTotal }}% do total</span>
-                  <span>Média: {{ item.tempoMedioMin }} min</span>
-                </div>
-              </div>
-
-              <!-- Divergências Observadas -->
-              <div v-if="item.tiposDivergencia" class="mt-3.5 pt-2.5 border-t border-slate-200/70">
-                <span class="text-[10px] font-mono uppercase tracking-widest text-slate-400 block mb-0.5 font-bold">Divergências:</span>
-                <p class="text-xs text-slate-600 line-clamp-1 italic font-normal" :title="item.tiposDivergencia">
-                  {{ item.tiposDivergencia }}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-      </div>
+      <DashboardGerencialMetrics
+        v-else-if="hasSuccessfulFetch"
+        :kpi-a="kpiA"
+        :kpi-b="kpiB"
+        :kpi-c="kpiC"
+        :kpi-d="kpiD"
+        :format-hour="formatHour"
+        :format-min="formatMin"
+        :format-date="formatDate"
+        @abrir-galeria="abrirGaleria"
+      />
 
       <!-- ══════════════════════════════════════════════════════════════ -->
       <!-- MODAL · GALERIA DE FOTOS DO DESVIO (PADRÃO DARKROOM/STUDIO)    -->

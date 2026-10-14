@@ -18,7 +18,9 @@
 **Estado: pendente.** Revisar endpoints, filtros, setores, tempos e agregações para consumir dados reais de ordens, rotas, bipagens, qualidade e ocorrências; identificar mocks e validar indicadores com registros de produção.
 
 ### 18 — TASK-018: Revisar a interface da Torre de Controle
-**Estado: pendente.** Revisar hierarquia visual, tipografia, espaçamento, cards, tabelas, indicadores e cores. Exibir estados de carregamento, erro e ausência de resultados em desktop e mobile.
+**Estado: implementação entregue — validação visual/manual pendente.** A view foi reorganizada em cards KPI independentes, gráfico e Saúde Operacional (8/4), e qualidade/retrabalho (5/7), com estados compactos, skeleton alinhado ao grid e erro de comunicação com retry. O grid visual está em `frontend/src/components/DashboardGerencialMetrics.vue`; tipos compartilhados ficam em `frontend/src/types/dashboardGerencial.ts`; API, sincronização e galeria permanecem em `frontend/src/views/DashboardGerencialView.vue`. Preservados o endpoint `/dashboard/kpis`, payloads, eventos/listeners WebSocket, helpers de formatação e funções da galeria. A referência `/home/hellen/Downloads/gemini-svg.svg` orientou a paleta clara, bordas slate e destaque índigo. Nenhuma mudança de backend ou migration.
+
+**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros. A tela ainda precisa de revisão visual/funcional no navegador em desktop e mobile; não foi executada nesta entrega. Próximo passo: validar a aparência e os estados com dados reais e confirmar o fluxo de abertura/navegação da galeria.
 
 ### 19 — TASK-019: Padronizar datas no backend e no banco
 **Estado: pendente.** Definir como instantes e prazos são recebidos, persistidos e serializados. Tratar valores históricos conforme sua interpretação atual, sem conversões em massa sem auditoria.
