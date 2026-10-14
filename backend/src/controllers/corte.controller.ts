@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
-import { OrdemTeste } from '../entities/OrdemTeste';
+import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { Rastreamento, RastreamentoStatus, TipoLote } from '../entities/Rastreamento';
 import { Setor } from '../entities/Setor';
+import { getPersistedModelRoute, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 
 export class CorteController {
   /**
@@ -33,6 +34,21 @@ export class CorteController {
         return res.status(404).json({ error: 'Ordem de Teste não encontrada.' });
       }
 
+      if (ordem.status === OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
+        return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
+      }
+      let setoresDaRota = new Set<string>();
+      try {
+        await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        const { etapas } = await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        setoresDaRota = new Set(etapas.map((etapa) => etapa.setorId));
+      } catch (error) {
+        if (error instanceof RouteIntegrityError) {
+          return res.status(409).json({ error: `A ordem ainda não pode ser distribuída ao corte: ${error.message}`, code: 'ROTA_INVALIDA' });
+        }
+        throw error;
+      }
+
       const pecas = ordem.modelo?.pecas || [];
       if (pecas.length === 0) {
         return res.status(400).json({ error: 'O modelo desta Ordem de Teste não possui peças configuradas.' });
@@ -47,11 +63,11 @@ export class CorteController {
         return res.status(400).json({ error: 'Nenhuma peça possui subsetor de corte configurado no modelo.' });
       }
 
-      const todosSetores = await setorRepo.find();
+      const todosSetores = await setorRepo.find({ where: { plantaId: ordem.plantaId, ativo: true } });
       const setoresDestino: Setor[] = [];
 
       for (const opcaoId of setorCorteOpcaoIds) {
-        const setorEncontrado = todosSetores.find(s => s.id === opcaoId || s.tipoOpcaoId === opcaoId);
+        const setorEncontrado = todosSetores.find(s => setoresDaRota.has(s.id) && (s.id === opcaoId || s.tipoOpcaoId === opcaoId));
         if (setorEncontrado && !setoresDestino.some(s => s.id === setorEncontrado.id)) {
           setoresDestino.push(setorEncontrado);
         }
@@ -59,7 +75,11 @@ export class CorteController {
 
       if (setoresDestino.length === 0) {
         const setoresDiretos = await setorRepo.findBy({ id: In(setorCorteOpcaoIds) });
-        setoresDestino.push(...setoresDiretos);
+        setoresDestino.push(...setoresDiretos.filter((setor) => setoresDaRota.has(setor.id)));
+      }
+
+      if (setoresDestino.length === 0) {
+        return res.status(409).json({ error: 'A rota vinculada a esta ordem não contém os setores exigidos pelas peças do corte.', code: 'ROTA_CORTE_INCOMPATIVEL' });
       }
 
       const rastreamentosCriados: Rastreamento[] = [];

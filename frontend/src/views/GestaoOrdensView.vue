@@ -63,6 +63,7 @@ interface Modelo {
   id: string
   nome: string
   codigoProduto: string
+  dataCorte?: string | null
   pecas?: PecaInfo[]
   marca?: MarcaInfo
   rotas?: RotaModeloItem[]
@@ -77,7 +78,7 @@ interface OrdemTeste {
   prioridadePcp: string
   status: string
   liberadoProducao: boolean
-  possuiCaixaTeste: boolean
+  possuiCaixaTeste: boolean | null
   observacoes: string | null
   dataPrevistaProducao?: string | null
   slasPorSetor?: Record<string, number> | null
@@ -935,12 +936,13 @@ const form = ref({
   plantaId: '',
   prioridadePcp: '',
   observacoes: '',
-  possuiCaixaTeste: false,
+  dataPrevistaProducao: '',
 })
 const formErrors = ref<Record<string, string>>({})
 
 // ─── Helpers de Status ───────────────────────────────────────────────────────
 const statusConfig: Record<string, { label: string; cls: string }> = {
+  AGUARDANDO_MODELAGEM:      { label: 'Aguardando Modelagem',   cls: 'badge--orange' },
   AGUARDANDO_MATERIAL:        { label: 'Aguardando Material',    cls: 'badge--amber' },
   CONFERENCIA_INICIAL:        { label: 'Conferência Inicial',    cls: 'badge--blue' },
   AGUARDANDO_VALIDACAO:       { label: 'Aguardando Validação',   cls: 'badge--amber' },
@@ -987,6 +989,8 @@ const filteredOrdens = computed(() => {
       o.prioridadePcp.toLowerCase().includes(q)
   )
 })
+
+const modeloFormSelecionado = computed(() => modelos.value.find((modelo) => modelo.id === form.value.modeloId) || null)
 
 const stats = computed(() => ({
   total: ordens.value.length,
@@ -1041,19 +1045,23 @@ async function handleCreateOrdem() {
   if (!form.value.modeloId)      formErrors.value.modeloId = 'Selecione um modelo.'
   if (!form.value.plantaId)      formErrors.value.plantaId = 'Selecione uma planta.'
   if (!form.value.prioridadePcp) formErrors.value.prioridadePcp = 'Selecione a prioridade.'
+  const modeloSelecionado = modelos.value.find((modelo) => modelo.id === form.value.modeloId)
+  if (modeloSelecionado && !modeloSelecionado.dataCorte) formErrors.value.modeloId = 'Cadastre a previsão de corte do modelo antes de criar a ordem.'
 
   if (Object.keys(formErrors.value).length > 0) return
 
   loadingCreate.value = true
   try {
-    await api.post('/lotes', {
+    await api.post('/ordens-teste/wizard/ordem', {
       modeloId:      form.value.modeloId,
       plantaId:      form.value.plantaId,
       prioridadePcp: form.value.prioridadePcp,
       observacoes:   form.value.observacoes || null,
-      possuiCaixaTeste: form.value.possuiCaixaTeste,
+      dataPrevistaProducao: form.value.dataPrevistaProducao
+        ? new Date(form.value.dataPrevistaProducao).toISOString()
+        : null,
     })
-    addToast('success', 'Ordem de teste criada com sucesso.')
+    addToast('success', 'Ordem criada com status Aguardando Modelagem.')
     // Recarrega dropdown para remover o modelo que agora tem ordem ativa
     await Promise.all([fetchOrdens(), fetchDropdownData()])
     closeModal()
@@ -1081,7 +1089,7 @@ async function handleCreateOrdem() {
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
 function openModal() {
-  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '', possuiCaixaTeste: false }
+  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '', dataPrevistaProducao: '' }
   formErrors.value = {}
   showModal.value = true
 }
@@ -1095,6 +1103,11 @@ function formatDate(iso: string) {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
+}
+
+function formatDateOnly(value: string | null | undefined) {
+  const isoDate = value?.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return isoDate ? `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}` : 'não cadastrada'
 }
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
@@ -1437,6 +1450,9 @@ onMounted(async () => {
                   <AlertCircle :size="12" aria-hidden="true" />
                   {{ formErrors.modeloId }}
                 </span>
+                <span v-else-if="form.modeloId" class="form-help">
+                  Previsão de corte: {{ formatDateOnly(modeloFormSelecionado?.dataCorte) }}
+                </span>
               </div>
 
               <!-- Planta -->
@@ -1489,22 +1505,9 @@ onMounted(async () => {
                 </span>
               </div>
 
-              <!-- Possui Caixa Teste -->
-              <div class="form-field toggle-field" style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 16px;">
-                <div style="display: flex; flex-direction: column; gap: 4px;">
-                  <label for="chk-caixa-teste" style="font-weight: 600; color: #1e293b; font-size: 0.875rem; margin: 0; cursor: pointer;">
-                    Bifurcação de Fluxo (Caixa Teste)
-                  </label>
-                  <span style="font-size: 0.75rem; color: #64748b;">
-                    Gera lote principal e caixa de teste separados.
-                  </span>
-                </div>
-                <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 24px;">
-                  <input type="checkbox" id="chk-caixa-teste" v-model="form.possuiCaixaTeste" style="opacity: 0; width: 0; height: 0;">
-                  <span class="slider round" :style="{ backgroundColor: form.possuiCaixaTeste ? '#0284c7' : '#cbd5e1', position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, transition: '.4s', borderRadius: '34px' }">
-                    <span style="position: absolute; content: ''; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: 0.4s; border-radius: 50%;" :style="form.possuiCaixaTeste ? 'transform: translateX(20px);' : ''"></span>
-                  </span>
-                </label>
+              <div class="form-field">
+                <label for="dataPrevistaProducao" class="form-label">Início previsto na produção <span class="optional-tag">opcional</span></label>
+                <input id="dataPrevistaProducao" v-model="form.dataPrevistaProducao" type="datetime-local" class="form-input" />
               </div>
 
               <!-- Observações (opcional) -->
@@ -1522,7 +1525,7 @@ onMounted(async () => {
               <!-- Info tip -->
               <div class="info-tip" role="note">
                 <AlertCircle :size="14" class="tip-icon" aria-hidden="true" />
-                <span>O código de barras será gerado automaticamente. Apenas modelos <strong>sem teste ativo</strong> aparecem na lista (regra 1:1).</span>
+                <span>O código de barras será gerado automaticamente. A ordem aguardará a configuração de peças, Caixa Teste e rota pela Modelagem.</span>
               </div>
             </div>
 

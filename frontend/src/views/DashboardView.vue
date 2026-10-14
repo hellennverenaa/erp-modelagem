@@ -211,19 +211,19 @@ onBeforeUnmount(() => {
       </div>
 
       <div
-        v-if="authStore.hasPermission('TELA_NOVA_ORDEM_TESTE') && authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE')"
+        v-if="authStore.hasPermission('TELA_NOVA_ORDEM_TESTE') && (authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE') || authStore.hasPermission('CONFIGURAR_MODELO_ORDEM'))"
         class="sidebar-action-wrap"
       >
         <RouterLink
           to="/dashboard/novo-teste"
           class="btn-sidebar-action"
           :class="{ 'btn-sidebar-action--active': route.path === '/dashboard/novo-teste' }"
-          :title="!sidebarExpanded ? 'Iniciar Novo Teste' : undefined"
+          :title="!sidebarExpanded ? (authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE') ? 'Iniciar Novo Teste' : 'Fila da Modelagem') : undefined"
           @click="handleNavigation"
         >
           <PlusCircle :size="19" class="action-icon" aria-hidden="true" />
           <Transition name="fade-slide">
-            <span v-if="sidebarExpanded" class="action-label">Iniciar Novo Teste</span>
+            <span v-if="sidebarExpanded" class="action-label">{{ authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE') ? 'Iniciar Novo Teste' : 'Fila da Modelagem' }}</span>
           </Transition>
         </RouterLink>
       </div>

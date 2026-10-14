@@ -11,6 +11,7 @@ import { Rastreamento, RastreamentoStatus, TipoLote } from '../entities/Rastream
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { Peca } from '../entities/Peca';
 import { IsNull } from 'typeorm';
+import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 
 // ═══ Schema de Validação Zod para a Inspeção ═══
 const createInspecaoSchema = z.object({
@@ -202,6 +203,18 @@ export class InspecoesController {
         gravidade,
         descricaoDefeito
       } = parseResult.data;
+
+      const ordem = await AppDataSource.getRepository(OrdemTeste).findOne({ where: { id: ordemTesteId } });
+      if (!ordem) return res.status(404).json({ error: 'Ordem de teste não encontrada.', code: 'ORDEM_NOT_FOUND' });
+      if (ordem.status === 'AGUARDANDO_MODELAGEM') {
+        return res.status(409).json({ error: 'A ordem aguarda a configuração da Modelagem e não está liberada para inspeção.', code: 'MODELAGEM_REQUIRED' });
+      }
+      try {
+        await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+      } catch (error) {
+        if (error instanceof RouteIntegrityError) return res.status(409).json({ error: `A ordem não está liberada para inspeção: ${error.message}`, code: 'ROTA_INVALIDA' });
+        throw error;
+      }
 
       // Executa lógica transacional
       const inspecaoSalva = await AppDataSource.transaction(async (transactionalEntityManager) => {

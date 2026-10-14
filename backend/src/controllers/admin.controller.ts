@@ -6,6 +6,7 @@ import { Usuario } from '../entities/Usuario';
 import { Perfil } from '../entities/Perfil';
 import { Setor } from '../entities/Setor';
 import { Modelo } from '../entities/Modelo';
+import { OrdemTeste } from '../entities/OrdemTeste';
 import { Planta } from '../entities/Planta';
 import { Marca } from '../entities/Marca';
 import { EntityManager, In, IsNull } from 'typeorm';
@@ -15,6 +16,7 @@ import { carregarCatalogoRbac } from '../services/rbac-catalog.service';
 import { AuditLog } from '../entities/AuditLog';
 import { modeloIdentificacaoSchema } from '../schemas/modelo.schema';
 import { ModelPiecesError, ModelPieceInput, saveModelPieces } from '../services/model-pieces.service';
+import { lockModelConfiguration } from '../services/route-integrity.service';
 
 async function auditarRbac(manager: EntityManager, req: Request, acao: string, entidadeTipo: string, entidadeId: string, anteriores: Record<string, unknown> | null, novos: Record<string, unknown> | null) {
   await manager.getRepository(AuditLog).save(manager.getRepository(AuditLog).create({
@@ -46,6 +48,14 @@ const createMarcaSchema = z.object({
   nome: z.string().trim().min(1, 'O nome da marca é obrigatório.').max(100, 'O nome da marca deve ter no máximo 100 caracteres.'),
 });
 
+const createModeloRascunhoSchema = z.object({
+  ...modeloIdentificacaoSchema.shape,
+  dataCorte: z.string().nullable().optional().refine(
+    (value) => value == null || Number.isFinite(new Date(value).getTime()),
+    'Informe uma previsão de corte válida.',
+  ),
+});
+
 const createPerfilSchema = z.object({
   nome: z.string().trim().min(2, 'Informe um nome com pelo menos 2 caracteres.').max(50),
   descricao: z.string().trim().max(500).optional().nullable(),
@@ -75,6 +85,74 @@ function nomesDeMarcaIguais(a: string, b: string): boolean {
 }
 
 export class AdminController {
+  /** Cria somente a identificação do modelo para o PCP continuar com a ordem. */
+  public async createModeloRascunho(req: Request, res: Response): Promise<Response> {
+    const parsed = createModeloRascunhoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Dados inválidos para criar o modelo.',
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const modelo = await AppDataSource.transaction(async (manager) => {
+        const marca = await manager.getRepository(Marca).findOne({ where: { id: parsed.data.marcaId, ativo: true } });
+        if (!marca) throw Object.assign(new Error('Marca não encontrada ou inativa.'), { code: 'MARCA_NOT_FOUND', status: 404 });
+        const existe = await manager.getRepository(Modelo).findOne({ where: { codigoProduto: parsed.data.codigoProduto }, select: { id: true } });
+        if (existe) throw Object.assign(new Error('Já existe um modelo com este código de produto.'), { code: 'MODELO_DUPLICATE_CODE', status: 409 });
+
+        return manager.getRepository(Modelo).save(manager.getRepository(Modelo).create({
+          marcaId: parsed.data.marcaId,
+          codigoProduto: parsed.data.codigoProduto,
+          nome: parsed.data.nome,
+          dataCorte: parsed.data.dataCorte ? new Date(parsed.data.dataCorte) : null,
+          temporada: null,
+          mfmReferenciaUrl: null,
+          fichaTecnicaUrl: null,
+          ativo: true,
+        }));
+      });
+      return res.status(201).json({ message: 'Modelo cadastrado. A ordem pode ser criada pelo PCP.', modelo });
+    } catch (error: any) {
+      if (error?.code === 'MODELO_DUPLICATE_CODE' || error?.code === 'MARCA_NOT_FOUND') {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
+      if (error?.code === '23505') {
+        return res.status(409).json({ error: 'Já existe um modelo com este código de produto.', code: 'MODELO_DUPLICATE_CODE' });
+      }
+      console.error('[AdminController] Erro ao criar modelo para o PCP:', error);
+      return res.status(500).json({ error: 'Erro ao cadastrar modelo.', code: 'MODELO_CREATE_FAILED' });
+    }
+  }
+
+  /** Ajusta a previsão de corte do PCP antes de criar a ordem vinculada. */
+  public async updatePrevisaoCorteModelo(req: Request, res: Response): Promise<Response> {
+    const id = z.string().uuid().safeParse(req.params.id);
+    const data = z.string().refine((value) => Number.isFinite(new Date(value).getTime()), 'Informe uma previsão de corte válida.').safeParse(req.body.dataCorte);
+    if (!id.success || !data.success) {
+      return res.status(400).json({ error: 'Informe uma previsão de corte válida.', code: 'VALIDATION_ERROR' });
+    }
+    try {
+      const modelo = await AppDataSource.transaction(async (manager) => {
+        await lockModelConfiguration(manager, id.data);
+        const repo = manager.getRepository(Modelo);
+        const atual = await repo.findOne({ where: { id: id.data, ativo: true } });
+        if (!atual) throw Object.assign(new Error('Modelo não encontrado ou inativo.'), { status: 404, code: 'MODELO_NOT_FOUND' });
+        const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: atual.id }, select: { id: true } });
+        if (ordem) throw Object.assign(new Error('A previsão de corte não pode ser alterada depois da criação da ordem.'), { status: 409, code: 'MODEL_ALREADY_ORDERED' });
+        atual.dataCorte = new Date(data.data);
+        return repo.save(atual);
+      });
+      return res.json({ message: 'Previsão de corte atualizada.', modelo });
+    } catch (error: any) {
+      if (error?.status && error?.code) return res.status(error.status).json({ error: error.message, code: error.code });
+      console.error('[AdminController] Erro ao atualizar previsão de corte:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar a previsão de corte.', code: 'DATA_CORTE_UPDATE_FAILED' });
+    }
+  }
+
   /**
    * Lista todos os perfis cadastrados no sistema.
    */
@@ -415,14 +493,18 @@ export class AdminController {
     }
     try {
       const pecas = await AppDataSource.transaction(async (manager) => {
+        await lockModelConfiguration(manager, modeloId.data);
         const modelo = await manager.getRepository(Modelo).findOne({ where: { id: modeloId.data }, select: { id: true } });
         if (!modelo) throw Object.assign(new Error('Modelo não encontrado.'), { code: 'MODELO_NOT_FOUND', status: 404 });
+        const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: modelo.id }, select: { id: true } });
+        if (ordem) throw Object.assign(new Error('As peças deste modelo devem ser alteradas pela configuração da ordem na fila da Modelagem.'), { code: 'MODEL_PIECES_MANAGED_BY_ORDER', status: 409 });
         return saveModelPieces(manager, modelo.id, parsed.data.pecas);
       });
       return res.json({ message: 'Peças do modelo atualizadas com sucesso.', pecas });
     } catch (error: any) {
       if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
       if (error?.code === 'MODELO_NOT_FOUND') return res.status(404).json({ error: error.message, code: error.code });
+      if (error?.code === 'MODEL_PIECES_MANAGED_BY_ORDER') return res.status(409).json({ error: error.message, code: error.code });
       console.error('[AdminController] Erro ao atualizar peças do modelo:', error);
       return res.status(500).json({ error: 'Erro ao atualizar as peças do modelo.' });
     }

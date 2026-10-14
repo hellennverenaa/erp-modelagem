@@ -20,7 +20,6 @@ import {
   ToggleLeft,
   ToggleRight,
   ListOrdered,
-  Box,
   Trash2,
   AlertTriangle,
   RotateCcw,
@@ -51,7 +50,7 @@ const emit = defineEmits<{
 const podeSalvarRota = computed(() =>
   authStore.hasPermission('EDITAR_ROTA') && (
     authStore.hasPermission('EDITAR_TELA_CONSTRUTOR_ROTA') ||
-    (props.isWizardMode === true && authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE'))
+    (props.isWizardMode === true && authStore.hasPermission('CONFIGURAR_MODELO_ORDEM'))
   )
 )
 
@@ -225,8 +224,6 @@ const zonePosMontagem = ref<RouteBlock[]>([])
 // ─── Conditional toggles ─────────────────────────────────────────────────
 const toggleSerigrafia   = ref(false)
 const toggleVulcanizado  = ref(false)
-const toggleCaixaTeste   = ref(false)
-const tamanhoCaixaTeste  = ref('')
 
 // Toggles para as máquinas extras de corte
 const toggleCorteCN      = ref(false)
@@ -385,8 +382,6 @@ function resetarRota(notify = true) {
 
   toggleSerigrafia.value = false
   toggleVulcanizado.value = false
-  toggleCaixaTeste.value = false
-  tamanhoCaixaTeste.value = ''
   toggleCorteCN.value = false
   toggleCorteCouro.value = false
   toggleCorteLaser.value = false
@@ -626,7 +621,7 @@ async function salvarRota() {
   }
 
   const payload: RotaSalvaPayload = { rota: rotaFiltrada, slasPorSetor }
-  if (props.isWizardMode) {
+  if (props.isWizardMode && !modelId) {
     showToast('Rota pronta. Ela será persistida ao finalizar o novo teste.', 'success')
     saveSuccess.value = true
     emit('rota-salva', payload)
@@ -641,7 +636,7 @@ async function salvarRota() {
       slasPorSetor
     })
     if (response.status === 200) {
-      showToast('Rota de produção salva com sucesso.', 'success')
+      showToast(props.isWizardMode ? 'Rota salva. Finalizando a configuração da ordem...' : 'Rota de produção salva com sucesso.', 'success')
       saveSuccess.value = true
       emit('rota-salva', payload)
       setTimeout(() => { saveSuccess.value = false }, 3000)
@@ -708,8 +703,6 @@ async function carregarRotaDoModelo(modeloId: string) {
   
   toggleSerigrafia.value = false
   toggleVulcanizado.value = false
-  toggleCaixaTeste.value = false
-  tamanhoCaixaTeste.value = ''
   toggleCorteCN.value = false
   toggleCorteCouro.value = false
   toggleCorteLaser.value = false
@@ -1019,47 +1012,6 @@ defineExpose({
           </div>
         </section>
 
-        <!-- Caixa Teste -->
-        <section class="sidebar-section">
-          <h2 class="sidebar-section-title">
-            <Box :size="14" aria-hidden="true" />
-            Configuração de Caixa Teste
-          </h2>
-
-          <div class="toggle-card">
-            <div class="toggle-info">
-              <Box :size="16" style="color:#0369a1" aria-hidden="true" />
-              <div>
-                <span class="toggle-label">Possui Caixa Teste?</span>
-                <span class="toggle-desc">Ativa o lote paralelo de caixa</span>
-              </div>
-            </div>
-            <button
-              class="toggle-btn"
-              :class="{ 'toggle-btn--on': toggleCaixaTeste }"
-              @click="toggleCaixaTeste = !toggleCaixaTeste"
-              type="button"
-              :aria-pressed="toggleCaixaTeste"
-              aria-label="Ativar Caixa Teste"
-            >
-              <ToggleRight v-if="toggleCaixaTeste" :size="32" class="t-icon-on" />
-              <ToggleLeft  v-else                  :size="32" class="t-icon-off" />
-            </button>
-          </div>
-
-          <Transition name="field-reveal">
-            <div v-if="toggleCaixaTeste" class="caixa-field-wrapper">
-              <label for="tamanho-caixa" class="field-label">Tamanho da Caixa Teste</label>
-              <input
-                id="tamanho-caixa"
-                v-model="tamanhoCaixaTeste"
-                type="text"
-                class="field-input"
-                placeholder="Ex: 38, 39, 40-42..."
-              />
-            </div>
-          </Transition>
-        </section>
         <!-- Máquinas de Corte Opcionais -->
         <section class="sidebar-section">
           <h2 class="sidebar-section-title">
@@ -2329,13 +2281,6 @@ defineExpose({
 .toggle-btn:focus-visible { outline: 2px solid #1e40af; outline-offset: 2px; }
 .t-icon-on { color: #1e40af; }
 .t-icon-off { color: #94a3b8; }
-
-/* Caixa Teste */
-.caixa-field-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
 
 .field-label {
   font-size: 0.75rem;

@@ -6,6 +6,10 @@ import { verificaToken } from '../middlewares/auth.middleware';
 const router = Router();
 const lotesController = new LotesController();
 
+router.post('/wizard/ordem', exigirPermissao('EDITAR_TELA_NOVA_ORDEM_TESTE'), lotesController.criarOrdemPcp);
+router.put('/:id/modelagem/pecas', exigirPermissao('CONFIGURAR_MODELO_ORDEM'), lotesController.salvarConfiguracaoPecasModelagem);
+router.put('/:id/modelagem/finalizar', exigirPermissao('CONFIGURAR_MODELO_ORDEM'), lotesController.finalizarConfiguracaoModelagem);
+
 /**
  * @swagger
  * /api/ordens-teste/wizard:

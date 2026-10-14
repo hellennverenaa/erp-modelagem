@@ -47,6 +47,9 @@ export class RotaModelo {
   @Column({ type: 'int' })
   ordem: number;
 
+  @Column({ type: 'int', default: 1 })
+  versao: number;
+
   @Column({ type: 'boolean', default: true })
   obrigatorio: boolean;
 

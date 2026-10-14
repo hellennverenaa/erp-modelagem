@@ -1,16 +1,20 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Peca } from '../entities/Peca';
+import { Modelo } from '../entities/Modelo';
+import { Planta } from '../entities/Planta';
 import { AuditLog } from '../entities/AuditLog';
 import { Usuario } from '../entities/Usuario';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { perfilPossuiPermissao } from '../services/rbac.service';
 import { finalizarNovoTeste, NovoTesteServiceError } from '../services/novo-teste.service';
-import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
+import { getPersistedModelRoute, lockModelConfiguration, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 import { finalizarNovoTesteSchema } from '../schemas/novo-teste.schema';
+import { ModelPieceInput, ModelPiecesError, saveModelPieces } from '../services/model-pieces.service';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -21,6 +25,34 @@ const createLoteSchema = z.object({
   observacoes: z.string().optional().nullable(),
   dataPrevistaProducao: z.string().optional().nullable(),
   slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
+});
+
+const criarOrdemPcpSchema = z.object({
+  modeloId: z.string().uuid(),
+  plantaId: z.string().uuid(),
+  prioridadePcp: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'URGENTE']),
+  dataCorte: z.string().nullable().optional().refine(
+    (value) => value == null || Number.isFinite(new Date(value).getTime()),
+    'Previsão de corte inválida.',
+  ),
+  dataPrevistaProducao: z.string().nullable().optional().refine(
+    (value) => value == null || Number.isFinite(new Date(value).getTime()),
+    'Data prevista de início na produção inválida.',
+  ),
+  observacoes: z.string().trim().nullable().optional(),
+});
+
+const salvarConfiguracaoPecasSchema = z.object({
+  possuiCaixaTeste: z.boolean(),
+  pecas: z.array(z.object({
+    id: z.string().uuid().optional(),
+    catalogoPecaId: z.string().uuid(),
+    setorCorteOpcaoId: z.string().uuid(),
+  })).min(2),
+});
+
+const finalizarModelagemSchema = z.object({
+  slasPorSetor: z.record(z.string(), z.number().nonnegative()).optional().nullable(),
 });
 
 const updateLoteSchema = z.object({
@@ -48,6 +80,163 @@ const updateManutencaoSchema = z.object({
 });
 
 export class LotesController {
+  /** Cria ordem PCP antes da configuração da Modelagem. */
+  public criarOrdemPcp = async (req: Request, res: Response): Promise<Response> => {
+    if (!req.user) return res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
+    const parsed = criarOrdemPcpSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Dados inválidos para criar a ordem.', code: 'VALIDATION_ERROR', details: parsed.error.flatten().fieldErrors });
+    }
+
+    const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+    if (!acessoTodasPlantas && parsed.data.plantaId !== req.user.plantaId) {
+      return res.status(403).json({ error: 'Não é permitido criar uma ordem em outra planta.', code: 'PLANTA_FORBIDDEN' });
+    }
+
+    try {
+      const ordem = await AppDataSource.transaction(async (manager) => {
+        await lockModelConfiguration(manager, parsed.data.modeloId);
+        const modeloRepo = manager.getRepository(Modelo);
+        const modelo = await modeloRepo.findOne({ where: { id: parsed.data.modeloId, ativo: true } });
+        if (!modelo) throw Object.assign(new Error('Modelo não encontrado ou inativo.'), { status: 404, code: 'MODELO_NOT_FOUND' });
+
+        const ordemExistente = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: modelo.id } });
+        if (ordemExistente) throw Object.assign(new Error('Este modelo já possui uma ordem de teste. A relação Modelo → Ordem de Teste é 1:1.'), { status: 409, code: 'MODELO_TESTE_DUPLICADO', ordemId: ordemExistente.id, codigoBarras: ordemExistente.codigoBarras });
+
+        const planta = await manager.getRepository(Planta).findOne({ where: { id: parsed.data.plantaId, ativo: true }, select: { id: true } });
+        if (!planta) throw Object.assign(new Error('Planta não encontrada ou inativa.'), { status: 404, code: 'PLANTA_NOT_FOUND' });
+        const previsaoCorte = parsed.data.dataCorte ? new Date(parsed.data.dataCorte) : modelo.dataCorte;
+        if (!previsaoCorte) throw Object.assign(new Error('Informe a previsão de corte antes de criar a ordem.'), { status: 400, code: 'DATA_CORTE_REQUIRED' });
+        if (parsed.data.dataCorte) {
+          modelo.dataCorte = previsaoCorte;
+          await modeloRepo.save(modelo);
+        }
+
+        const repo = manager.getRepository(OrdemTeste);
+        return repo.save(repo.create({
+          modeloId: modelo.id,
+          plantaId: parsed.data.plantaId,
+          criadoPorId: req.user!.userId,
+          codigoBarras: `OT-${randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`,
+          dataInicio: new Date(),
+          prioridadePcp: parsed.data.prioridadePcp,
+          dataPrevistaProducao: parsed.data.dataPrevistaProducao ? new Date(parsed.data.dataPrevistaProducao) : null,
+          observacoes: parsed.data.observacoes?.trim() || null,
+          status: OrdemTesteStatus.AGUARDANDO_MODELAGEM,
+          liberadoProducao: false,
+          possuiCaixaTeste: null,
+          rotaSnapshot: null,
+          rotaVersao: null,
+          slasPorSetor: null,
+        }));
+      });
+      return res.status(201).json({ message: 'Ordem criada e enviada para a fila da Modelagem.', ordem, lote: ordem });
+    } catch (error: any) {
+      if (error?.code === '23505') {
+        return res.status(409).json({ error: 'Já existe uma ordem de teste para este modelo.', code: 'MODELO_TESTE_DUPLICADO' });
+      }
+      if (error?.code && error?.status) {
+        return res.status(error.status).json({ error: error.message, code: error.code, ...(error.ordemId ? { ordemId: error.ordemId, codigoBarras: error.codigoBarras } : {}) });
+      }
+      console.error('[LotesController] Erro ao criar ordem do PCP:', error);
+      return res.status(500).json({ error: 'Erro ao criar a ordem do PCP.', code: 'PCP_ORDER_CREATE_FAILED' });
+    }
+  };
+
+  /** Persiste peças e decisão de Caixa Teste mantendo a ordem bloqueada para produção. */
+  public salvarConfiguracaoPecasModelagem = async (req: Request, res: Response): Promise<Response> => {
+    const id = z.string().uuid().safeParse(req.params.id);
+    const parsed = salvarConfiguracaoPecasSchema.safeParse(req.body);
+    if (!id.success || !parsed.success) {
+      return res.status(400).json({ error: 'Informe peças, sub-setores e decisão de Caixa Teste válidos.', code: 'VALIDATION_ERROR', details: parsed.success ? undefined : parsed.error.flatten().fieldErrors });
+    }
+    const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+    if (!acessoTodasPlantas && !req.user?.plantaId) return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+
+    try {
+      const result = await AppDataSource.transaction(async (manager) => {
+        const repo = manager.getRepository(OrdemTeste);
+        const where = acessoTodasPlantas ? { id: id.data } : { id: id.data, plantaId: req.user!.plantaId };
+        const encontrada = await repo.findOne({ where, select: { id: true, modeloId: true } });
+        if (!encontrada) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
+        await lockModelConfiguration(manager, encontrada.modeloId);
+        const ordem = await repo.findOne({ where });
+        if (!ordem) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
+        if (ordem.status !== OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
+          throw Object.assign(new Error('A configuração da Modelagem só pode ser alterada enquanto a ordem estiver aguardando modelagem.'), { status: 409, code: 'MODELAGEM_ALREADY_COMPLETED' });
+        }
+        const pecas = await saveModelPieces(manager, ordem.modeloId, parsed.data.pecas as ModelPieceInput[]);
+        ordem.possuiCaixaTeste = parsed.data.possuiCaixaTeste;
+        await repo.save(ordem);
+        return { ordem, pecas };
+      });
+      return res.json({ message: 'Peças e decisão de Caixa Teste salvas.', ordem: result.ordem, pecas: result.pecas, totalPecas: result.pecas.length });
+    } catch (error: any) {
+      if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
+      if (error?.status && error?.code) return res.status(error.status).json({ error: error.message, code: error.code });
+      console.error('[LotesController] Erro ao salvar configuração de peças da Modelagem:', error);
+      return res.status(500).json({ error: 'Erro ao salvar as peças da Modelagem.', code: 'MODELAGEM_PIECES_SAVE_FAILED' });
+    }
+  };
+
+  /** Fecha a configuração, congela a versão da rota na ordem e libera a produção. */
+  public finalizarConfiguracaoModelagem = async (req: Request, res: Response): Promise<Response> => {
+    const id = z.string().uuid().safeParse(req.params.id);
+    const parsed = finalizarModelagemSchema.safeParse(req.body);
+    if (!id.success || !parsed.success) {
+      return res.status(400).json({ error: 'Dados inválidos para finalizar a configuração da Modelagem.', code: 'VALIDATION_ERROR' });
+    }
+    const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+    if (!acessoTodasPlantas && !req.user?.plantaId) return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+
+    try {
+      const ordem = await AppDataSource.transaction(async (manager) => {
+        const repo = manager.getRepository(OrdemTeste);
+        const where = acessoTodasPlantas ? { id: id.data } : { id: id.data, plantaId: req.user!.plantaId };
+        const encontrada = await repo.findOne({ where, select: { id: true, modeloId: true } });
+        if (!encontrada) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
+        await lockModelConfiguration(manager, encontrada.modeloId);
+        const atual = await repo.findOne({ where });
+        if (!atual) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
+        if (atual.status !== OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
+          throw Object.assign(new Error('A ordem não está aguardando configuração da Modelagem.'), { status: 409, code: 'MODELAGEM_ALREADY_COMPLETED' });
+        }
+        if (atual.possuiCaixaTeste === null) {
+          throw Object.assign(new Error('Defina se o modelo possui Caixa Teste antes de finalizar.'), { status: 400, code: 'CAIXA_TESTE_NOT_DEFINED' });
+        }
+
+        await validatePersistedModelRoute(manager, atual.modeloId, atual.plantaId);
+        const { versao, etapas } = await getPersistedModelRoute(manager, atual.modeloId, atual.plantaId);
+        const slasPorSetor = parsed.data.slasPorSetor || {};
+
+        atual.rotaVersao = versao;
+        atual.rotaSnapshot = {
+          versao,
+          plantaId: atual.plantaId,
+          etapas: etapas.map((etapa) => ({
+            setorId: etapa.setorId,
+            nome: etapa.setor?.nome || 'Setor',
+            ordem: etapa.ordem,
+            obrigatorio: etapa.obrigatorio,
+            tipoExecucao: etapa.tipoExecucao,
+            bipagemApenasSaida: etapa.bipagemApenasSaida,
+          })),
+          slasPorSetor,
+        };
+        atual.slasPorSetor = slasPorSetor;
+        atual.status = OrdemTesteStatus.AGUARDANDO_MATERIAL;
+        atual.liberadoProducao = true;
+        return repo.save(atual);
+      });
+      return res.json({ message: 'Modelagem concluída. A ordem foi liberada para produção.', ordem });
+    } catch (error: any) {
+      if (error instanceof RouteIntegrityError) return res.status(400).json({ error: error.message, code: error.code });
+      if (error?.status && error?.code) return res.status(error.status).json({ error: error.message, code: error.code });
+      console.error('[LotesController] Erro ao finalizar configuração da Modelagem:', error);
+      return res.status(500).json({ error: 'Erro ao finalizar a configuração da Modelagem.', code: 'MODELAGEM_FINALIZE_FAILED' });
+    }
+  };
+
   /**
    * GET /api/lotes ou /api/ordens-teste
    * Lista todas as ordens de teste cadastradas no sistema.
@@ -71,7 +260,11 @@ export class LotesController {
         order: { createdAt: 'DESC' }
       });
       const lotesComSla = lotes.map(l => {
-        if (l.modelo?.rotas) l.modelo.rotas = l.modelo.rotas.filter((rota) => rota.plantaId === l.plantaId);
+        if (l.modelo?.rotas) {
+          const rotasDaPlanta = l.modelo.rotas.filter((rota) => rota.plantaId === l.plantaId);
+          const versao = l.rotaVersao ?? rotasDaPlanta.reduce((maior, rota) => Math.max(maior, rota.versao || 1), 0);
+          l.modelo.rotas = rotasDaPlanta.filter((rota) => (rota.versao || 1) === versao);
+        }
         return { ...l, slasPorSetor: l.slasPorSetor || null };
       });
       return res.json(lotesComSla);
@@ -109,7 +302,11 @@ export class LotesController {
         });
       }
 
-      if (lote.modelo?.rotas) lote.modelo.rotas = lote.modelo.rotas.filter((rota) => rota.plantaId === lote.plantaId);
+      if (lote.modelo?.rotas) {
+        const rotasDaPlanta = lote.modelo.rotas.filter((rota) => rota.plantaId === lote.plantaId);
+        const versao = lote.rotaVersao ?? rotasDaPlanta.reduce((maior, rota) => Math.max(maior, rota.versao || 1), 0);
+        lote.modelo.rotas = rotasDaPlanta.filter((rota) => (rota.versao || 1) === versao);
+      }
 
       const auditRepo = AppDataSource.getRepository(AuditLog);
       const auditLogs = await auditRepo.find({
@@ -332,6 +529,35 @@ export class LotesController {
       }
 
       const { status, liberadoProducao, observacoes } = parseResult.data;
+
+      if (lote.status === OrdemTesteStatus.AGUARDANDO_MODELAGEM && status !== undefined && status !== OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
+        return res.status(409).json({
+          error: 'A ordem só pode sair de Aguardando Modelagem após concluir a configuração de peças, Caixa Teste e rota.',
+          code: 'MODELAGEM_REQUIRED',
+        });
+      }
+      if (lote.status === OrdemTesteStatus.AGUARDANDO_MODELAGEM && liberadoProducao === true) {
+        return res.status(409).json({
+          error: 'A liberação é concluída somente pelo fluxo de finalização da Modelagem.',
+          code: 'MODELAGEM_REQUIRED',
+        });
+      }
+      if (status === OrdemTesteStatus.AGUARDANDO_MODELAGEM && lote.status !== OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
+        return res.status(409).json({ error: 'O estado Aguardando Modelagem é controlado pelo fluxo de configuração.', code: 'MODELAGEM_STATUS_MANAGED' });
+      }
+      if (liberadoProducao === true || (status !== undefined && status !== OrdemTesteStatus.AGUARDANDO_MODELAGEM)) {
+        if (lote.possuiCaixaTeste === null) {
+          return res.status(409).json({ error: 'A Modelagem precisa definir Caixa Teste antes de avançar o estado da ordem.', code: 'CAIXA_TESTE_NOT_DEFINED' });
+        }
+        try {
+          await validatePersistedModelRoute(AppDataSource.manager, lote.modeloId, lote.plantaId, lote.rotaVersao);
+        } catch (error) {
+          if (error instanceof RouteIntegrityError) {
+            return res.status(409).json({ error: `A ordem não pode avançar sem uma rota válida: ${error.message}`, code: 'ROTA_INVALIDA' });
+          }
+          throw error;
+        }
+      }
 
       if (status !== undefined) {
         lote.status = status;

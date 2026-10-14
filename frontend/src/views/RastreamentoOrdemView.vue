@@ -81,8 +81,12 @@ interface OrdemOP {
     id: string
     nome: string
     referencia?: string
+    codigoProduto?: string
+    dataCorte?: string | null
     rotas?: Array<{ setorId?: string; setor?: { id: string }; ordem: number }>
   }
+  planta?: { id: string; nome: string }
+  dataPrevistaProducao?: string | null
   historico: RastreamentoItem[]
   nodesCx: NodeTrackItem[]
   nodesLp: NodeTrackItem[]
@@ -189,6 +193,11 @@ function formatTimestampFormatado(isoDate: string | null | undefined, label: str
   }
 }
 
+function formatDateOnly(value: string | null | undefined): string {
+  const isoDate = value?.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return isoDate ? `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}` : '—'
+}
+
 function formatPermanencia(minutos: number | null | undefined): string {
   if (minutos === null || minutos === undefined) return 'Duração: —'
   if (minutos < 60) return `Duração: ${minutos} min`
@@ -260,6 +269,24 @@ async function fetchOrdensEPosicoes() {
       const hist: RastreamentoItem[] = ordem.rastreamentos || []
       const slasMap: Record<string, number> = ordem.slasPorSetor || {}
       const rotasModelo = (ordem.modelo as any)?.rotas || (ordem.modelo as any)?.rota_modelo || []
+
+      if (ordem.status === 'AGUARDANDO_MODELAGEM') {
+        return {
+          id: ordem.id,
+          codigoBarras: ordem.codigoBarras,
+          status: ordem.status,
+          possuiCaixaTeste: false,
+          slasPorSetor: ordem.slasPorSetor,
+          modelo: ordem.modelo,
+          planta: ordem.planta,
+          dataPrevistaProducao: ordem.dataPrevistaProducao,
+          historico: hist,
+          nodesCx: [],
+          nodesLp: [],
+          svgPathCx: '',
+          svgPathLp: '',
+        }
+      }
 
       const temCaixaTeste =
         (ordem.modelo as any)?.possuiCaixaTeste ||
@@ -790,13 +817,23 @@ onUnmounted(() => {
                 Dual Track (Caixa Teste + Lote)
               </span>
               <span class="px-3 py-1 rounded-full bg-zinc-100 border border-zinc-300 text-[10px] font-mono font-bold text-zinc-700 uppercase shadow-xs">
-                {{ ordem.status }}
+                {{ ordem.status === 'AGUARDANDO_MODELAGEM' ? 'Aguardando Modelagem' : ordem.status }}
               </span>
             </div>
           </div>
 
           <!-- Trilhas Horizontais Paralelas -->
-          <div class="space-y-6 relative">
+          <div v-if="ordem.status === 'AGUARDANDO_MODELAGEM'" class="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <div class="flex items-start gap-3 text-left">
+              <AlertTriangle :size="20" class="mt-0.5 text-amber-600" />
+              <div>
+                <h3 class="font-bold text-amber-950">Aguardando configuração da Modelagem</h3>
+                <p class="mt-1 text-sm text-amber-900">O PCP já criou esta ordem. A Modelagem precisa cadastrar as peças, definir Caixa Teste e salvar uma rota válida para {{ ordem.planta?.nome || 'a planta' }}.</p>
+                <p v-if="ordem.modelo?.dataCorte" class="mt-2 text-xs font-semibold text-amber-800">Previsão de corte do modelo: {{ formatDateOnly(ordem.modelo.dataCorte) }}</p>
+              </div>
+            </div>
+          </div>
+          <div v-else class="space-y-6 relative">
             <!-- Trilha 1: Caixa Teste (Fast Track) -->
             <div v-if="ordem.possuiCaixaTeste" class="bg-amber-50/40 border border-amber-300/40 rounded-2xl p-5 relative">
               <div class="flex items-center gap-2 text-amber-800 text-xs font-mono font-bold uppercase tracking-wider mb-4">
@@ -1120,13 +1157,23 @@ onUnmounted(() => {
                   Dual Track (Caixa Teste + Lote)
                 </span>
                 <span class="px-3 py-1 rounded-full bg-zinc-100 border border-zinc-300 text-[10px] font-mono font-bold text-zinc-700 uppercase shadow-xs">
-                  {{ ordem.status }}
+                  {{ ordem.status === 'AGUARDANDO_MODELAGEM' ? 'Aguardando Modelagem' : ordem.status }}
                 </span>
               </div>
             </div>
 
             <!-- Trilhas e Nós que Surgem sob Bipagem -->
-            <div class="space-y-6 relative">
+            <div v-if="ordem.status === 'AGUARDANDO_MODELAGEM'" class="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+              <div class="flex items-start gap-3 text-left">
+                <AlertTriangle :size="22" class="mt-0.5 text-amber-600" />
+                <div>
+                  <h3 class="text-lg font-bold text-amber-950">Teste anunciado — aguardando Modelagem</h3>
+                  <p class="mt-1 text-sm text-amber-900">A produção ainda não começou. A Modelagem está pendente de cadastrar as peças, decidir sobre Caixa Teste e gravar a rota desta planta.</p>
+                  <p v-if="ordem.modelo?.dataCorte" class="mt-2 text-xs font-semibold text-amber-800">Previsão de corte: {{ formatDateOnly(ordem.modelo.dataCorte) }}</p>
+                </div>
+              </div>
+            </div>
+            <div v-else class="space-y-6 relative">
               <!-- Trilha Superior: Caixa Teste -->
               <div v-if="ordem.possuiCaixaTeste" class="bg-amber-50/40 border border-amber-300/40 rounded-2xl p-5 relative">
                 <div class="flex items-center gap-2 text-amber-800 text-xs font-mono font-bold uppercase tracking-wider mb-4">

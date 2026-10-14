@@ -95,7 +95,7 @@ export const gerarEtiquetas = async (req: Request, res: Response): Promise<Respo
       itens: 'N/A',
       talao: '1x1',
       codigoBarras: `${ordem.codigoBarras}${sufixo}`,
-      possuiCaixaTeste: ordem.possuiCaixaTeste,
+      possuiCaixaTeste: Boolean(ordem.possuiCaixaTeste),
       plantaNome: ordem.planta?.nome || 'PLANTA DASS',
       tipoLote,
     }));

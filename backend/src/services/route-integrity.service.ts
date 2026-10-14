@@ -31,6 +31,14 @@ export class RouteIntegrityError extends Error {
   }
 }
 
+/** Serializa gravações de peças/rota e a finalização da configuração do modelo. */
+export async function lockModelConfiguration(manager: EntityManager, modeloId: string): Promise<void> {
+  await manager.query(
+    'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+    ['erp-modelagem:model-configuration', modeloId],
+  );
+}
+
 /** Valida o mesmo contrato para Construtor, wizard e criação individual da ordem. */
 export async function validateRouteIntegrity(
   manager: EntityManager,
@@ -95,10 +103,27 @@ export async function validatePersistedModelRoute(
   manager: EntityManager,
   modeloId: string,
   plantaId?: string,
+  versao?: number | null,
 ): Promise<void> {
-  const [rota, pecas] = await Promise.all([
-    manager.getRepository(RotaModelo).find({ where: plantaId ? { modeloId, plantaId } : { modeloId } }),
-    manager.getRepository(Peca).find({ where: { modeloId } }),
-  ]);
+  const { etapas: rota } = await getPersistedModelRoute(manager, modeloId, plantaId, versao);
+  const pecas = await manager.getRepository(Peca).find({ where: { modeloId } });
   await validateRouteIntegrity(manager, rota, pecas, plantaId);
+}
+
+export async function getPersistedModelRoute(
+  manager: EntityManager,
+  modeloId: string,
+  plantaId?: string,
+  versao?: number | null,
+): Promise<{ versao: number; etapas: RotaModelo[] }> {
+  const rotas = await manager.getRepository(RotaModelo).find({
+    where: plantaId ? { modeloId, plantaId } : { modeloId },
+    relations: { setor: true },
+    order: { ordem: 'ASC' },
+  });
+  const versaoEfetiva = versao ?? rotas.reduce((maior, etapa) => Math.max(maior, etapa.versao || 1), 0);
+  return {
+    versao: versaoEfetiva,
+    etapas: rotas.filter((etapa) => (etapa.versao || 1) === versaoEfetiva),
+  };
 }

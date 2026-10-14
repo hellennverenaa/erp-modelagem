@@ -50,7 +50,7 @@ const rotasController = new RotasController();
  */
 router.put(
   '/:modeloId',
-  exigirAlgumaPermissao(['EDITAR_TELA_CONSTRUTOR_ROTA', 'EDITAR_TELA_NOVA_ORDEM_TESTE']),
+  exigirAlgumaPermissao(['EDITAR_TELA_CONSTRUTOR_ROTA', 'CONFIGURAR_MODELO_ORDEM']),
   exigirAlgumaPermissao(['EDITAR_ROTA']),
   rotasController.salvarRota,
 );

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { AdminController } from '../controllers/admin.controller';
-import { exigirAlgumaPermissao, exigirAlgumaPermissaoOuAdminAutomacao, exigirAdminAutomacao } from '../middlewares/rbac.middleware';
+import { exigirAlgumaPermissao, exigirAlgumaPermissaoOuAdminAutomacao, exigirAdminAutomacao, exigirPermissao } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const adminController = new AdminController();
@@ -124,7 +124,7 @@ router.patch('/perfis/:id', exigirAdminAutomacao, adminController.updatePerfil);
  *         description: Não autorizado
  */
 router.get('/setores', exigirAlgumaPermissaoOuAdminAutomacao([
-  'TELA_BIPAGEM', 'TELA_INSPECAO_QUALIDADE', 'TELA_CONSTRUTOR_ROTA',
+  'TELA_BIPAGEM', 'TELA_INSPECAO_QUALIDADE', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE',
 ]), adminController.getSetores);
 
 /**
@@ -233,11 +233,13 @@ router.patch('/marcas/:id', exigirAlgumaPermissao([
 router.get('/modelos/catalogo', exigirAlgumaPermissao([
   'TELA_CATALOGO_MODELOS', 'TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE',
 ]), adminController.getAllModelos);
+router.post('/modelos/rascunho', exigirPermissao('EDITAR_TELA_NOVA_ORDEM_TESTE'), (req, res) => adminController.createModeloRascunho(req, res));
+router.patch('/modelos/:id/previsao-corte', exigirPermissao('EDITAR_TELA_NOVA_ORDEM_TESTE'), (req, res) => adminController.updatePrevisaoCorteModelo(req, res));
 router.get('/modelos/:id', exigirAlgumaPermissao([
   'TELA_GESTAO_ORDENS', 'TELA_CONSTRUTOR_ROTA', 'TELA_NOVA_ORDEM_TESTE', 'TELA_CATALOGO_MODELOS',
 ]), adminController.getModeloPorId);
 router.put('/modelos/:id/pecas', exigirAlgumaPermissao([
-  'EDITAR_TELA_CATALOGO_MODELOS',
+  'EDITAR_TELA_CATALOGO_MODELOS', 'CONFIGURAR_MODELO_ORDEM',
 ]), adminController.atualizarPecasModelo);
 
 /**
@@ -268,7 +270,7 @@ router.put('/modelos/:id/pecas', exigirAlgumaPermissao([
  *         description: Código de produto já existe
  */
 router.post('/modelos', exigirAlgumaPermissao([
-  'EDITAR_TELA_CATALOGO_MODELOS', 'EDITAR_TELA_NOVA_ORDEM_TESTE',
+  'EDITAR_TELA_CATALOGO_MODELOS',
 ]), adminController.createModelo);
 
 

@@ -14,6 +14,7 @@ import { Usuario } from './Usuario';
 import { Rastreamento } from './Rastreamento';
 
 export enum OrdemTesteStatus {
+  AGUARDANDO_MODELAGEM         = 'AGUARDANDO_MODELAGEM',
   AGUARDANDO_MATERIAL         = 'AGUARDANDO_MATERIAL',
   CONFERENCIA_INICIAL         = 'CONFERENCIA_INICIAL',
   AGUARDANDO_VALIDACAO        = 'AGUARDANDO_VALIDACAO',
@@ -34,6 +35,20 @@ export enum OrdemTesteStatus {
   APROVADO                    = 'APROVADO',
   REPROVADO                   = 'REPROVADO',
   LIBERADO_PRODUCAO           = 'LIBERADO_PRODUCAO',
+}
+
+export interface OrdemRotaSnapshot {
+  versao: number;
+  plantaId: string;
+  etapas: Array<{
+    setorId: string;
+    nome: string;
+    ordem: number;
+    obrigatorio: boolean;
+    tipoExecucao: string;
+    bipagemApenasSaida: boolean;
+  }>;
+  slasPorSetor: Record<string, number>;
 }
 
 @Entity({ name: 'ordens_teste' })
@@ -80,6 +95,12 @@ export class OrdemTeste {
   @Column({ name: 'slas_por_setor', type: 'jsonb', nullable: true })
   slasPorSetor: Record<string, number> | null;
 
+  @Column({ name: 'rota_snapshot', type: 'jsonb', nullable: true })
+  rotaSnapshot: OrdemRotaSnapshot | null;
+
+  @Column({ name: 'rota_versao', type: 'integer', nullable: true })
+  rotaVersao: number | null;
+
   @Column({ name: 'data_fim_real', type: 'timestamp', nullable: true })
   dataFimReal: Date | null;
 
@@ -93,8 +114,8 @@ export class OrdemTeste {
   liberadoProducao: boolean;
 
   // Campo crítico para bifurcação do fluxo (indica se gera Caixa Teste + Lote Principal)
-  @Column({ name: 'possui_caixa_teste', type: 'boolean', default: false })
-  possuiCaixaTeste: boolean;
+  @Column({ name: 'possui_caixa_teste', type: 'boolean', nullable: true, default: false })
+  possuiCaixaTeste: boolean | null;
 
   @Column({ type: 'text', nullable: true })
   observacoes: string | null;

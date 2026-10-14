@@ -36,7 +36,7 @@ interface OrdemTeste {
   id: string
   codigoBarras: string
   status: string
-  possuiCaixaTeste: boolean
+  possuiCaixaTeste: boolean | null
 }
 
 
@@ -95,6 +95,7 @@ const podeEditarSetor = computed(() =>
   authStore.hasPermission('EDITAR_TELA_BIPAGEM') || authStore.hasPermission('ADMINISTRAR_BIPAGEM')
 )
 const isAdmin = computed(() => authStore.hasPermission('ADMINISTRAR_BIPAGEM'))
+const ordemAguardandoModelagem = computed(() => ordemAtiva.value?.status === 'AGUARDANDO_MODELAGEM')
 
 const isFaseMonolitica = computed<boolean>(() => {
   if (!selecionouSetorId.value) return false
@@ -398,6 +399,14 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
 
   ordemAtiva.value = loteEncontrado
 
+  if (loteEncontrado.status === 'AGUARDANDO_MODELAGEM') {
+    acaoPendente.value = null
+    showRfidModal.value = false
+    triggerToast('Esta ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota. Nenhuma operação foi iniciada.', 'info')
+    forcarFocoInput()
+    return
+  }
+
   // Intermediário: Aproxime o crachá para registrar Entrada / Saída / Handoff
   acaoPendente.value = acao
   rfidCode.value = ''
@@ -618,6 +627,13 @@ onMounted(async () => {
             </button>
           </div>
           <span class="field-hint">Foque este campo e utilize o leitor físico ou clique no ícone da câmera para escanear</span>
+          <div v-if="ordemAguardandoModelagem" class="pending-modeling-notice" role="status">
+            <AlertTriangle :size="18" aria-hidden="true" />
+            <div>
+              <strong>Ordem aguardando Modelagem</strong>
+              <p>Faltam a configuração das peças, a decisão sobre Caixa Teste e a rota de produção. A bipagem ficará disponível após essa etapa.</p>
+            </div>
+          </div>
         </div>
 
         <!-- ── TOUCH TARGET BUTTONS ── -->
@@ -625,7 +641,7 @@ onMounted(async () => {
           <button
             type="button"
             class="btn-action btn-action--entrada"
-            :disabled="loadingBip"
+            :disabled="loadingBip || ordemAguardandoModelagem"
             @click="processarBipagem('entrada')"
           >
             <Loader2 v-if="loadingBip" :size="20" class="spinner" aria-hidden="true" />
@@ -636,7 +652,7 @@ onMounted(async () => {
           <button
             type="button"
             class="btn-action btn-action--saida"
-            :disabled="loadingBip"
+            :disabled="loadingBip || ordemAguardandoModelagem"
             @click="processarBipagem('saida')"
           >
             <Loader2 v-if="loadingBip" :size="20" class="spinner" aria-hidden="true" />
@@ -650,7 +666,7 @@ onMounted(async () => {
         <button
           type="button"
           class="btn-ocorrencia"
-          :disabled="!ordemAtiva || loadingBip"
+          :disabled="!ordemAtiva || ordemAguardandoModelagem || loadingBip"
           @click="abrirModalOcorrencia"
         >
           <AlertOctagon :size="20" class="ocorrencia-icon" aria-hidden="true" />
@@ -2035,4 +2051,17 @@ input:checked + .slider:before {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(71, 85, 105, 1);
 }
+.pending-modeling-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #fed7aa;
+  border-radius: 0.65rem;
+  background: #fff7ed;
+  color: #9a3412;
+}
+.pending-modeling-notice strong { display: block; font-size: 0.78rem; }
+.pending-modeling-notice p { margin: 0.2rem 0 0; color: #9a3412; font-size: 0.72rem; line-height: 1.45; }
 </style>

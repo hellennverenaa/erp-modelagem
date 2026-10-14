@@ -7,6 +7,7 @@ import { OrdemTeste } from '../entities/OrdemTeste';
 import { Setor } from '../entities/Setor';
 import { Usuario } from '../entities/Usuario';
 import { webSocketService } from '../services/websocket.service';
+import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 
 const criarOcorrenciaSchema = z.object({
   ordemTesteId: z.string().uuid({ message: 'ordemTesteId deve ser um UUID valido.' }),
@@ -67,6 +68,15 @@ export class OcorrenciasController {
       const ot = await otRepo.findOneBy({ id: data.ordemTesteId });
       if (!ot) {
         return res.status(404).json({ error: 'Ordem de teste nao localizada.', code: 'ORDEM_NOT_FOUND' });
+      }
+      if (ot.status === 'AGUARDANDO_MODELAGEM') {
+        return res.status(409).json({ error: 'A ordem aguarda a configuração da Modelagem e não pode receber eventos de produção.', code: 'MODELAGEM_REQUIRED' });
+      }
+      try {
+        await validatePersistedModelRoute(AppDataSource.manager, ot.modeloId, ot.plantaId, ot.rotaVersao);
+      } catch (error) {
+        if (error instanceof RouteIntegrityError) return res.status(409).json({ error: `A ordem ainda não pode entrar na produção: ${error.message}`, code: 'ROTA_INVALIDA' });
+        throw error;
       }
 
       const setorRepo = AppDataSource.getRepository(Setor);

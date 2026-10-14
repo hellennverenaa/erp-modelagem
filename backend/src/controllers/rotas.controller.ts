@@ -6,7 +6,7 @@ import { Modelo } from '../entities/Modelo';
 import { Setor } from '../entities/Setor';
 import { In } from 'typeorm';
 import { Peca } from '../entities/Peca';
-import { RouteIntegrityError, validateRouteIntegrity } from '../services/route-integrity.service';
+import { lockModelConfiguration, RouteIntegrityError, validateRouteIntegrity } from '../services/route-integrity.service';
 import { perfilPossuiPermissao } from '../services/rbac.service';
 
 const itemRotaSchema = z.object({
@@ -20,7 +20,8 @@ const itemRotaSchema = z.object({
 const salvarRotaSchema = z.object({
   plantaId: z.string().uuid(),
   // Uma rota vazia apagaria a configuração existente na transação abaixo.
-  rota: z.array(itemRotaSchema).min(1, { message: 'A rota deve conter ao menos um setor.' })
+  rota: z.array(itemRotaSchema).min(1, { message: 'A rota deve conter ao menos um setor.' }),
+  slasPorSetor: z.record(z.string(), z.number().nonnegative()).optional().nullable(),
 });
 
 export class RotasController {
@@ -44,7 +45,7 @@ export class RotasController {
       });
     }
 
-    const { rota, plantaId } = parseResult.data;
+      const { rota, plantaId } = parseResult.data;
 
     try {
       if (!req.user) return res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
@@ -76,15 +77,16 @@ export class RotasController {
       }
 
       // Executa tudo dentro de uma transação
-      const itensSalvos = await AppDataSource.transaction(async (transactionalEntityManager) => {
+      const resultado = await AppDataSource.transaction(async (transactionalEntityManager) => {
+        await lockModelConfiguration(transactionalEntityManager, modeloId);
         const rotaRepo = transactionalEntityManager.getRepository(RotaModelo);
         const pecas = await transactionalEntityManager.getRepository(Peca).find({ where: { modeloId } });
         await validateRouteIntegrity(transactionalEntityManager, rota, pecas, plantaId);
-
-        // 1. Remove toda a rota existente para este modelo
-        await rotaRepo.delete({ modeloId, plantaId });
-
-        // 2. Insere os novos itens da rota
+        const versaoAnterior = await rotaRepo.createQueryBuilder('rota')
+          .select('COALESCE(MAX(rota.versao), 0)', 'versao')
+          .where('rota.modeloId = :modeloId AND rota.plantaId = :plantaId', { modeloId, plantaId })
+          .getRawOne();
+        const versao = Number(versaoAnterior?.versao || 0) + 1;
         const novosItens = rota.map((item) => {
           return rotaRepo.create({
             modeloId,
@@ -93,19 +95,20 @@ export class RotasController {
             ordem: item.ordem,
             obrigatorio: item.obrigatorio,
             tipoExecucao: item.tipoExecucao,
-            bipagemApenasSaida: item.bipagemApenasSaida
+            bipagemApenasSaida: item.bipagemApenasSaida,
+            versao,
           });
         });
-
-        return rotaRepo.save(novosItens);
+        return { itensSalvos: await rotaRepo.save(novosItens), versao };
       });
 
       return res.status(200).json({
         message: 'Rota de produção salva com sucesso.',
-        totalSetores: itensSalvos.length,
+        totalSetores: resultado.itensSalvos.length,
+        versao: resultado.versao,
         modeloId,
         plantaId,
-        rota: itensSalvos,
+        rota: resultado.itensSalvos,
       });
 
     } catch (error: any) {
@@ -142,15 +145,18 @@ export class RotasController {
         return res.status(403).json({ error: 'Não é permitido consultar a rota de outra planta.', code: 'PLANTA_FORBIDDEN' });
       }
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
-      const rota = await rotaRepo.find({
+      const rotas = await rotaRepo.find({
         where: { modeloId, plantaId },
         relations: { setor: true },
         order: { ordem: 'ASC' }
       });
+      const versao = rotas.reduce((maior, etapa) => Math.max(maior, etapa.versao || 1), 0);
+      const rota = rotas.filter((etapa) => (etapa.versao || 1) === versao);
 
       return res.status(200).json({
         modeloId,
         plantaId,
+        versao,
         rota
       });
 

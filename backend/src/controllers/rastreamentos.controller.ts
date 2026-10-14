@@ -12,6 +12,7 @@ import { RotaModelo } from '../entities/RotaModelo';
 import { Usuario } from '../entities/Usuario';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { webSocketService } from '../services/websocket.service';
+import { getPersistedModelRoute, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 
 const isUuidString = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
@@ -207,12 +208,28 @@ export class RastreamentosController {
         });
       }
 
+      if (ordem.status === 'AGUARDANDO_MODELAGEM') {
+        return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
+      }
+
+      let versaoRota: number;
+      try {
+        await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        versaoRota = (await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao)).versao;
+      } catch (error) {
+        if (error instanceof RouteIntegrityError) {
+          return res.status(409).json({ error: `A ordem ainda não pode entrar na produção: ${error.message}`, code: 'ROTA_INVALIDA' });
+        }
+        throw error;
+      }
+
       // 1.2. Verifica se o setorId pertence à rota de produção mapeada para o modelo
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
       const pertenceARota = await rotaRepo.findOne({
         where: {
           modeloId: ordem.modeloId,
           plantaId: ordem.plantaId,
+          versao: versaoRota,
           setorId: setorId,
         },
       });
@@ -229,9 +246,10 @@ export class RastreamentosController {
 
       if (inputStatus !== RastreamentoStatus.EM_RETRABALHO) {
         const queryBuilder = rastreamentoRepo.createQueryBuilder('r')
-          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId AND rm.plantaId = :plantaId', {
+          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId AND rm.plantaId = :plantaId AND rm.versao = :versaoRota', {
             modeloId: ordem.modeloId,
             plantaId: ordem.plantaId,
+            versaoRota,
           })
           .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
           .andWhere('r.tipoLote = :tipoLote', { tipoLote })
@@ -273,6 +291,7 @@ export class RastreamentosController {
             where: {
               modeloId: ordem.modeloId,
               plantaId: ordem.plantaId,
+              versao: versaoRota,
               ordem: pertenceARota.ordem - 1,
             },
           });
@@ -519,12 +538,28 @@ export class RastreamentosController {
         });
       }
 
+      if (ordem.status === 'AGUARDANDO_MODELAGEM') {
+        return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
+      }
+
+      let versaoRota: number;
+      try {
+        await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        versaoRota = (await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao)).versao;
+      } catch (error) {
+        if (error instanceof RouteIntegrityError) {
+          return res.status(409).json({ error: `A ordem ainda não pode entrar na produção: ${error.message}`, code: 'ROTA_INVALIDA' });
+        }
+        throw error;
+      }
+
       // 2.2. Validação da Rota de Produção (HIERARQUIA DA ROTA ANTES DE DATA_ENTRADA)
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
       const pertenceARota = await rotaRepo.findOne({
         where: {
           modeloId: ordem.modeloId,
           plantaId: ordem.plantaId,
+          versao: versaoRota,
           setorId: setorId,
         },
       });
@@ -728,6 +763,7 @@ export class RastreamentosController {
               where: {
                 modeloId: ordemObj.modeloId,
                 plantaId: ordemObj.plantaId,
+                versao: ordemObj.rotaVersao || versaoRota,
                 setorId: setorId,
               },
             });
@@ -738,6 +774,7 @@ export class RastreamentosController {
                 where: {
                   modeloId: ordemObj.modeloId,
                   plantaId: ordemObj.plantaId,
+                  versao: ordemObj.rotaVersao || versaoRota,
                   ordem: rotaAtual.ordem,
                 },
               });
@@ -792,6 +829,7 @@ export class RastreamentosController {
                 where: {
                   modeloId: ordemObj.modeloId,
                   plantaId: ordemObj.plantaId,
+                  versao: ordemObj.rotaVersao || versaoRota,
                   ordem: rotaAtual.ordem + 1,
                 },
               });
