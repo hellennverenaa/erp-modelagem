@@ -37,6 +37,24 @@ Fazer as sugestões do catálogo aparecerem e atualizarem enquanto o usuário di
 ### 05 — TASK-005: Reorganizar a navegação e o layout
 Ordenar a sidebar conforme o fluxo de uso da aplicação, remover a barra de breadcrumb superior e mover nome, perfil e logout para a parte inferior da sidebar. Preservar permissões e adaptar o layout aos modos recolhido e mobile.
 
+**Diagnóstico em 2026-10-14:** `DashboardView.vue` contém a sidebar e o layout autenticado. A lista atual põe a Torre de Controle antes dos catálogos; “Iniciar Novo Teste” já aparece como ação destacada no topo. Nome, perfil e logout já ficam no rodapé, enquanto o controle de recolher fica no final da barra e usa X/Menu. A versão recolhida existe no desktop, mas no mobile a barra continua ocupando espaço lateral; não há drawer, fundo de sobreposição ou fechamento automático depois de navegar. A sidebar inicia sempre expandida.
+
+**Permissões e rotas:** cada item já é filtrado por `hasPermission`; RBAC usa `isAdminAutomacao`, e as rotas também têm guardas independentes. A reorganização deve manter esses filtros e guards sem alterar seus critérios. A rota inicial pós-login é selecionada separadamente em `router/index.ts` e hoje prioriza Gestão de Ordens; a proposta não a altera.
+
+**Breadcrumb:** não foi encontrada uma barra ou componente compartilhado de breadcrumb no frontend. O layout renderiza diretamente a tela ativa, e as telas possuem cabeçalhos próprios. Na implementação, remover somente uma faixa de breadcrumb caso seja identificada na interface-alvo e preservar títulos e contexto próprios das telas.
+
+**Direção visual e ordem sugeridas pela usuária:** Torre de Controle e TV Rastreamento devem ficar no topo dos links de navegação. Manter “Iniciar Novo Teste” como ação principal destacada no topo da barra e, logo abaixo, priorizar Torre de Controle e TV Rastreamento. Em seguida, agrupar Catálogo de Modelos, Catálogo de Peças e Construtor de Rota como Modelagem; Gestão de Ordens, Bipagem Operacional e Inspeção de Qualidade como Produção; Permissões RBAC como Administração.
+
+**Escopo aprovado:** adotar das referências a estrutura de marca com controle lateral de seta no alto, campo para filtrar os links autorizados, rótulos de seção, item ativo com faixa de destaque, navegação por ícones e textos e rodapé separado. Usar a paleta já existente do ERP (azul-marinho e azul), com acabamento mais consistente em espaçamento, contraste, foco e hover; não replicar a paleta roxa/preta das referências. Manter nome/perfil e saída no rodapé. No modo recolhido, preservar ícones, indicação de item ativo e dicas de texto; a busca fica acessível por ícone. Em telas pequenas, usar a sidebar como drawer sobre o conteúdo, com fundo de fechamento e encerramento ao escolher uma tela; no desktop, manter a barra compacta por ícones. Preservar o catálogo de permissões, guards e rota inicial atual.
+
+**Entrega em 2026-10-14:** `DashboardView.vue` agora organiza a navegação em Acesso rápido (Torre de Controle e TV Rastreamento), Modelagem, Produção e Administração, mantendo “Iniciar Novo Teste” como ação destacada acima dos links. Foi aplicado o padrão visual inspirado nas referências com a paleta azul do ERP, botão de seta no cabeçalho, busca local de telas, destaque lateral da rota ativa e identificação do usuário/logout no rodapé. O modo compacto de desktop mantém ícones e dicas; em telas pequenas, a sidebar abre como drawer com fundo, botão superior, fechamento por Escape, clique no fundo ou navegação e bloqueio de rolagem do conteúdo ao fundo.
+
+**Permissões e escopo:** o filtro da busca só considera links já autorizados por `hasPermission`/`isAdminAutomacao`; as condições de acesso e os guards do router não foram alterados. A rota inicial pós-login também foi preservada. A busca no código não encontrou breadcrumb compartilhado para remover; os cabeçalhos próprios das telas foram mantidos.
+
+**Validação:** `npm run build` passou em `frontend/`, incluindo `vue-tsc -b` e `vite build`; `git diff --check` passou. Não foi realizado teste funcional visual em desktop/mobile nem teste automatizado.
+
+**Estado:** validada pela usuária ao iniciar o ponto seguinte, em 2026-10-14; commitada separadamente conforme o fluxo acordado.
+
 ### 06 — TASK-006: Validar o código do produto e retirar Temporada do cadastro ativo
 Aplicar a regra de que o código do produto contém somente dígitos no frontend, backend e banco, preservando zeros à esquerda. Remover Temporada dos formulários e dos novos contratos sem apagar os valores históricos ou quebrar consumidores existentes.
 
