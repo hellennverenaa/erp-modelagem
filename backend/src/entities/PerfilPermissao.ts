@@ -16,7 +16,6 @@ export enum AcaoSetor {
   BIPAR_SAIDA               = 'BIPAR_SAIDA',               // Saída física (Handoff Automático nos setores iniciais)
   REVISAO_MAQUINA           = 'REVISAO_MAQUINA',           // Primeiro bip do Corte Automático por Máquina (Revisora)
   FECHAMENTO_LOTE           = 'FECHAMENTO_LOTE',           // Segundo bip — check OK/NÃO OK pelo Coordenador
-  PREENCHER_CHECKLIST       = 'PREENCHER_CHECKLIST',       // Checklist do Almoxarifado/Navalha/Telas
   INSPECIONAR_SETOR         = 'INSPECIONAR_SETOR',         // Inspetora de Qualidade — gate seletivo pós-Corte
   EDITAR_ROTA               = 'EDITAR_ROTA',               // Modelista gerenciando rota de modelo
   ADMINISTRAR_RBAC          = 'ADMINISTRAR_RBAC',          // Alteração dinâmica das permissões

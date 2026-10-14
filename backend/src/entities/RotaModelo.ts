@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { Modelo } from './Modelo';
 import { Setor } from './Setor';
+import { Planta } from './Planta';
 
 export enum TipoExecucao {
   SEQUENCIAL = 'SEQUENCIAL',
@@ -28,6 +29,13 @@ export class RotaModelo {
   @Column({ name: 'modelo_id', type: 'uuid' })
   modeloId: string;
 
+  @ManyToOne(() => Planta, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'planta_id' })
+  planta: Planta;
+
+  @Column({ name: 'planta_id', type: 'uuid' })
+  plantaId: string;
+
   // Setor por onde passa esta etapa da rota
   @ManyToOne(() => Setor, { nullable: false, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'setor_id' })
@@ -38,6 +46,9 @@ export class RotaModelo {
 
   @Column({ type: 'int' })
   ordem: number;
+
+  @Column({ type: 'int', default: 1 })
+  versao: number;
 
   @Column({ type: 'boolean', default: true })
   obrigatorio: boolean;

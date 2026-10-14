@@ -4,7 +4,7 @@ import LoginView from '../views/LoginView.vue'
 import { authStore } from '../api/auth.store'
 
 function dashboardStartPath(): string {
-  if (authStore.isAdminAutomacao.value) return '/dashboard/rbac'
+  if (authStore.isAdminAutomacao.value || authStore.hasPermission('TELA_GESTAO_RBAC')) return '/dashboard/rbac'
 
   const user = authStore.user.value
 
@@ -45,7 +45,7 @@ const router = createRouter({
           path: 'rbac',
           name: 'rbac',
           component: () => import('../components/AdminRBAC.vue'),
-          meta: { requiresAuth: true },
+          meta: { requiresAuth: true, permission: 'TELA_GESTAO_RBAC' },
         },
         {
           path: 'rotas',
@@ -96,12 +96,6 @@ const router = createRouter({
           meta: { requiresAuth: true, permission: 'TELA_NOVA_ORDEM_TESTE' },
         },
         {
-          path: 'checklist/:ordemTesteId/:setorId',
-          name: 'checklist',
-          component: () => import('../views/ChecklistView.vue'),
-          meta: { requiresAuth: true, permission: 'TELA_CHECKLIST' },
-        },
-        {
           path: 'rastreamento/:ordemTesteId?',
           name: 'rastreamento-ordem',
           component: () => import('../views/RastreamentoOrdemView.vue'),
@@ -149,12 +143,12 @@ router.beforeEach(async (to) => {
       return { name: 'login' }
     }
 
-    if (to.name === 'rbac' && !authStore.isAdminAutomacao.value) {
+    if (to.name === 'rbac' && !authStore.isAdminAutomacao.value && !authStore.hasPermission('TELA_GESTAO_RBAC')) {
       return { name: 'acesso-negado' }
     }
 
     const permission = to.meta.permission
-    if (typeof permission === 'string' && !authStore.hasPermission(permission)) {
+    if (typeof permission === 'string' && !(to.name === 'rbac' && authStore.isAdminAutomacao.value) && !authStore.hasPermission(permission)) {
       return { name: 'acesso-negado' }
     }
   }

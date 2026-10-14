@@ -69,7 +69,8 @@ interface MaquinaOpcao {
 }
 
 interface PecaSelecionada {
-  id: string
+  catalogoPecaId: string
+  pecaModeloId?: string
   numero: string
   nome: string
   codigoOriginal: string | null
@@ -85,6 +86,7 @@ const loadingCreate = ref(false)
 const showModal     = ref(false)
 const showBrandManager = ref(false)
 const modalStep     = ref(1) // 1: Modelo, 2: Peças
+const editingModeloId = ref('')
 const searchQuery   = ref('')
 const toasts        = ref<Toast[]>([])
 let toastCounter    = 0
@@ -236,7 +238,7 @@ function advanceToStep2() {
 }
 
 function addPecaFromCatalogo(item: CatalogoItem) {
-  const jaExiste = pecasSelecionadas.value.some(p => p.id === item.id)
+  const jaExiste = pecasSelecionadas.value.some(p => p.catalogoPecaId === item.id)
   if (jaExiste) {
     addToast('error', `A peça ${item.numero} - ${item.nome} já foi adicionada.`)
     return
@@ -245,7 +247,7 @@ function addPecaFromCatalogo(item: CatalogoItem) {
   const defaultMaquinaId = maquinasCorte.value[0]?.id || ''
 
   pecasSelecionadas.value.push({
-    id: item.id,
+    catalogoPecaId: item.id,
     numero: item.numero,
     nome: item.nome,
     codigoOriginal: item.codigoOriginal,
@@ -254,6 +256,21 @@ function addPecaFromCatalogo(item: CatalogoItem) {
 
   searchPecaText.value = ''
   showAutocomplete.value = false
+}
+
+function vincularPecaExistente(peca: PecaSelecionada, catalogoPecaId: string) {
+  const item = catalogoPecas.value.find((opcao) => opcao.id === catalogoPecaId)
+  if (!item) return
+  const duplicada = pecasSelecionadas.value.some((outra) => outra !== peca && outra.catalogoPecaId === item.id)
+  if (duplicada) {
+    peca.catalogoPecaId = ''
+    addToast('error', `A peça ${item.numero} - ${item.nome} já está vinculada a este modelo.`)
+    return
+  }
+  peca.catalogoPecaId = item.id
+  peca.numero = item.numero
+  peca.nome = item.nome
+  peca.codigoOriginal = item.codigoOriginal
 }
 
 function removePeca(index: number) {
@@ -274,14 +291,32 @@ async function handleCreateModelo() {
 
   loadingCreate.value = true
   try {
-    await api.post('/admin/modelos', {
-      marcaId:       form.value.marcaId,
-      codigoProduto: form.value.codigoProduto.trim(),
-      nome:          form.value.nome.trim(),
-      dataCorte:     form.value.dataCorte ? form.value.dataCorte : null,
-      pecas:         pecasSelecionadas.value
-    })
-    addToast('success', `Modelo "${form.value.nome}" cadastrado com sucesso.`)
+    if (pecasSelecionadas.value.some((peca) => !peca.catalogoPecaId || !peca.setorCorteOpcaoId)) {
+      addToast('error', 'Vincule cada peça do catálogo e selecione seu sub-setor de corte.')
+      return
+    }
+    if (editingModeloId.value) {
+      await api.put(`/admin/modelos/${editingModeloId.value}/pecas`, {
+        pecas: pecasSelecionadas.value.map((peca) => ({
+          id: peca.pecaModeloId,
+          catalogoPecaId: peca.catalogoPecaId,
+          setorCorteOpcaoId: peca.setorCorteOpcaoId,
+        }))
+      })
+      addToast('success', `Peças do modelo "${form.value.nome}" atualizadas.`)
+    } else {
+      await api.post('/admin/modelos', {
+        marcaId:       form.value.marcaId,
+        codigoProduto: form.value.codigoProduto.trim(),
+        nome:          form.value.nome.trim(),
+        dataCorte:     form.value.dataCorte ? form.value.dataCorte : null,
+        pecas:         pecasSelecionadas.value.map((peca) => ({
+          catalogoPecaId: peca.catalogoPecaId,
+          setorCorteOpcaoId: peca.setorCorteOpcaoId,
+        }))
+      })
+      addToast('success', `Modelo "${form.value.nome}" cadastrado com sucesso.`)
+    }
     await fetchModelos()
     closeModal()
   } catch (err: any) {
@@ -301,6 +336,7 @@ async function handleCreateModelo() {
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
 function openModal() {
+  editingModeloId.value = ''
   modalStep.value = 1
   form.value = { marcaId: '', codigoProduto: '', nome: '', dataCorte: '' }
   pecasSelecionadas.value = []
@@ -309,8 +345,38 @@ function openModal() {
   fetchStep2Options()
 }
 
+async function openEditPecas(modelo: Modelo) {
+  editingModeloId.value = modelo.id
+  modalStep.value = 2
+  formErrors.value = {}
+  searchPecaText.value = ''
+  showModal.value = true
+  await fetchStep2Options()
+  try {
+    const { data } = await api.get(`/admin/modelos/${modelo.id}`)
+    form.value = {
+      marcaId: data.marcaId,
+      codigoProduto: data.codigoProduto,
+      nome: data.nome,
+      dataCorte: data.dataCorte ? String(data.dataCorte).slice(0, 10) : '',
+    }
+    pecasSelecionadas.value = (data.pecas || []).map((peca: any) => ({
+      pecaModeloId: peca.id,
+      catalogoPecaId: peca.catalogoPecaId || peca.catalogoPeca?.id || '',
+      numero: peca.catalogoPeca?.numero || 'Vincular',
+      nome: peca.catalogoPeca?.nome || peca.nome,
+      codigoOriginal: peca.catalogoPeca?.codigoOriginal || null,
+      setorCorteOpcaoId: peca.setorCorteOpcaoId || '',
+    }))
+  } catch (err: any) {
+    closeModal()
+    addToast('error', err?.response?.data?.error || 'Não foi possível carregar as peças deste modelo.')
+  }
+}
+
 function closeModal() {
   showModal.value = false
+  editingModeloId.value = ''
 }
 
 function formatDate(iso: string) {
@@ -466,6 +532,7 @@ onUnmounted(() => {
               <th scope="col" class="text-center">Peças</th>
               <th scope="col" class="text-center">Status</th>
               <th scope="col">Cadastrado em</th>
+              <th v-if="authStore.hasPermission('EDITAR_TELA_CATALOGO_MODELOS')" scope="col" class="text-center">Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -498,6 +565,12 @@ onUnmounted(() => {
                 </span>
               </td>
               <td class="date-cell">{{ formatDate(modelo.createdAt) }}</td>
+              <td v-if="authStore.hasPermission('EDITAR_TELA_CATALOGO_MODELOS')" class="text-center">
+                <button type="button" class="btn-outline" @click="openEditPecas(modelo)" :disabled="loadingCreate">
+                  <Scissors :size="14" aria-hidden="true" />
+                  Editar peças
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -528,9 +601,12 @@ onUnmounted(() => {
                   <Layers :size="18" />
                 </div>
                 <div>
-                  <h2 id="modal-title-modelos" class="modal-title">Novo Modelo de Calçado</h2>
+                  <h2 id="modal-title-modelos" class="modal-title">
+                    {{ editingModeloId ? `Editar peças — ${form.nome}` : 'Novo Modelo de Calçado' }}
+                  </h2>
                   <div class="modal-step-badge">
-                    <span>Passo {{ modalStep }} de 2</span> — {{ modalStep === 1 ? 'Dados Gerais' : 'Vinculação de Peças' }}
+                    <span v-if="!editingModeloId">Passo {{ modalStep }} de 2 — </span>
+                    {{ editingModeloId ? 'Vinculação de Peças' : (modalStep === 1 ? 'Dados Gerais' : 'Vinculação de Peças') }}
                   </div>
                 </div>
               </div>
@@ -648,7 +724,9 @@ onUnmounted(() => {
             <!-- Body PASSO 2: Vinculação de Peças -->
             <div v-else-if="modalStep === 2" class="modal-body">
               <p class="modal-description">
-                Passo 2: Adicione as peças técnicas do catálogo a este modelo e selecione a máquina de corte.
+                {{ editingModeloId
+                  ? 'Atualize os vínculos das peças existentes ou adicione peças do catálogo, selecionando o sub-setor de corte de cada uma.'
+                  : 'Adicione as peças técnicas do catálogo a este modelo e selecione o sub-setor onde cada peça é cortada.' }}
               </p>
 
               <!-- Autocomplete do Catálogo -->
@@ -700,15 +778,28 @@ onUnmounted(() => {
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(p, idx) in pecasSelecionadas" :key="p.id" class="peca-row">
+                      <tr v-for="(p, idx) in pecasSelecionadas" :key="p.pecaModeloId || p.catalogoPecaId || idx" class="peca-row">
                         <td style="text-align: center;">
-                          <span class="peca-badge">{{ p.numero }}</span>
+                          <span v-if="p.catalogoPecaId" class="peca-badge">{{ p.numero }}</span>
+                          <select
+                            v-else
+                            class="maquina-select"
+                            :value="p.catalogoPecaId"
+                            aria-label="Vincular peça existente ao catálogo"
+                            @change="vincularPecaExistente(p, ($event.target as HTMLSelectElement).value)"
+                          >
+                            <option value="">Vincular ao catálogo…</option>
+                            <option v-for="item in catalogoPecas" :key="item.id" :value="item.id">
+                              {{ item.numero }} — {{ item.nome }}
+                            </option>
+                          </select>
                         </td>
                         <td>
                           <strong>{{ p.nome }}</strong>
                         </td>
                         <td>
                           <select v-model="p.setorCorteOpcaoId" class="maquina-select">
+                            <option value="">Selecione o sub-setor de corte</option>
                             <option v-for="m in maquinasCorte" :key="m.id" :value="m.id">
                               {{ m.label }}
                             </option>
@@ -719,6 +810,7 @@ onUnmounted(() => {
                             type="button"
                             class="btn-del-peca"
                             @click="removePeca(idx)"
+                            :disabled="loadingCreate || Boolean(editingModeloId)"
                             title="Remover peça"
                           >
                             <Trash2 :size="14" />
@@ -744,7 +836,7 @@ onUnmounted(() => {
                 Cancelar
               </button>
               <button
-                v-if="modalStep === 2"
+                v-if="modalStep === 2 && !editingModeloId"
                 type="button"
                 class="btn-outline"
                 @click="modalStep = 1"
@@ -773,7 +865,7 @@ onUnmounted(() => {
               >
                 <Loader2 v-if="loadingCreate" :size="15" class="spin-anim" aria-hidden="true" />
                 <Plus v-else :size="15" aria-hidden="true" />
-                <span>{{ loadingCreate ? 'Cadastrando...' : 'Salvar Modelo' }}</span>
+                <span>{{ loadingCreate ? 'Salvando...' : (editingModeloId ? 'Salvar Peças' : 'Salvar Modelo') }}</span>
               </button>
             </div>
           </div>

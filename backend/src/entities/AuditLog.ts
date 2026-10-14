@@ -32,7 +32,7 @@ export class AuditLog {
   usuarioId: string | null;
 
   @Column({ type: 'varchar', length: 150 })
-  acao: string; // Ex: 'BIPAR_SAIDA', 'CRIAR_OP', 'PREENCHER_CHECKLIST'
+  acao: string; // Ex: 'BIPAR_SAIDA', 'CRIAR_OP'
 
   @Column({ name: 'entidade_tipo', type: 'varchar', length: 100 })
   entidadeTipo: string; // Ex: 'rastreamentos', 'ordens_teste'

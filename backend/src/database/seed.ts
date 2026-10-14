@@ -5,7 +5,6 @@ import { Modelo, ModeloStatus } from '../entities/Modelo';
 import { ConfigCategoria } from '../entities/ConfigCategoria';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { seedCatalogoPecas } from './seeds/seedCatalogoPecas';
-import { seedCatalogoChecklist } from './seeds/seedCatalogoChecklist';
 
 async function runSeed() {
   console.log('==================================================');
@@ -17,7 +16,7 @@ async function runSeed() {
 
   try {
     // 1. Inserir Planta Principal
-    console.log('--- [PASSO 1/6] Seeding Planta Principal ---');
+    console.log('--- [PASSO 1/5] Seeding Planta Principal ---');
     const plantaRepo = AppDataSource.getRepository(Planta);
     let plantaPrincipal = await plantaRepo.findOne({ where: { nome: 'Planta Principal' } });
     if (!plantaPrincipal) {
@@ -33,7 +32,7 @@ async function runSeed() {
     }
 
     // 2. Inserir Marcas
-    console.log('\n--- [PASSO 2/6] Seeding Marcas ---');
+    console.log('\n--- [PASSO 2/5] Seeding Marcas ---');
     const marcaRepo = AppDataSource.getRepository(Marca);
     const marcasNomes = ['Nike', 'Fila', 'Osklen'];
     const marcasCriadas: Record<string, Marca> = {};
@@ -50,7 +49,7 @@ async function runSeed() {
     }
 
     // 3. Inserir ConfigCategoria e ConfigOpcoes
-    console.log('\n--- [PASSO 3/6] Seeding Categorias e Opções de Configuração ---');
+    console.log('\n--- [PASSO 3/5] Seeding Categorias e Opções de Configuração ---');
     const categoriaRepo = AppDataSource.getRepository(ConfigCategoria);
     const opcaoRepo = AppDataSource.getRepository(ConfigOpcao);
 
@@ -104,7 +103,7 @@ async function runSeed() {
     }
 
     // 4. Inserir Modelos
-    console.log('\n--- [PASSO 4/6] Seeding Modelos Iniciais ---');
+    console.log('\n--- [PASSO 4/5] Seeding Modelos Iniciais ---');
     const modeloRepo = AppDataSource.getRepository(Modelo);
     const modelosData = [
       { nome: 'Air Max 90', codigoProduto: 'NK-AM90', marcaNome: 'Nike' },
@@ -134,17 +133,10 @@ async function runSeed() {
 
     // 5. Inserir Catálogo de Peças (Dados.csv)
     console.log('\n==================================================');
-    console.log('--- [PASSO 5/6] EXECUTANDO SEEDER DE PEÇAS (Dados.csv) ---');
+    console.log('--- [PASSO 5/5] EXECUTANDO SEEDER DE PEÇAS (Dados.csv) ---');
     console.log('==================================================');
     const totalPecas = await seedCatalogoPecas(AppDataSource);
     console.log(`[SUCESSO] Passo 5 concluído: ${totalPecas} peças salvas.\n`);
-
-    // 6. Inserir Catálogo de Itens de Checklist (Checklist-Modelagem.csv)
-    console.log('==================================================');
-    console.log('--- [PASSO 6/6] EXECUTANDO SEEDER DE CHECKLIST ---');
-    console.log('==================================================');
-    const totalChecklist = await seedCatalogoChecklist(AppDataSource);
-    console.log(`[SUCESSO] Passo 6 concluído: ${totalChecklist} itens de checklist salvos.\n`);
 
     console.log('==================================================');
     console.log('    DATABASE SEEDING CONCLUÍDO COM SUCESSO!       ');

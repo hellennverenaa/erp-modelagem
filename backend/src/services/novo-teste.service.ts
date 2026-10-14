@@ -10,6 +10,7 @@ import { Planta } from '../entities/Planta';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Setor } from '../entities/Setor';
 import { FinalizarNovoTesteInput } from '../schemas/novo-teste.schema';
+import { validateRouteIntegrity } from './route-integrity.service';
 
 export class NovoTesteServiceError extends Error {
   constructor(
@@ -93,6 +94,7 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
         'ROUTE_SECTORS_INVALID',
       );
     }
+    await validateRouteIntegrity(manager, input.rota, input.pecas, input.ordem.plantaId);
 
     const modeloRepo = manager.getRepository(Modelo);
     const modelo = await modeloRepo.save(modeloRepo.create({
@@ -119,6 +121,7 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       }
       return pecasRepo.create({
         modeloId: modelo.id,
+        catalogoPecaId: item.catalogoPecaId,
         nome: itemCatalogo.nome,
         setorCorteOpcaoId: item.setorCorteOpcaoId,
         descricao: itemCatalogo.descricao,
@@ -129,6 +132,7 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
     const rotaRepo = manager.getRepository(RotaModelo);
     const rota = input.rota.map((etapa) => rotaRepo.create({
       modeloId: modelo.id,
+      plantaId: input.ordem.plantaId,
       setorId: etapa.setorId,
       ordem: etapa.ordem,
       obrigatorio: etapa.obrigatorio,
@@ -149,9 +153,6 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       liberadoProducao: false,
       possuiCaixaTeste: input.ordem.possuiCaixaTeste,
       observacoes: input.ordem.observacoes || null,
-      dataPrevistaProducao: input.ordem.dataPrevistaProducao
-        ? new Date(input.ordem.dataPrevistaProducao)
-        : null,
       slasPorSetor: input.ordem.slasPorSetor || null,
     }));
 

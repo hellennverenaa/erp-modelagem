@@ -20,7 +20,6 @@ import {
   ToggleLeft,
   ToggleRight,
   ListOrdered,
-  Box,
   Trash2,
   AlertTriangle,
   RotateCcw,
@@ -33,10 +32,14 @@ import { authStore } from '../api/auth.store'
 const props = defineProps<{
   modeloId?: string
   isWizardMode?: boolean
+  plantaId?: string
   autoEnableMaquinas?: {
+    atom?: boolean
     cn?: boolean
     couro?: boolean
     laser?: boolean
+    lectra?: boolean
+    ponte?: boolean
   }
 }>()
 
@@ -47,7 +50,7 @@ const emit = defineEmits<{
 const podeSalvarRota = computed(() =>
   authStore.hasPermission('EDITAR_ROTA') && (
     authStore.hasPermission('EDITAR_TELA_CONSTRUTOR_ROTA') ||
-    (props.isWizardMode === true && authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE'))
+    (props.isWizardMode === true && authStore.hasPermission('CONFIGURAR_MODELO_ORDEM'))
   )
 )
 
@@ -67,18 +70,31 @@ const MAP_BLOCK_TO_NOME: Record<string, string> = {
 }
 
 const setoresData = ref<any[]>([])
+const plantas = ref<any[]>([])
+const selectedPlantaId = ref('')
+const plantaEfetivaId = computed(() => props.plantaId || selectedPlantaId.value)
+const plantaSelecionadaNome = computed(() => plantas.value.find((planta) => planta.id === plantaEfetivaId.value)?.nome || 'planta pendente')
 
 async function carregarSetores() {
   try {
-    const res = await api.get('/admin/setores')
-    setoresData.value = res.data || []
+    const [setoresRes, plantasRes] = await Promise.all([
+      api.get('/admin/setores'),
+      api.get('/admin/plantas'),
+    ])
+    setoresData.value = setoresRes.data || []
+    const podeAcessarTodas = authStore.hasPermission('ACESSAR_TODAS_PLANTAS')
+    const plantaUsuario = authStore.user.value?.plantaId
+    plantas.value = (plantasRes.data || []).filter((planta: any) =>
+      planta.ativo && (podeAcessarTodas || planta.id === plantaUsuario)
+    )
+    if (!selectedPlantaId.value && plantas.value.length > 0) selectedPlantaId.value = plantas.value[0].id
   } catch (err) {
     console.error('[RouteBuilder] Erro ao carregar setores:', err)
   }
 }
 
 function getId(nome: string): string {
-  const s = setoresData.value.find(s => s.nome.trim().toLowerCase() === nome.trim().toLowerCase())
+  const s = setoresData.value.find(s => s.plantaId === plantaEfetivaId.value && s.ativo !== false && s.nome.trim().toLowerCase() === nome.trim().toLowerCase())
   if (!s) console.warn(`[RouteBuilder] Setor '${nome}' não encontrado no BD.`)
   return s ? s.id : ''
 }
@@ -208,13 +224,33 @@ const zonePosMontagem = ref<RouteBlock[]>([])
 // ─── Conditional toggles ─────────────────────────────────────────────────
 const toggleSerigrafia   = ref(false)
 const toggleVulcanizado  = ref(false)
-const toggleCaixaTeste   = ref(false)
-const tamanhoCaixaTeste  = ref('')
 
 // Toggles para as máquinas extras de corte
 const toggleCorteCN      = ref(false)
 const toggleCorteCouro   = ref(false)
 const toggleCorteLaser   = ref(false)
+const toggleCorteAtom    = ref(false)
+const maquinasDoModelo = ref<{ ponte: boolean; lectra: boolean; atom: boolean; cn: boolean; couro: boolean; laser: boolean } | null>(null)
+
+const maquinasAtivas = computed(() => {
+  if (props.autoEnableMaquinas) return {
+    ponte: props.autoEnableMaquinas.ponte ?? true,
+    lectra: props.autoEnableMaquinas.lectra ?? true,
+    atom: props.autoEnableMaquinas.atom ?? false,
+    cn: props.autoEnableMaquinas.cn ?? false,
+    couro: props.autoEnableMaquinas.couro ?? false,
+    laser: props.autoEnableMaquinas.laser ?? false,
+  }
+  if (maquinasDoModelo.value) return maquinasDoModelo.value
+  return {
+  ponte: true,
+  lectra: true,
+  atom: toggleCorteAtom.value,
+  cn: toggleCorteCN.value,
+  couro: toggleCorteCouro.value,
+  laser: toggleCorteLaser.value,
+  }
+})
 
 // Estados para a seleção avulsa de modelo
 const selectedModeloId   = ref('')
@@ -346,11 +382,10 @@ function resetarRota(notify = true) {
 
   toggleSerigrafia.value = false
   toggleVulcanizado.value = false
-  toggleCaixaTeste.value = false
-  tamanhoCaixaTeste.value = ''
   toggleCorteCN.value = false
   toggleCorteCouro.value = false
   toggleCorteLaser.value = false
+  toggleCorteAtom.value = false
 
   floatingAvailable.value = [
     { id: 'costura-programada', label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
@@ -450,6 +485,38 @@ async function salvarRota() {
     showToast('Por favor, selecione um modelo para salvar.', 'error')
     return
   }
+  const plantaId = plantaEfetivaId.value
+  if (!plantaId) {
+    showToast('Selecione a planta da rota.', 'error')
+    return
+  }
+
+  const maquinas = maquinasAtivas.value
+  if (!maquinas.lectra || !maquinas.ponte) {
+    showToast('Vincule ao menos uma peça a Lectra e uma à Ponte antes de montar a rota.', 'error')
+    return
+  }
+  const blocosFlutuantes = [
+    ...zoneAntesApoio.value, ...zoneJuntoApoio.value, ...zoneEntreApoioCostura.value,
+    ...zoneJuntoCostura.value, ...zoneEntreCosturaMontagem.value, ...zoneJuntoMontagem.value,
+    ...zonePosMontagem.value,
+  ]
+  const nomesEsperados = [
+    'Almoxarifado da Modelagem', 'Navalha', 'Telas', 'Corte Recebimento',
+    'Corte Separação', 'Corte Dublagem', 'Corte Ponte', 'Corte Lectra',
+    ...(maquinas.atom ? ['Corte Atom'] : []),
+    ...(maquinas.cn ? ['Corte CN'] : []),
+    ...(maquinas.couro ? ['Corte Couro'] : []),
+    ...(maquinas.laser ? ['Corte Laser'] : []),
+    ...(toggleSerigrafia.value ? ['Serigrafia'] : []), 'Apoio', 'Costura', 'Montagem', 'Laboratório',
+    ...(toggleVulcanizado.value ? ['Vulcanizado'] : []),
+    ...blocosFlutuantes.map((bloco) => MAP_BLOCK_TO_NOME[bloco.id] || bloco.label),
+  ]
+  const setoresAusentes = [...new Set(nomesEsperados.filter((nome) => !getId(nome)))]
+  if (setoresAusentes.length > 0) {
+    showToast(`A rota não foi salva. A planta selecionada não possui: ${setoresAusentes.join(', ')}.`, 'error')
+    return
+  }
 
   const rotaSalvar: any[] = []
   let currentOrdem = 1
@@ -470,11 +537,11 @@ async function salvarRota() {
   const subsetoresOrdem = currentOrdem
   rotaSalvar.push({ setorId: getId('Corte Ponte'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   rotaSalvar.push({ setorId: getId('Corte Lectra'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
-  rotaSalvar.push({ setorId: getId('Corte Atom'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (maquinas.atom) rotaSalvar.push({ setorId: getId('Corte Atom'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
 
-  if (toggleCorteCN.value)    rotaSalvar.push({ setorId: getId('Corte CN'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
-  if (toggleCorteCouro.value) rotaSalvar.push({ setorId: getId('Corte Couro'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
-  if (toggleCorteLaser.value) rotaSalvar.push({ setorId: getId('Corte Laser'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (maquinas.cn)    rotaSalvar.push({ setorId: getId('Corte CN'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (maquinas.couro) rotaSalvar.push({ setorId: getId('Corte Couro'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (maquinas.laser) rotaSalvar.push({ setorId: getId('Corte Laser'), ordem: subsetoresOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   currentOrdem++
 
   // 3. Serigrafia
@@ -539,10 +606,10 @@ async function salvarRota() {
   // 11. Laboratório
   rotaSalvar.push({ setorId: getId('Laboratório'), ordem: currentOrdem, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
 
-  const rotaFiltrada = rotaSalvar.filter(r => r.setorId !== '')
+  const rotaFiltrada = rotaSalvar
 
-  if (rotaFiltrada.length === 0) {
-    showToast('Nenhum setor da rota está cadastrado. Cadastre os setores antes de salvar.', 'error')
+  if (rotaFiltrada.some((etapa) => !etapa.setorId)) {
+    showToast('A rota contém setores sem cadastro na planta selecionada.', 'error')
     return
   }
 
@@ -554,7 +621,7 @@ async function salvarRota() {
   }
 
   const payload: RotaSalvaPayload = { rota: rotaFiltrada, slasPorSetor }
-  if (props.isWizardMode) {
+  if (props.isWizardMode && !modelId) {
     showToast('Rota pronta. Ela será persistida ao finalizar o novo teste.', 'success')
     saveSuccess.value = true
     emit('rota-salva', payload)
@@ -564,11 +631,12 @@ async function salvarRota() {
 
   try {
     const response = await api.put(`/rotas/${modelId}`, {
+      plantaId,
       rota: rotaFiltrada,
       slasPorSetor
     })
     if (response.status === 200) {
-      showToast('Rota de produção salva com sucesso.', 'success')
+      showToast(props.isWizardMode ? 'Rota salva. Finalizando a configuração da ordem...' : 'Rota de produção salva com sucesso.', 'success')
       saveSuccess.value = true
       emit('rota-salva', payload)
       setTimeout(() => { saveSuccess.value = false }, 3000)
@@ -597,9 +665,32 @@ async function carregarModelos() {
   }
 }
 
+async function carregarMaquinasDoModelo(modeloId: string) {
+  if (props.autoEnableMaquinas) return
+  maquinasDoModelo.value = null
+  try {
+    const { data } = await api.get(`/admin/modelos/${modeloId}`)
+    const valores = (data.pecas || []).map((peca: any) =>
+      String(peca.setorCorteOpcao?.valor || peca.setorCorteOpcao?.label || '').trim().toUpperCase()
+    )
+    const usa = (termo: string) => valores.some((valor: string) => valor === termo || valor.endsWith(`_${termo}`))
+    maquinasDoModelo.value = {
+      ponte: usa('PONTE'), lectra: usa('LECTRA'), atom: usa('ATOM'),
+      cn: usa('CN'), couro: usa('COURO'), laser: usa('LASER'),
+    }
+    toggleCorteAtom.value = maquinasDoModelo.value.atom
+    toggleCorteCN.value = maquinasDoModelo.value.cn
+    toggleCorteCouro.value = maquinasDoModelo.value.couro
+    toggleCorteLaser.value = maquinasDoModelo.value.laser
+  } catch (err) {
+    console.error('[RouteBuilder] Falha ao carregar sub-setores das peças:', err)
+    showToast('Não foi possível carregar os sub-setores vinculados às peças do modelo.', 'error')
+  }
+}
+
 // ─── Carregar rota salva de modelo ───────────────────────────────────────
 async function carregarRotaDoModelo(modeloId: string) {
-  if (!modeloId) return
+  if (!modeloId || !plantaEfetivaId.value) return
 
   // Reset temporário antes de carregar
   zoneAntesApoio.value = []
@@ -612,11 +703,10 @@ async function carregarRotaDoModelo(modeloId: string) {
   
   toggleSerigrafia.value = false
   toggleVulcanizado.value = false
-  toggleCaixaTeste.value = false
-  tamanhoCaixaTeste.value = ''
   toggleCorteCN.value = false
   toggleCorteCouro.value = false
   toggleCorteLaser.value = false
+  toggleCorteAtom.value = false
 
   floatingAvailable.value = [
     { id: 'costura-programada', label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
@@ -625,7 +715,8 @@ async function carregarRotaDoModelo(modeloId: string) {
   ]
 
   try {
-    const response = await api.get(`/rotas/${modeloId}`)
+    await carregarMaquinasDoModelo(modeloId)
+    const response = await api.get(`/rotas/${modeloId}`, { params: { plantaId: plantaEfetivaId.value } })
     const rotaData = response.data?.rota || []
 
     if (rotaData.length === 0) return // Não tem rota, usa inicial
@@ -643,11 +734,6 @@ async function carregarRotaDoModelo(modeloId: string) {
     if (rotaData.some((r: any) => r.setorId === getId('Serigrafia'))) toggleSerigrafia.value = true
     if (rotaData.some((r: any) => r.setorId === getId('Vulcanizado'))) toggleVulcanizado.value = true
     
-    // Máquinas Corte
-    if (rotaData.some((r: any) => r.setorId === getId('Corte CN'))) toggleCorteCN.value = true
-    if (rotaData.some((r: any) => r.setorId === getId('Corte Couro'))) toggleCorteCouro.value = true
-    if (rotaData.some((r: any) => r.setorId === getId('Corte Laser'))) toggleCorteLaser.value = true
-
     // Distribui flutuantes nas zonas correspondentes
     const flutuantesMapeados = [
       { id: 'costura-programada', sId: getId('Costura Programada'), label: 'Costura Programada', tipo: 'flutuante', icon: PrinterCheck, color: '#7c3aed', description: 'Pode ser paralela ao Apoio ou adjacente à Costura' },
@@ -712,8 +798,13 @@ watch(() => props.modeloId, (newId) => {
   }
 })
 
+watch(() => props.plantaId, () => {
+  if (activeModeloId.value && setoresData.value.length > 0) carregarRotaDoModelo(activeModeloId.value)
+})
+
 watch(() => props.autoEnableMaquinas, (val) => {
   if (val) {
+    if (val.atom !== undefined) toggleCorteAtom.value = val.atom
     if (val.cn !== undefined) toggleCorteCN.value = val.cn
     if (val.couro !== undefined) toggleCorteCouro.value = val.couro
     if (val.laser !== undefined) toggleCorteLaser.value = val.laser
@@ -723,6 +814,12 @@ watch(() => props.autoEnableMaquinas, (val) => {
 watch(selectedModeloId, (newId) => {
   if (newId) {
     carregarRotaDoModelo(newId)
+  }
+})
+
+watch(selectedPlantaId, () => {
+  if (!props.plantaId && selectedModeloId.value && setoresData.value.length > 0) {
+    carregarRotaDoModelo(selectedModeloId.value)
   }
 })
 
@@ -805,13 +902,18 @@ defineExpose({
           Buscando...
         </span>
       </div>
+      <label for="planta-select" class="field-label" style="font-weight:800; color:#475569;">Planta da Rota *</label>
+      <select id="planta-select" v-model="selectedPlantaId" class="field-input" style="padding:0.625rem 0.875rem;">
+        <option value="">-- Selecione a planta --</option>
+        <option v-for="planta in plantas" :key="planta.id" :value="planta.id">{{ planta.nome }}</option>
+      </select>
     </div>
 
     <!-- ══ BLOCKED OVERLAY ══════════════════════════════════════════════ -->
-    <div v-if="!activeModeloId && !props.isWizardMode" class="rb-blocked-overlay" style="background:#f1f5f9; border: 1.5px dashed #cbd5e1; border-radius:0.75rem; padding: 4rem; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0.5rem; margin-top: 1rem;">
+    <div v-if="(!activeModeloId || !plantaEfetivaId) && !props.isWizardMode" class="rb-blocked-overlay" style="background:#f1f5f9; border: 1.5px dashed #cbd5e1; border-radius:0.75rem; padding: 4rem; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0.5rem; margin-top: 1rem;">
       <AlertTriangle :size="32" style="color: #64748b;" />
       <span style="font-size:0.9375rem; font-weight:700; color:#0f172a;">Aguardando Seleção de Modelo</span>
-      <span style="font-size:0.8125rem; color:#64748b;">Selecione um modelo no dropdown acima para habilitar o Construtor de Rota de Produção.</span>
+      <span style="font-size:0.8125rem; color:#64748b;">Selecione o modelo e a planta para habilitar o Construtor de Rota de Produção.</span>
     </div>
 
     <!-- ══ MAIN LAYOUT: left panel + right timeline ═════════════════════ -->
@@ -910,54 +1012,27 @@ defineExpose({
           </div>
         </section>
 
-        <!-- Caixa Teste -->
-        <section class="sidebar-section">
-          <h2 class="sidebar-section-title">
-            <Box :size="14" aria-hidden="true" />
-            Configuração de Caixa Teste
-          </h2>
-
-          <div class="toggle-card">
-            <div class="toggle-info">
-              <Box :size="16" style="color:#0369a1" aria-hidden="true" />
-              <div>
-                <span class="toggle-label">Possui Caixa Teste?</span>
-                <span class="toggle-desc">Ativa o lote paralelo de caixa</span>
-              </div>
-            </div>
-            <button
-              class="toggle-btn"
-              :class="{ 'toggle-btn--on': toggleCaixaTeste }"
-              @click="toggleCaixaTeste = !toggleCaixaTeste"
-              type="button"
-              :aria-pressed="toggleCaixaTeste"
-              aria-label="Ativar Caixa Teste"
-            >
-              <ToggleRight v-if="toggleCaixaTeste" :size="32" class="t-icon-on" />
-              <ToggleLeft  v-else                  :size="32" class="t-icon-off" />
-            </button>
-          </div>
-
-          <Transition name="field-reveal">
-            <div v-if="toggleCaixaTeste" class="caixa-field-wrapper">
-              <label for="tamanho-caixa" class="field-label">Tamanho da Caixa Teste</label>
-              <input
-                id="tamanho-caixa"
-                v-model="tamanhoCaixaTeste"
-                type="text"
-                class="field-input"
-                placeholder="Ex: 38, 39, 40-42..."
-              />
-            </div>
-          </Transition>
-        </section>
         <!-- Máquinas de Corte Opcionais -->
         <section class="sidebar-section">
           <h2 class="sidebar-section-title">
             <Scissors :size="14" aria-hidden="true" />
             Máquinas do Corte
           </h2>
-          <p class="sidebar-hint">Selecione quais máquinas adicionais este modelo utilizará no Corte Automático.</p>
+          <p class="sidebar-hint">Os sub-setores são definidos pelos vínculos das peças do modelo.</p>
+
+          <div class="toggle-card">
+            <div class="toggle-info">
+              <Scissors :size="16" style="color:#0f172a" aria-hidden="true" />
+              <div>
+                <span class="toggle-label">Corte Atom</span>
+                <span class="toggle-desc">{{ maquinasAtivas.atom ? 'Há peças vinculadas a Atom' : 'Nenhuma peça vinculada a Atom' }}</span>
+              </div>
+            </div>
+            <button class="toggle-btn" :class="{ 'toggle-btn--on': maquinasAtivas.atom }" type="button" disabled aria-label="Corte Atom definido pelas peças">
+              <ToggleRight v-if="maquinasAtivas.atom" :size="32" class="t-icon-on" />
+              <ToggleLeft v-else :size="32" class="t-icon-off" />
+            </button>
+          </div>
 
           <div class="toggle-card">
             <div class="toggle-info">
@@ -974,6 +1049,7 @@ defineExpose({
               type="button"
               :aria-pressed="toggleCorteCN"
               aria-label="Ativar Corte CN"
+              disabled
             >
               <ToggleRight v-if="toggleCorteCN" :size="32" class="t-icon-on" />
               <ToggleLeft  v-else                 :size="32" class="t-icon-off" />
@@ -995,6 +1071,7 @@ defineExpose({
               type="button"
               :aria-pressed="toggleCorteCouro"
               aria-label="Ativar Corte Couro"
+              disabled
             >
               <ToggleRight v-if="toggleCorteCouro" :size="32" class="t-icon-on" />
               <ToggleLeft  v-else                  :size="32" class="t-icon-off" />
@@ -1016,6 +1093,7 @@ defineExpose({
               type="button"
               :aria-pressed="toggleCorteLaser"
               aria-label="Ativar Corte Laser"
+              disabled
             >
               <ToggleRight v-if="toggleCorteLaser" :size="32" class="t-icon-on" />
               <ToggleLeft  v-else                  :size="32" class="t-icon-off" />
@@ -1031,7 +1109,7 @@ defineExpose({
             <ListOrdered :size="14" aria-hidden="true" />
             Preview da Rota em Tempo Real
           </span>
-          <span class="timeline-count">{{ fullTimeline.length }} etapas</span>
+          <span class="timeline-count">{{ fullTimeline.length }} etapas · {{ plantaSelecionadaNome }}</span>
         </div>
 
         <div class="timeline-track">
@@ -1089,10 +1167,10 @@ defineExpose({
                   <div class="tl-corte-submachines" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.375rem;">
                     <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Ponte</span>
                     <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Lectra</span>
-                    <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Atom</span>
-                    <span v-if="toggleCorteCN" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">CN</span>
-                    <span v-if="toggleCorteCouro" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">Couro</span>
-                    <span v-if="toggleCorteLaser" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">Laser</span>
+                    <span v-if="maquinasAtivas.atom" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">Atom</span>
+                    <span v-if="maquinasAtivas.cn" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">CN</span>
+                    <span v-if="maquinasAtivas.couro" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">Couro</span>
+                    <span v-if="maquinasAtivas.laser" class="badge badge--flutuante" style="font-size: 0.6875rem; background: #faf5ff; border-color: #ddd6fe; color: #7c3aed;">Laser</span>
                   </div>
                 </div>
               </div>
@@ -1862,6 +1940,7 @@ defineExpose({
   flex-direction: column;
   gap: 1.5rem;
   width: 100%;
+  min-width: 0;
   position: relative;
 }
 
@@ -2016,22 +2095,24 @@ defineExpose({
 ═══════════════════════════════════════════════════════ */
 .rb-layout {
   display: grid;
-  grid-template-columns: 20rem 1fr;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
+  min-width: 0;
+  width: 100%;
 }
 
 @media (max-width: 1024px) {
-  .rb-layout { grid-template-columns: 1fr; }
+  .rb-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (min-width: 1920px) {
-  .rb-layout { grid-template-columns: 24rem 1fr; gap: 2rem; }
+  .rb-layout { grid-template-columns: minmax(0, 24rem) minmax(0, 1fr); gap: 2rem; }
   .rb-title { font-size: 1.75rem; }
 }
 
 @media (min-width: 2560px) {
-  .rb-layout { grid-template-columns: 30rem 1fr; gap: 2.5rem; }
+  .rb-layout { grid-template-columns: minmax(0, 30rem) minmax(0, 1fr); gap: 2.5rem; }
   .rb-title { font-size: 2.25rem; }
 }
 
@@ -2044,6 +2125,7 @@ defineExpose({
   gap: 1.25rem;
   position: sticky;
   top: 1.5rem;
+  min-width: 0;
 }
 
 .sidebar-section {
@@ -2204,13 +2286,6 @@ defineExpose({
 .t-icon-on { color: #1e40af; }
 .t-icon-off { color: #94a3b8; }
 
-/* Caixa Teste */
-.caixa-field-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
-
 .field-label {
   font-size: 0.75rem;
   font-weight: 700;
@@ -2243,18 +2318,24 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .timeline-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .timeline-label-text {
   display: flex;
   align-items: center;
   gap: 0.375rem;
+  min-width: 0;
   font-size: 0.6875rem;
   font-weight: 800;
   color: #475569;
@@ -2263,6 +2344,8 @@ defineExpose({
 }
 
 .timeline-count {
+  min-width: 0;
+  max-width: 100%;
   font-size: 0.75rem;
   font-weight: 700;
   color: #64748b;
@@ -2276,12 +2359,16 @@ defineExpose({
   display: flex;
   flex-direction: column;
   position: relative;
+  min-width: 0;
+  width: 100%;
 }
 
 .tl-item {
   display: flex;
   flex-direction: column;
   position: relative;
+  min-width: 0;
+  width: 100%;
 }
 
 /* Connectors */
@@ -2303,6 +2390,10 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  flex-wrap: wrap;
   padding: 0.875rem 1rem;
   border: 1.5px solid #e2e8f0;
   border-radius: 0.625rem;
@@ -2353,7 +2444,7 @@ defineExpose({
   align-items: center;
   gap: 0.875rem;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 12rem;
 }
 
 .tl-block-icon {
@@ -2390,7 +2481,8 @@ defineExpose({
   flex-direction: column;
   align-items: flex-end;
   gap: 0.25rem;
-  flex-shrink: 0;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .flex-row-layout {
@@ -2467,13 +2559,23 @@ defineExpose({
 
 /* ─── Dropzones Paralelas ─── */
 .tl-parallel-wrapper {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  align-items: stretch;
   gap: 0.75rem;
   width: 100%;
+  min-width: 0;
 }
 
 .tl-parallel-wrapper--active {
   position: relative;
+}
+
+.tl-block--parallel .tl-drag-handle {
+  position: static;
+  left: auto;
+  flex: 0 0 auto;
+  margin-right: -0.5rem;
 }
 
 .parallel-drop-area {
@@ -2481,10 +2583,12 @@ defineExpose({
   flex-direction: column;
   gap: 0.5rem;
   transition: all 0.2s ease;
+  min-width: 0;
+  width: 100%;
 }
 
 .parallel-drop-area--active {
-  flex: 1;
+  width: 100%;
 }
 
 .parallel-drop-area--visible {
@@ -2492,8 +2596,8 @@ defineExpose({
   background: #f8fafc;
   border-radius: 0.625rem;
   min-height: 4.25rem;
-  min-width: 12rem;
-  flex: 1;
+  min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -109,6 +109,10 @@ const persistedPermissions = ref<Permission[]>([])
 const permissionCatalog = ref<PermissionCatalog>({ screens: [], globalActions: [], sectorActions: [] })
 
 const selectedPerfilId = ref<string>('')
+const manageableProfiles = computed(() => profiles.value.filter((profile) =>
+  authStore.isAdminAutomacao.value || profile.nome !== 'ADMIN_AUTOMACAO',
+))
+const selectableProfiles = computed(() => manageableProfiles.value.filter((profile) => profile.ativo))
 type WizardStep = 'telas' | 'globais' | 'setores' | 'revisao'
 const wizardSteps: Array<{ id: WizardStep; title: string; description: string }> = [
   { id: 'telas', title: 'Acesso às telas', description: 'Escolha quais áreas do ERP o perfil pode consultar ou editar.' },
@@ -190,8 +194,8 @@ async function fetchMetadata() {
     sectors.value = sectorsRes.data
     permissionCatalog.value = catalogRes.data
 
-    if (!profiles.value.some(profile => profile.id === selectedPerfilId.value && profile.ativo)) {
-      selectedPerfilId.value = profiles.value.find(profile => profile.ativo)?.id || ''
+    if (!selectableProfiles.value.some(profile => profile.id === selectedPerfilId.value)) {
+      selectedPerfilId.value = selectableProfiles.value[0]?.id || ''
     }
   } catch (error: any) {
     metadataLoadError.value = error.response?.data?.error || 'Erro ao carregar perfis, setores e catálogo de permissões.'
@@ -228,7 +232,7 @@ async function salvarPerfil() {
       : await api.post('/admin/perfis', payload)
 
     const perfilSalvo = response.data as Perfil
-    discardConfiguration()
+    resetConfigurationDraft()
     const isEditing = editingPerfilId.value !== null
     showPerfilModal.value = false
     await fetchMetadata()
@@ -255,7 +259,7 @@ async function alternarStatusPerfil(perfil: Perfil) {
 
   try {
     await api.patch(`/admin/perfis/${perfil.id}`, { ativo })
-    discardConfiguration()
+    resetConfigurationDraft()
     await fetchMetadata()
     if (!ativo && selectedPerfilId.value === perfil.id) {
       selectedPerfilId.value = profiles.value.find(item => item.ativo)?.id || ''
@@ -445,6 +449,7 @@ function formatChangeCount(count: number) {
 
 function togglePermission(setorId: string | null, acao: string) {
   if (savingConfiguration.value) return
+  if (acao === 'TELA_GESTAO_RBAC' && !authStore.isAdminAutomacao.value) return
   configurationJustSaved.value = false
   const screen = screenDefinitions.value.find(item => item.viewPermission === acao || item.editPermission === acao)
   const nextValue = !isAllowed(setorId, acao)
@@ -458,10 +463,18 @@ function togglePermission(setorId: string | null, acao: string) {
   if (screen?.viewPermission === acao && !nextValue && screen.editPermission) apply(screen.editPermission, false)
 }
 
-function discardConfiguration() {
+function resetConfigurationDraft() {
   permissions.value = persistedPermissions.value.map(item => ({ ...item }))
   configurationJustSaved.value = false
-  expandedWizardStep.value = 'telas'
+}
+
+function discardConfiguration() {
+  if (!pendingChanges.value.length) {
+    showToast('Não há alterações pendentes para descartar.')
+    return
+  }
+  resetConfigurationDraft()
+  showToast('Rascunho descartado. Nenhuma alteração pendente foi gravada.')
 }
 
 async function saveConfiguration() {
@@ -603,9 +616,12 @@ onBeforeUnmount(() => {
       <div class="header-left">
         <h1 class="view-title">Gestão de Perfis &amp; Permissões (RBAC)</h1>
         <p class="view-subtitle">Controle matriz de acesso a setores, bipagem e auditorias no chão de fábrica.</p>
+        <p v-if="!authStore.isAdminAutomacao.value" class="field-hint-text" role="note">
+          A equipe de automação gerencia o acesso a esta Matriz e o perfil ADMIN_AUTOMACAO.
+        </p>
       </div>
       <div class="header-right">
-        <div class="audit-control">
+        <div v-if="authStore.isAdminAutomacao.value" class="audit-control">
           <button type="button" class="btn-edit-user" :aria-expanded="showAudit" @click="toggleAudit">Auditoria de acessos</button>
           <div v-if="showAudit" class="audit-dropdown" role="region" aria-label="Histórico de acessos RBAC">
             <div class="audit-heading">
@@ -768,7 +784,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                 <label for="perfil-select" class="dropdown-label">Perfil de usuário</label>
                 <div class="select-wrapper">
                   <select id="perfil-select" :value="selectedPerfilId" @change="selectProfile" class="perfil-select" :disabled="loadingRBAC || savingConfiguration">
-                    <option v-for="prof in profiles.filter(item => item.ativo)" :key="prof.id" :value="prof.id">
+                    <option v-for="prof in selectableProfiles" :key="prof.id" :value="prof.id">
                       {{ prof.nome }} — {{ prof.descricao || 'Sem descrição' }}
                     </option>
                   </select>
@@ -786,7 +802,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                   aria-controls="rbac-profile-manager"
                   @click="showProfileManager = !showProfileManager"
                 >
-                  {{ showProfileManager ? 'Fechar perfis' : `Gerenciar perfis (${profiles.length})` }}
+                  {{ showProfileManager ? 'Fechar perfis' : `Gerenciar perfis (${manageableProfiles.length})` }}
                   <ChevronDown :size="15" :class="{ 'chevron-open': showProfileManager }" aria-hidden="true" />
                 </button>
                 <button type="button" class="btn-save" @click="abrirNovoPerfil" :disabled="savingConfiguration">Novo perfil</button>
@@ -794,7 +810,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
             </section>
 
             <section id="rbac-profile-manager" v-show="showProfileManager" class="profile-manager-panel" aria-label="Gerenciar perfis">
-              <div v-for="profile in profiles" :key="profile.id" class="profile-row">
+              <div v-for="profile in manageableProfiles" :key="profile.id" class="profile-row">
                 <div class="profile-row-info">
                   <strong>{{ profile.nome }}</strong>
                   <span>{{ profile.descricao || 'Sem descrição' }}</span>
@@ -812,7 +828,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                   {{ profile.ativo ? 'Desativar' : 'Reativar' }}
                 </button>
               </div>
-              <p v-if="profiles.length === 0" class="field-hint-text">Nenhum perfil cadastrado.</p>
+              <p v-if="manageableProfiles.length === 0" class="field-hint-text">Nenhum perfil disponível para gerenciamento.</p>
             </section>
 
             <div v-if="loadingRBAC" class="loading-state card-loading">
@@ -895,7 +911,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                                 type="button"
                                 class="matrix-toggle"
                                 :class="{ 'matrix-toggle--active': isAllowed(null, screen.viewPermission) }"
-                                :disabled="savingConfiguration"
+                                :disabled="savingConfiguration || (screen.viewPermission === 'TELA_GESTAO_RBAC' && !authStore.isAdminAutomacao.value)"
                                 @click="togglePermission(null, screen.viewPermission)"
                                 :aria-label="`Permitir visualizar ${screen.label}`"
                                 :aria-pressed="isAllowed(null, screen.viewPermission)"
@@ -909,7 +925,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                                 type="button"
                                 class="matrix-toggle"
                                 :class="{ 'matrix-toggle--active': isAllowed(null, screen.editPermission) }"
-                                :disabled="savingConfiguration"
+                                :disabled="savingConfiguration || (screen.editPermission === 'TELA_GESTAO_RBAC' && !authStore.isAdminAutomacao.value)"
                                 @click="togglePermission(null, screen.editPermission)"
                                 :aria-label="`Permitir edição em ${screen.label}`"
                                 :aria-pressed="isAllowed(null, screen.editPermission)"
@@ -1029,7 +1045,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                       </article>
                     </div>
                     <div class="wizard-review-actions">
-                      <button type="button" class="btn-edit-user" :disabled="!pendingChanges.length || savingConfiguration" @click="discardConfiguration">Descartar rascunho</button>
+                      <button type="button" class="btn-edit-user" :disabled="loadingRBAC || savingConfiguration" @click="discardConfiguration">Descartar rascunho</button>
                       <button type="button" class="btn-save" :disabled="!pendingChanges.length || savingConfiguration" @click="saveConfiguration">
                         {{ savingConfiguration ? 'Salvando...' : 'Salvar configuração' }}
                       </button>

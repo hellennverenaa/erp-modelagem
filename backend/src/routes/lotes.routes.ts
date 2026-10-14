@@ -6,6 +6,10 @@ import { verificaToken } from '../middlewares/auth.middleware';
 const router = Router();
 const lotesController = new LotesController();
 
+router.post('/wizard/ordem', exigirPermissao('EDITAR_TELA_NOVA_ORDEM_TESTE'), lotesController.criarOrdemPcp);
+router.put('/:id/modelagem/pecas', exigirPermissao('CONFIGURAR_MODELO_ORDEM'), lotesController.salvarConfiguracaoPecasModelagem);
+router.put('/:id/modelagem/finalizar', exigirPermissao('CONFIGURAR_MODELO_ORDEM'), lotesController.finalizarConfiguracaoModelagem);
+
 /**
  * @swagger
  * /api/ordens-teste/wizard:
@@ -56,7 +60,6 @@ const lotesController = new LotesController();
  *                   prioridadePcp: { type: string, enum: [BAIXA, MEDIA, ALTA, URGENTE] }
  *                   possuiCaixaTeste: { type: boolean }
  *                   observacoes: { type: string, nullable: true }
- *                   dataPrevistaProducao: { type: string, nullable: true }
  *                   slasPorSetor: { type: object, nullable: true }
  *     responses:
  *       201: { description: Modelo, peças, rota e ordem foram persistidos }

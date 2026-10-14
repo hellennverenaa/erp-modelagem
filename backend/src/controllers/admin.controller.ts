@@ -6,15 +6,18 @@ import { Usuario } from '../entities/Usuario';
 import { Perfil } from '../entities/Perfil';
 import { Setor } from '../entities/Setor';
 import { Modelo } from '../entities/Modelo';
+import { OrdemTeste } from '../entities/OrdemTeste';
 import { Planta } from '../entities/Planta';
 import { Marca } from '../entities/Marca';
 import { EntityManager, In, IsNull } from 'typeorm';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
-import { Peca } from '../entities/Peca';
 import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 import { carregarCatalogoRbac } from '../services/rbac-catalog.service';
+import { perfilPossuiPermissao } from '../services/rbac.service';
 import { AuditLog } from '../entities/AuditLog';
 import { modeloIdentificacaoSchema } from '../schemas/modelo.schema';
+import { ModelPiecesError, ModelPieceInput, saveModelPieces } from '../services/model-pieces.service';
+import { lockModelConfiguration } from '../services/route-integrity.service';
 
 async function auditarRbac(manager: EntityManager, req: Request, acao: string, entidadeTipo: string, entidadeId: string, anteriores: Record<string, unknown> | null, novos: Record<string, unknown> | null) {
   await manager.getRepository(AuditLog).save(manager.getRepository(AuditLog).create({
@@ -28,6 +31,13 @@ async function auditarRbac(manager: EntityManager, req: Request, acao: string, e
   }));
 }
 
+function isAutomationActor(req: Request): boolean {
+  const user = req.user;
+  return !!user &&
+    user.perfilNome?.trim().toUpperCase() === PERFIL_ADMIN_AUTOMACAO &&
+    ehUsuarioAdminAutomacao(user.usuario || '');
+}
+
 // ─── Schema de validação para criação de Modelo ─────────────────────────────
 const createModeloSchema = z.object({
   ...modeloIdentificacaoSchema.shape,
@@ -36,18 +46,22 @@ const createModeloSchema = z.object({
   fichaTecnicaUrl:  z.string().url().optional().nullable(),
   pecas: z.array(
     z.object({
-      id: z.string().optional(),
-      numero: z.string().optional(),
-      nome: z.string(),
-      codigoOriginal: z.string().optional().nullable(),
-      setorCorteOpcaoId: z.string().optional().nullable(),
-      descricao: z.string().optional().nullable(),
+      catalogoPecaId: z.string().uuid(),
+      setorCorteOpcaoId: z.string().uuid(),
     })
-  ).optional(),
+  ).min(2),
 });
 
 const createMarcaSchema = z.object({
   nome: z.string().trim().min(1, 'O nome da marca é obrigatório.').max(100, 'O nome da marca deve ter no máximo 100 caracteres.'),
+});
+
+const createModeloRascunhoSchema = z.object({
+  ...modeloIdentificacaoSchema.shape,
+  dataCorte: z.string().nullable().optional().refine(
+    (value) => value == null || Number.isFinite(new Date(value).getTime()),
+    'Informe uma previsão de corte válida.',
+  ),
 });
 
 const createPerfilSchema = z.object({
@@ -79,16 +93,86 @@ function nomesDeMarcaIguais(a: string, b: string): boolean {
 }
 
 export class AdminController {
+  /** Cria somente a identificação do modelo para o PCP continuar com a ordem. */
+  public async createModeloRascunho(req: Request, res: Response): Promise<Response> {
+    const parsed = createModeloRascunhoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Dados inválidos para criar o modelo.',
+        code: 'VALIDATION_ERROR',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const modelo = await AppDataSource.transaction(async (manager) => {
+        const marca = await manager.getRepository(Marca).findOne({ where: { id: parsed.data.marcaId, ativo: true } });
+        if (!marca) throw Object.assign(new Error('Marca não encontrada ou inativa.'), { code: 'MARCA_NOT_FOUND', status: 404 });
+        const existe = await manager.getRepository(Modelo).findOne({ where: { codigoProduto: parsed.data.codigoProduto }, select: { id: true } });
+        if (existe) throw Object.assign(new Error('Já existe um modelo com este código de produto.'), { code: 'MODELO_DUPLICATE_CODE', status: 409 });
+
+        return manager.getRepository(Modelo).save(manager.getRepository(Modelo).create({
+          marcaId: parsed.data.marcaId,
+          codigoProduto: parsed.data.codigoProduto,
+          nome: parsed.data.nome,
+          dataCorte: parsed.data.dataCorte ? new Date(parsed.data.dataCorte) : null,
+          temporada: null,
+          mfmReferenciaUrl: null,
+          fichaTecnicaUrl: null,
+          ativo: true,
+        }));
+      });
+      return res.status(201).json({ message: 'Modelo cadastrado. A ordem pode ser criada pelo PCP.', modelo });
+    } catch (error: any) {
+      if (error?.code === 'MODELO_DUPLICATE_CODE' || error?.code === 'MARCA_NOT_FOUND') {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
+      if (error?.code === '23505') {
+        return res.status(409).json({ error: 'Já existe um modelo com este código de produto.', code: 'MODELO_DUPLICATE_CODE' });
+      }
+      console.error('[AdminController] Erro ao criar modelo para o PCP:', error);
+      return res.status(500).json({ error: 'Erro ao cadastrar modelo.', code: 'MODELO_CREATE_FAILED' });
+    }
+  }
+
+  /** Ajusta a previsão de corte do PCP antes de criar a ordem vinculada. */
+  public async updatePrevisaoCorteModelo(req: Request, res: Response): Promise<Response> {
+    const id = z.string().uuid().safeParse(req.params.id);
+    const data = z.string().refine((value) => Number.isFinite(new Date(value).getTime()), 'Informe uma previsão de corte válida.').safeParse(req.body.dataCorte);
+    if (!id.success || !data.success) {
+      return res.status(400).json({ error: 'Informe uma previsão de corte válida.', code: 'VALIDATION_ERROR' });
+    }
+    try {
+      const modelo = await AppDataSource.transaction(async (manager) => {
+        await lockModelConfiguration(manager, id.data);
+        const repo = manager.getRepository(Modelo);
+        const atual = await repo.findOne({ where: { id: id.data, ativo: true } });
+        if (!atual) throw Object.assign(new Error('Modelo não encontrado ou inativo.'), { status: 404, code: 'MODELO_NOT_FOUND' });
+        const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: atual.id }, select: { id: true } });
+        if (ordem) throw Object.assign(new Error('A previsão de corte não pode ser alterada depois da criação da ordem.'), { status: 409, code: 'MODEL_ALREADY_ORDERED' });
+        atual.dataCorte = new Date(data.data);
+        return repo.save(atual);
+      });
+      return res.json({ message: 'Previsão de corte atualizada.', modelo });
+    } catch (error: any) {
+      if (error?.status && error?.code) return res.status(error.status).json({ error: error.message, code: error.code });
+      console.error('[AdminController] Erro ao atualizar previsão de corte:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar a previsão de corte.', code: 'DATA_CORTE_UPDATE_FAILED' });
+    }
+  }
+
   /**
    * Lista todos os perfis cadastrados no sistema.
    */
-  public async getPerfis(_req: Request, res: Response): Promise<Response> {
+  public async getPerfis(req: Request, res: Response): Promise<Response> {
     try {
       const perfilRepo = AppDataSource.getRepository(Perfil);
       const perfis = await perfilRepo.find({
         order: { nome: 'ASC' }
       });
-      return res.json(perfis);
+      return res.json(isAutomationActor(req)
+        ? perfis
+        : perfis.filter((perfil) => perfil.nome !== PERFIL_ADMIN_AUTOMACAO));
     } catch (error) {
       console.error('[AdminController] Erro ao listar perfis:', error);
       return res.status(500).json({ error: 'Erro ao listar perfis' });
@@ -162,6 +246,20 @@ export class AdminController {
       const perfil = await perfilRepo.findOne({ where: { id: id.data } });
       if (!perfil) {
         return res.status(404).json({ error: 'Perfil não encontrado.', code: 'PERFIL_NOT_FOUND' });
+      }
+
+      if (!isAutomationActor(req) && perfil.nome === PERFIL_ADMIN_AUTOMACAO) {
+        return res.status(403).json({
+          error: 'O perfil ADMIN_AUTOMACAO só pode ser administrado pela equipe de automação.',
+          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+        });
+      }
+
+      if (!isAutomationActor(req) && parsed.data.ativo === false && await perfilPossuiPermissao(perfil.id, 'TELA_GESTAO_RBAC')) {
+        return res.status(403).json({
+          error: 'Somente a equipe de automação pode revogar acesso à Matriz de Acessos.',
+          code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
+        });
       }
 
       if (['ADMIN', 'VISUALIZADOR', PERFIL_ADMIN_AUTOMACAO].includes(perfil.nome) && (
@@ -344,7 +442,7 @@ export class AdminController {
     try {
       const modelo = await AppDataSource.getRepository(Modelo).findOne({
         where: { id: id.data },
-        relations: { marca: true, pecas: { setorCorteOpcao: true }, rotas: { setor: true } },
+        relations: { marca: true, pecas: { setorCorteOpcao: true, catalogoPeca: true }, rotas: { setor: true, planta: true } },
       });
       if (!modelo) {
         return res.status(404).json({ error: 'Modelo não encontrado.', code: 'MODELO_NOT_FOUND' });
@@ -373,56 +471,66 @@ export class AdminController {
 
       const { marcaId, codigoProduto, nome, dataCorte, mfmReferenciaUrl, fichaTecnicaUrl, pecas } = parse.data;
 
-      const modeloRepo = AppDataSource.getRepository(Modelo);
-      const marcaRepo  = AppDataSource.getRepository(Marca);
+      const saved = await AppDataSource.transaction(async (manager) => {
+        const marca = await manager.getRepository(Marca).findOne({ where: { id: marcaId, ativo: true } });
+        if (!marca) throw Object.assign(new Error('Marca não encontrada ou inativa.'), { code: 'MARCA_NOT_FOUND', status: 404 });
 
-      // Verifica existência da marca
-      const marca = await marcaRepo.findOne({ where: { id: marcaId } });
-      if (!marca) {
-        return res.status(404).json({ error: 'Marca não encontrada.', code: 'MARCA_NOT_FOUND' });
-      }
+        const existe = await manager.getRepository(Modelo).findOne({ where: { codigoProduto } });
+        if (existe) throw Object.assign(new Error('Já existe um modelo com este código de produto.'), { code: 'MODELO_DUPLICATE_CODE', status: 409 });
 
-      // Verifica duplicidade de codigoProduto
-      const existe = await modeloRepo.findOne({ where: { codigoProduto } });
-      if (existe) {
-        return res.status(409).json({
-          error: 'Já existe um modelo com este código de produto.',
-          code: 'MODELO_DUPLICATE_CODE',
-        });
-      }
-
-      const modelo = modeloRepo.create({
-        marcaId,
-        codigoProduto,
-        nome,
-        temporada:        null,
-        dataCorte:        dataCorte        ? new Date(dataCorte) : null,
-        mfmReferenciaUrl: mfmReferenciaUrl || null,
-        fichaTecnicaUrl:  fichaTecnicaUrl  || null,
-        ativo: true,
-      });
-
-      const saved = await modeloRepo.save(modelo);
-
-      // Se houver lista de peças enviadas no payload unificado, salva na tabela `pecas`
-      if (pecas && Array.isArray(pecas) && pecas.length > 0) {
-        const pecaRepo = AppDataSource.getRepository(Peca);
-        const novasPecas = pecas.map((p: any) => pecaRepo.create({
-          modeloId: saved.id,
-          nome: p.nome || `${p.numero} - ${p.nome}`,
-          setorCorteOpcaoId: p.setorCorteOpcaoId || null,
-          descricao: p.descricao || p.codigoOriginal || null
+        const modeloRepo = manager.getRepository(Modelo);
+        const modelo = await modeloRepo.save(modeloRepo.create({
+          marcaId,
+          codigoProduto,
+          nome,
+          temporada: null,
+          dataCorte: dataCorte ? new Date(dataCorte) : null,
+          mfmReferenciaUrl: mfmReferenciaUrl || null,
+          fichaTecnicaUrl: fichaTecnicaUrl || null,
+          ativo: true,
         }));
-        await pecaRepo.save(novasPecas);
-      }
-
-      return res.status(201).json({
-        message: 'Modelo criado com sucesso.',
-        modelo: saved,
+        await saveModelPieces(manager, modelo.id, pecas as ModelPieceInput[]);
+        return modelo;
       });
+
+      return res.status(201).json({ message: 'Modelo criado com sucesso.', modelo: saved });
     } catch (error: any) {
+      if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
+      if (error?.code === 'MODELO_DUPLICATE_CODE' || error?.code === 'MARCA_NOT_FOUND') {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController] Erro ao criar modelo:', error);
       return res.status(500).json({ error: 'Erro ao criar modelo.' });
+    }
+  }
+
+  /** Atualiza vínculos de catálogo e sub-setores sem apagar IDs de peças históricos. */
+  public async atualizarPecasModelo(req: Request, res: Response): Promise<Response> {
+    const modeloId = z.string().uuid().safeParse(req.params.id);
+    const parsed = z.object({ pecas: z.array(z.object({
+      id: z.string().uuid().optional(),
+      catalogoPecaId: z.string().uuid(),
+      setorCorteOpcaoId: z.string().uuid(),
+    })).min(2) }).safeParse(req.body);
+    if (!modeloId.success || !parsed.success) {
+      return res.status(400).json({ error: 'Informe peças e sub-setores válidos para o modelo.', code: 'VALIDATION_ERROR' });
+    }
+    try {
+      const pecas = await AppDataSource.transaction(async (manager) => {
+        await lockModelConfiguration(manager, modeloId.data);
+        const modelo = await manager.getRepository(Modelo).findOne({ where: { id: modeloId.data }, select: { id: true } });
+        if (!modelo) throw Object.assign(new Error('Modelo não encontrado.'), { code: 'MODELO_NOT_FOUND', status: 404 });
+        const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: modelo.id }, select: { id: true } });
+        if (ordem) throw Object.assign(new Error('As peças deste modelo devem ser alteradas pela configuração da ordem na fila da Modelagem.'), { code: 'MODEL_PIECES_MANAGED_BY_ORDER', status: 409 });
+        return saveModelPieces(manager, modelo.id, parsed.data.pecas);
+      });
+      return res.json({ message: 'Peças do modelo atualizadas com sucesso.', pecas });
+    } catch (error: any) {
+      if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
+      if (error?.code === 'MODELO_NOT_FOUND') return res.status(404).json({ error: error.message, code: error.code });
+      if (error?.code === 'MODEL_PIECES_MANAGED_BY_ORDER') return res.status(409).json({ error: error.message, code: error.code });
+      console.error('[AdminController] Erro ao atualizar peças do modelo:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar as peças do modelo.' });
     }
   }
 
@@ -552,14 +660,19 @@ export class AdminController {
   /**
    * Lista todos os usuários cadastrados no sistema (com perfil e planta).
    */
-  public async getUsuarios(_req: Request, res: Response): Promise<Response> {
+  public async getUsuarios(req: Request, res: Response): Promise<Response> {
     try {
       const userRepo = AppDataSource.getRepository(Usuario);
       const users = await userRepo.find({
         relations: { perfil: true, setor: true, planta: true },
         order: { nomeCompleto: 'ASC' }
       });
-      return res.json(users.map((user) => ({
+      const visibleUsers = isAutomationActor(req)
+        ? users
+        : users.filter((user) =>
+          user.perfil?.nome !== PERFIL_ADMIN_AUTOMACAO && !ehUsuarioAdminAutomacao(user.usuario),
+        );
+      return res.json(visibleUsers.map((user) => ({
         id: user.id,
         nomeCompleto: user.nomeCompleto,
         usuario: user.usuario,
@@ -589,10 +702,24 @@ export class AdminController {
    */
   public async getPermissoes(req: Request, res: Response): Promise<Response> {
     try {
-      const { perfilId } = req.params;
+      const parsedPerfilId = z.string().uuid().safeParse(req.params.perfilId);
+      if (!parsedPerfilId.success) {
+        return res.status(400).json({ error: 'Identificador de perfil inválido.', code: 'PERFIL_ID_INVALID' });
+      }
+      const perfilId = parsedPerfilId.data;
+      const profile = await AppDataSource.getRepository(Perfil).findOne({ where: { id: perfilId } });
+      if (!profile) {
+        return res.status(404).json({ error: 'Perfil não encontrado.', code: 'PERFIL_NOT_FOUND' });
+      }
+      if (!isAutomationActor(req) && profile.nome === PERFIL_ADMIN_AUTOMACAO) {
+        return res.status(403).json({
+          error: 'A matriz do perfil ADMIN_AUTOMACAO é restrita à equipe de automação.',
+          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+        });
+      }
       const permissaoRepo = AppDataSource.getRepository(PerfilPermissao);
       const permissoes = await permissaoRepo.find({
-        where: { perfilId: perfilId as string },
+        where: { perfilId },
         relations: { setor: true }
       });
       return res.json(permissoes);
@@ -682,6 +809,14 @@ export class AdminController {
       normalizedItems.set(`${normalized.perfilId}|${normalized.setorId || ''}|${normalized.acao}`, normalized);
     }
 
+    const automationActor = isAutomationActor(req);
+    if (!automationActor && [...normalizedItems.values()].some((item) => item.acao === 'TELA_GESTAO_RBAC')) {
+      return res.status(403).json({
+        error: 'Somente a equipe de automação pode conceder ou revogar acesso à Matriz de Acessos.',
+        code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
+      });
+    }
+
     try {
       const savedItems = await AppDataSource.transaction(async (manager) => {
         const items = [...normalizedItems.values()];
@@ -739,6 +874,12 @@ export class AdminController {
         if (profiles.length !== profileIds.length) {
           throw Object.assign(new Error('Um ou mais perfis não existem ou estão inativos.'), { statusCode: 404, code: 'PERFIL_NOT_FOUND' });
         }
+        if (!automationActor && profiles.some((profile) => profile.nome === PERFIL_ADMIN_AUTOMACAO)) {
+          throw Object.assign(new Error('O perfil ADMIN_AUTOMACAO só pode ser administrado pela equipe de automação.'), {
+            statusCode: 403,
+            code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+          });
+        }
 
         const sectorIds = [...new Set(itemsToSave.map(({ setorId }) => setorId).filter((id): id is string => !!id))];
         if (sectorIds.length > 0) {
@@ -785,6 +926,9 @@ export class AdminController {
       if (error?.statusCode === 400) {
         return res.status(400).json({ error: error.message, code: error.code });
       }
+      if (error?.statusCode === 403) {
+        return res.status(403).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController.updatePermissoes] Erro crítico ao atualizar permissões:', error);
       return res.status(500).json({ error: 'Erro ao atualizar permissões no banco de dados.' });
     }
@@ -814,6 +958,15 @@ export class AdminController {
         return res.status(404).json({ error: 'Usuário não encontrado.' });
       }
 
+      if (!isAutomationActor(req) && (
+        user.perfil?.nome === PERFIL_ADMIN_AUTOMACAO || ehUsuarioAdminAutomacao(user.usuario)
+      )) {
+        return res.status(403).json({
+          error: 'Contas e perfil ADMIN_AUTOMACAO só podem ser alterados pela equipe de automação.',
+          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
+        });
+      }
+
       const perfilIdValidado = z.string().uuid().safeParse(perfilId);
       if (!perfilIdValidado.success) {
         return res.status(400).json({ error: 'Identificador de perfil inválido.', code: 'PERFIL_ID_INVALID' });
@@ -822,6 +975,19 @@ export class AdminController {
       const novoPerfil = await perfilRepo.findOne({ where: { id: perfilIdValidado.data, ativo: true } });
       if (!novoPerfil) {
         return res.status(404).json({ error: 'Perfil não encontrado ou inativo.', code: 'PERFIL_NOT_FOUND' });
+      }
+
+      if (!isAutomationActor(req) && novoPerfil.id !== user.perfilId) {
+        const [origemTemAcessoRbac, destinoTemAcessoRbac] = await Promise.all([
+          perfilPossuiPermissao(user.perfilId, 'TELA_GESTAO_RBAC'),
+          perfilPossuiPermissao(novoPerfil.id, 'TELA_GESTAO_RBAC'),
+        ]);
+        if (origemTemAcessoRbac || destinoTemAcessoRbac) {
+          return res.status(403).json({
+            error: 'Somente a equipe de automação pode conceder ou revogar acesso à Matriz de Acessos.',
+            code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
+          });
+        }
       }
 
       const usuarioAdminAutomacao = ehUsuarioAdminAutomacao(user.usuario);

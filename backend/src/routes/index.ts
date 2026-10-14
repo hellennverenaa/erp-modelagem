@@ -2,7 +2,6 @@ import { Router } from 'express';
 import authRoutes from './auth.routes';
 import lotesRoutes from './lotes.routes';
 import rastreamentosRoutes from './rastreamentos.routes';
-import checklistsRoutes from './checklists.routes';
 import inspecoesRoutes from './inspecoes.routes';
 import corteRoutes from './corte.routes';
 import apoioRoutes from './apoio.routes';
@@ -25,17 +24,16 @@ router.use('/auth', authRoutes);
 // Rotas protegidas por JWT
 router.use('/lotes', verificaToken, exigirAlgumaPermissao([
   'TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE', 'TELA_BIPAGEM',
-  'TELA_INSPECAO_QUALIDADE', 'TELA_CHECKLIST', 'TELA_RASTREAMENTO',
+  'TELA_INSPECAO_QUALIDADE', 'TELA_RASTREAMENTO',
 ]), lotesRoutes);
 router.use('/ordens-teste', verificaToken, exigirAlgumaPermissao([
   'TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE', 'TELA_BIPAGEM',
-  'TELA_INSPECAO_QUALIDADE', 'TELA_CHECKLIST', 'TELA_RASTREAMENTO',
+  'TELA_INSPECAO_QUALIDADE', 'TELA_RASTREAMENTO',
 ]), lotesRoutes);
 router.use('/rastreamentos', verificaToken, exigirAlgumaPermissao([
   'TELA_BIPAGEM', 'TELA_RASTREAMENTO', 'TELA_GESTAO_ORDENS',
-  'TELA_CHECKLIST', 'TELA_INSPECAO_QUALIDADE',
+  'TELA_INSPECAO_QUALIDADE',
 ]), rastreamentosRoutes);
-router.use('/checklists', verificaToken, exigirAlgumaPermissao(['TELA_CHECKLIST', 'TELA_BIPAGEM']), checklistsRoutes);
 router.use('/inspecoes', verificaToken, exigirPermissao('TELA_INSPECAO_QUALIDADE'), inspecoesRoutes);
 router.use('/corte', verificaToken, exigirPermissao('TELA_BIPAGEM'), corteRoutes);
 router.use('/apoio', verificaToken, exigirPermissao('TELA_BIPAGEM'), apoioRoutes);
@@ -54,11 +52,11 @@ router.use('/rotas', verificaToken, exigirAlgumaPermissao([
 ]), rotasRoutes);
 router.use('/pecas', verificaToken, exigirAlgumaPermissao([
   'TELA_CATALOGO_PECAS', 'TELA_CATALOGO_MODELOS', 'TELA_GESTAO_ORDENS',
-  'TELA_NOVA_ORDEM_TESTE', 'TELA_CHECKLIST',
+  'TELA_NOVA_ORDEM_TESTE',
 ]), pecasRoutes);
 router.use('/catalogo-pecas', verificaToken, exigirAlgumaPermissao([
   'TELA_CATALOGO_PECAS', 'TELA_CATALOGO_MODELOS', 'TELA_GESTAO_ORDENS',
-  'TELA_NOVA_ORDEM_TESTE', 'TELA_CHECKLIST',
+  'TELA_NOVA_ORDEM_TESTE',
 ]), pecasRoutes);
 router.use('/etiquetas', verificaToken, exigirAlgumaPermissao([
   'TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE', 'TELA_BIPAGEM',

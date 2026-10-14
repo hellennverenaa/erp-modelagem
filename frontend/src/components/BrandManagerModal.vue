@@ -127,7 +127,7 @@ onMounted(carregarMarcas)
 
         <div class="brand-content">
           <p class="brand-description">
-            As marcas cadastradas ficam disponíveis no formulário de criação de modelos.
+            As marcas ativas ficam disponíveis no formulário de criação de modelos.
           </p>
 
           <form class="brand-form" @submit.prevent="cadastrarMarca">

@@ -1,7 +1,12 @@
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { Peca } from '../entities/Peca';
+import { Modelo } from '../entities/Modelo';
+import { OrdemTeste } from '../entities/OrdemTeste';
 import { exigirAlgumaPermissao, exigirPermissao } from '../middlewares/rbac.middleware';
+import { ModelPiecesError, saveModelPieces } from '../services/model-pieces.service';
+import { lockModelConfiguration } from '../services/route-integrity.service';
 
 const router = Router();
 
@@ -11,7 +16,7 @@ const router = Router();
  */
 router.get('/modelo/:modeloId', exigirAlgumaPermissao([
   'TELA_CATALOGO_MODELOS', 'TELA_CATALOGO_PECAS', 'TELA_GESTAO_ORDENS',
-  'TELA_NOVA_ORDEM_TESTE', 'TELA_CHECKLIST',
+  'TELA_NOVA_ORDEM_TESTE',
 ]), async (req: Request, res: Response) => {
   try {
     const modeloId = req.params.modeloId as string;
@@ -19,6 +24,7 @@ router.get('/modelo/:modeloId', exigirAlgumaPermissao([
     
     const pecas = await pecaRepo.find({
       where: { modeloId },
+      relations: { catalogoPeca: true, setorCorteOpcao: true },
       order: { nome: 'ASC' }
     });
 
@@ -34,29 +40,31 @@ router.get('/modelo/:modeloId', exigirAlgumaPermissao([
  * Cadastra/Atualiza as peças associadas a um modelo
  */
 router.post('/modelo/:modeloId', exigirAlgumaPermissao([
-  'EDITAR_TELA_CATALOGO_MODELOS', 'EDITAR_TELA_NOVA_ORDEM_TESTE',
+  'EDITAR_TELA_CATALOGO_MODELOS', 'CONFIGURAR_MODELO_ORDEM',
 ]), async (req: Request, res: Response) => {
+  const modeloId = z.string().uuid().safeParse(req.params.modeloId);
+  const parsed = z.object({ pecas: z.array(z.object({
+    id: z.string().uuid().optional(),
+    catalogoPecaId: z.string().uuid(),
+    setorCorteOpcaoId: z.string().uuid(),
+  })).min(2) }).safeParse(req.body);
+  if (!modeloId.success || !parsed.success) {
+    return res.status(400).json({ error: 'Informe peças e sub-setores válidos para o modelo.', code: 'VALIDATION_ERROR' });
+  }
   try {
-    const modeloId = req.params.modeloId as string;
-    const { pecas } = req.body;
-    
-    if (!pecas || !Array.isArray(pecas)) {
-      return res.status(400).json({ error: 'Payload deve conter o array de pecas.' });
-    }
-
-    const pecaRepo = AppDataSource.getRepository(Peca);
-    await pecaRepo.delete({ modeloId });
-
-    const novasPecas = pecas.map((p: any) => pecaRepo.create({
-      modeloId,
-      nome: p.nome || `${p.numero} - ${p.nome}`,
-      setorCorteOpcaoId: p.setorCorteOpcaoId || null,
-      descricao: p.descricao || null
-    }));
-
-    const saved = await pecaRepo.save(novasPecas);
+    const saved = await AppDataSource.transaction(async (manager) => {
+      await lockModelConfiguration(manager, modeloId.data);
+      const modelo = await manager.getRepository(Modelo).findOne({ where: { id: modeloId.data }, select: { id: true } });
+      if (!modelo) throw Object.assign(new Error('Modelo não encontrado.'), { code: 'MODELO_NOT_FOUND' });
+      const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: modelo.id }, select: { id: true } });
+      if (ordem) throw Object.assign(new Error('As peças deste modelo devem ser alteradas pela configuração da ordem na fila da Modelagem.'), { code: 'MODEL_PIECES_MANAGED_BY_ORDER' });
+      return saveModelPieces(manager, modelo.id, parsed.data.pecas);
+    });
     return res.status(201).json(saved);
   } catch (error: any) {
+    if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
+    if (error?.code === 'MODELO_NOT_FOUND') return res.status(404).json({ error: error.message, code: error.code });
+    if (error?.code === 'MODEL_PIECES_MANAGED_BY_ORDER') return res.status(409).json({ error: error.message, code: error.code });
     console.error('[PecasRouter] Erro ao salvar peças do modelo:', error);
     return res.status(400).json({ error: error.message || 'Erro ao salvar peças do modelo.' });
   }

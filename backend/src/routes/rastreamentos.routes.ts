@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { RastreamentosController } from '../controllers/rastreamentos.controller';
-import { exigirAlgumaPermissao, exigirPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
+import { exigirPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
 const rastreamentosController = new RastreamentosController();
@@ -100,8 +100,7 @@ router.post(
  *       por ocorrências com interrompeSla=true). Aplica o Gate de Qualidade Seletiva:
  *
  *       **Categoria A — Handoff Automático** (Almoxarifado, Navalha, Telas, Recebimento,
- *       Separação, Dublagem): valida checklist. Se bloqueante + COM_PENDENCIAS → bloqueia.
- *       Se não-bloqueante + COM_PENDENCIAS → concessão com alerta.
+ *       Separação, Dublagem): conclui o handoff sem checklist.
  *
  *       **Categoria B — Gate Obrigatório** (demais setores): exige inspeção com resultado
  *       APROVADO ou APROVADO_CONCESSAO (tipo SAIDA_SETOR, LABORATORIO ou LABORATORIO_APOIO).
@@ -179,14 +178,6 @@ router.post(
  *                   properties:
  *                     error:
  *                       type: string
- *                       example: "Bipagem travada por pendências bloqueantes no checklist."
- *                     code:
- *                       type: string
- *                       example: "CHECKLIST_BLOQUEANTE"
- *                 - type: object
- *                   properties:
- *                     error:
- *                       type: string
  *                       example: "Saída bloqueada. Este setor exige inspeção de qualidade aprovada."
  *                     code:
  *                       type: string
@@ -198,7 +189,7 @@ router.post(
  */
 router.post(
   '/bipar-saida',
-  exigirAlgumaPermissao(['EDITAR_TELA_BIPAGEM', 'EDITAR_TELA_CHECKLIST']),
+  exigirPermissao('EDITAR_TELA_BIPAGEM'),
   verificarPermissaoSetor('BIPAR_SAIDA', 'body'),
   rastreamentosController.biparSaida
 );

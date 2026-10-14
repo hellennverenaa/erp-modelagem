@@ -11,6 +11,7 @@ import {
 import { Modelo } from './Modelo';
 import { Rastreamento } from './Rastreamento';
 import { ConfigOpcao } from './ConfigOpcao';
+import { CatalogoPeca } from './CatalogoPeca';
 
 @Entity({ name: 'pecas' })
 export class Peca {
@@ -24,6 +25,13 @@ export class Peca {
 
   @Column({ name: 'modelo_id', type: 'uuid' })
   modeloId: string;
+
+  @Column({ name: 'catalogo_peca_id', type: 'uuid', nullable: true })
+  catalogoPecaId: string | null;
+
+  @ManyToOne(() => CatalogoPeca, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'catalogo_peca_id' })
+  catalogoPeca: CatalogoPeca | null;
 
   @Column({ type: 'varchar', length: 150 })
   nome: string;

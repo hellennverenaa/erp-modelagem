@@ -3,7 +3,6 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { Rastreamento, RastreamentoStatus, TipoLote } from '../entities/Rastreamento';
-import { Checklist, ChecklistStatus } from '../entities/Checklist';
 import { Inspecao, TipoInspecao, ResultadoInspecao } from '../entities/Inspecao';
 import { OcorrenciaProducao } from '../entities/OcorrenciaProducao';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
@@ -13,6 +12,7 @@ import { RotaModelo } from '../entities/RotaModelo';
 import { Usuario } from '../entities/Usuario';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { webSocketService } from '../services/websocket.service';
+import { getPersistedModelRoute, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 
 const isUuidString = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
@@ -42,7 +42,7 @@ async function resolveLocalOperadorId(userObj: any): Promise<string | null> {
 // RastreamentosController — Motor do ERP (Bipagem de Entrada/Saída)
 // ═══════════════════════════════════════════════════════════════════════════
 // Implementa a lógica de Gate de Qualidade Seletiva:
-//   Categoria A — Handoff Automático (com validação de checklist)
+//   Categoria A — Handoff Automático sem checklist
 //   Categoria B — Gate Obrigatório (inspeção ou Lab exigido)
 // Calcula SLA Dinâmico descontando pausas por ocorrências (interrompeSla=true)
 // Zero Hardcode: setores identificados via JOIN com config_opcoes
@@ -208,11 +208,28 @@ export class RastreamentosController {
         });
       }
 
+      if (ordem.status === 'AGUARDANDO_MODELAGEM') {
+        return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
+      }
+
+      let versaoRota: number;
+      try {
+        await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        versaoRota = (await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao)).versao;
+      } catch (error) {
+        if (error instanceof RouteIntegrityError) {
+          return res.status(409).json({ error: `A ordem ainda não pode entrar na produção: ${error.message}`, code: 'ROTA_INVALIDA' });
+        }
+        throw error;
+      }
+
       // 1.2. Verifica se o setorId pertence à rota de produção mapeada para o modelo
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
       const pertenceARota = await rotaRepo.findOne({
         where: {
           modeloId: ordem.modeloId,
+          plantaId: ordem.plantaId,
+          versao: versaoRota,
           setorId: setorId,
         },
       });
@@ -229,7 +246,11 @@ export class RastreamentosController {
 
       if (inputStatus !== RastreamentoStatus.EM_RETRABALHO) {
         const queryBuilder = rastreamentoRepo.createQueryBuilder('r')
-          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId', { modeloId: ordem.modeloId })
+          .innerJoin(RotaModelo, 'rm', 'rm.setorId = r.setorId AND rm.modeloId = :modeloId AND rm.plantaId = :plantaId AND rm.versao = :versaoRota', {
+            modeloId: ordem.modeloId,
+            plantaId: ordem.plantaId,
+            versaoRota,
+          })
           .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
           .andWhere('r.tipoLote = :tipoLote', { tipoLote })
           .andWhere('r.dataEntrada IS NOT NULL')
@@ -269,6 +290,8 @@ export class RastreamentosController {
           const rotaAnterior = await rotaRepo.findOne({
             where: {
               modeloId: ordem.modeloId,
+              plantaId: ordem.plantaId,
+              versao: versaoRota,
               ordem: pertenceARota.ordem - 1,
             },
           });
@@ -490,7 +513,6 @@ export class RastreamentosController {
       }
 
       const rastreamentoRepo  = AppDataSource.getRepository(Rastreamento);
-      const checklistRepo     = AppDataSource.getRepository(Checklist);
       const inspecaoRepo      = AppDataSource.getRepository(Inspecao);
       const ocorrenciaRepo    = AppDataSource.getRepository(OcorrenciaProducao);
       const configOpcaoRepo   = AppDataSource.getRepository(ConfigOpcao);
@@ -516,11 +538,28 @@ export class RastreamentosController {
         });
       }
 
+      if (ordem.status === 'AGUARDANDO_MODELAGEM') {
+        return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
+      }
+
+      let versaoRota: number;
+      try {
+        await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        versaoRota = (await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao)).versao;
+      } catch (error) {
+        if (error instanceof RouteIntegrityError) {
+          return res.status(409).json({ error: `A ordem ainda não pode entrar na produção: ${error.message}`, code: 'ROTA_INVALIDA' });
+        }
+        throw error;
+      }
+
       // 2.2. Validação da Rota de Produção (HIERARQUIA DA ROTA ANTES DE DATA_ENTRADA)
       const rotaRepo = AppDataSource.getRepository(RotaModelo);
       const pertenceARota = await rotaRepo.findOne({
         where: {
           modeloId: ordem.modeloId,
+          plantaId: ordem.plantaId,
+          versao: versaoRota,
           setorId: setorId,
         },
       });
@@ -596,38 +635,7 @@ export class RastreamentosController {
       // Zero Hardcode: não compara strings fixas de nome de setor
       let foundInspecaoId: string | null = null;
 
-      if (isSetorHandoffAutomatico) {
-        // ── CATEGORIA A: Handoff Automático ─────────────────────────────
-        // Verifica checklist mais recente desse setor/ordem
-        const checklist = await checklistRepo.findOne({
-          where: { ordemTesteId, setorId },
-          order: { dataPreenchimento: 'DESC' },
-        });
-
-        if (checklist && checklist.status === ChecklistStatus.COM_PENDENCIAS) {
-          if (checklist.bloqueante) {
-            // TRAVA: Bipagem bloqueada por pendências bloqueantes
-            return res.status(403).json({
-              error: 'Bipagem travada por pendências bloqueantes no checklist.',
-              code: 'CHECKLIST_BLOQUEANTE',
-              details: {
-                checklistId: checklist.id,
-                status: checklist.status,
-                bloqueante: checklist.bloqueante,
-              },
-            });
-          }
-          // CONCESSÃO: avança com alerta (não bloqueia, mas registra)
-          // TODO: Disparar e-mail/WebSocket para modelistas e gerente (Genkit flow)
-          console.warn(
-            `[Gate Categoria A] Concessão concedida para ordemTeste=${ordemTesteId} ` +
-            `setor=${setorId}. Checklist com pendências não-bloqueantes. ` +
-            `Alerta disparado (e-mail/WebSocket pendente de integração Genkit).`
-          );
-        }
-        // Se checklist PREENCHIDO ou não existir → avança normalmente
-
-      } else {
+      if (!isSetorHandoffAutomatico) {
         // ── CATEGORIA B: Gate Obrigatório ────────────────────────────────
         // Todos os demais setores a partir dos subsetores de Corte por Máquina.
         // Exige inspeção aprovada (SAIDA_SETOR, LABORATORIO ou LABORATORIO_APOIO)
@@ -754,6 +762,8 @@ export class RastreamentosController {
             const rotaAtual = await rotaRepo.findOne({
               where: {
                 modeloId: ordemObj.modeloId,
+                plantaId: ordemObj.plantaId,
+                versao: ordemObj.rotaVersao || versaoRota,
                 setorId: setorId,
               },
             });
@@ -763,6 +773,8 @@ export class RastreamentosController {
               const setoresMesmaOrdem = await rotaRepo.find({
                 where: {
                   modeloId: ordemObj.modeloId,
+                  plantaId: ordemObj.plantaId,
+                  versao: ordemObj.rotaVersao || versaoRota,
                   ordem: rotaAtual.ordem,
                 },
               });
@@ -816,6 +828,8 @@ export class RastreamentosController {
               const proximasRotas = await rotaRepo.find({
                 where: {
                   modeloId: ordemObj.modeloId,
+                  plantaId: ordemObj.plantaId,
+                  versao: ordemObj.rotaVersao || versaoRota,
                   ordem: rotaAtual.ordem + 1,
                 },
               });

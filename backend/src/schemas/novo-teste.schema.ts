@@ -17,17 +17,13 @@ export const finalizarNovoTesteSchema = z.object({
   pecas: z.array(z.object({
     catalogoPecaId: uuidSchema,
     setorCorteOpcaoId: uuidSchema,
-  })).min(1, 'Adicione ao menos uma peça ao modelo.'),
+  })).min(2, 'Adicione peças para Lectra e Ponte ao modelo.'),
   rota: z.array(etapaRotaSchema).min(1, 'A rota deve conter ao menos um setor.'),
   ordem: z.object({
     plantaId: uuidSchema,
     prioridadePcp: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'URGENTE']),
     possuiCaixaTeste: z.boolean().default(false),
     observacoes: z.string().nullable().optional(),
-    dataPrevistaProducao: z.string().nullable().optional().refine(
-      (value) => value == null || Number.isFinite(new Date(value).getTime()),
-      'Data prevista de produção inválida.',
-    ),
     slasPorSetor: z.record(z.string(), z.number().nonnegative()).nullable().optional(),
   }),
 }).superRefine((data, ctx) => {
