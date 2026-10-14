@@ -23,7 +23,6 @@ const createLoteSchema = z.object({
   prioridadePcp: z.string().min(1, { message: 'prioridadePcp é obrigatória.' }),
   possuiCaixaTeste: z.boolean().optional().default(false),
   observacoes: z.string().optional().nullable(),
-  dataPrevistaProducao: z.string().optional().nullable(),
   slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
 });
 
@@ -34,10 +33,6 @@ const criarOrdemPcpSchema = z.object({
   dataCorte: z.string().nullable().optional().refine(
     (value) => value == null || Number.isFinite(new Date(value).getTime()),
     'Previsão de corte inválida.',
-  ),
-  dataPrevistaProducao: z.string().nullable().optional().refine(
-    (value) => value == null || Number.isFinite(new Date(value).getTime()),
-    'Data prevista de início na produção inválida.',
   ),
   observacoes: z.string().trim().nullable().optional(),
 });
@@ -71,7 +66,6 @@ function possuiAcessoTodasPlantas(req: Request): Promise<boolean> {
 }
 
 const updateManutencaoSchema = z.object({
-  dataPrevistaProducao: z.string().optional().nullable(),
   slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
   pecas: z.array(z.object({
     id: z.string(),
@@ -120,7 +114,6 @@ export class LotesController {
           codigoBarras: `OT-${randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`,
           dataInicio: new Date(),
           prioridadePcp: parsed.data.prioridadePcp,
-          dataPrevistaProducao: parsed.data.dataPrevistaProducao ? new Date(parsed.data.dataPrevistaProducao) : null,
           observacoes: parsed.data.observacoes?.trim() || null,
           status: OrdemTesteStatus.AGUARDANDO_MODELAGEM,
           liberadoProducao: false,
@@ -426,7 +419,6 @@ export class LotesController {
         prioridadePcp,
         possuiCaixaTeste,
         observacoes,
-        dataPrevistaProducao,
         slasPorSetor
       } = parseResult.data;
 
@@ -472,7 +464,6 @@ export class LotesController {
         liberadoProducao: false,
         possuiCaixaTeste,
         observacoes: observacoes || null,
-        dataPrevistaProducao: dataPrevistaProducao ? new Date(dataPrevistaProducao) : null,
         slasPorSetor: slasPorSetor || null,
       });
 
@@ -620,7 +611,7 @@ export class LotesController {
         });
       }
 
-      const { dataPrevistaProducao, pecas } = parseResult.data;
+      const { pecas } = parseResult.data;
 
       const reqUser = (req as any).user || (req as any).usuario || {};
 
@@ -701,10 +692,6 @@ export class LotesController {
         if (mudouSlaReal) {
           lote.slasPorSetor = novosSlas;
         }
-      }
-
-      if (dataPrevistaProducao !== undefined) {
-        lote.dataPrevistaProducao = dataPrevistaProducao ? new Date(dataPrevistaProducao) : null;
       }
 
       await loteRepo.save(lote);

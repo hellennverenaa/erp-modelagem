@@ -53,7 +53,6 @@ interface OrdemTeste {
   dataInicio?: string
   prioridadePcp: string
   possuiCaixaTeste: boolean | null
-  dataPrevistaProducao?: string | null
   observacoes?: string | null
   modelo?: Modelo
   planta?: Planta
@@ -138,7 +137,6 @@ const formModelo = ref({
 const formOrdem = ref({
   plantaId: '',
   prioridadePcp: 'MEDIA',
-  dataPrevistaProducao: '',
   observacoes: '',
 })
 
@@ -242,14 +240,6 @@ function marcaAtualizada(marca: Marca) {
     formModelo.value.marcaId = ''
     selectedInactiveBrandName.value = marca.nome
   }
-}
-
-function dateForInput(value?: string | null): string {
-  if (!value) return ''
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return ''
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-  return local.toISOString().slice(0, 16)
 }
 
 function dateOnlyForInput(value?: string | null): string {
@@ -397,9 +387,6 @@ async function submitOrdem() {
       plantaId: formOrdem.value.plantaId,
       prioridadePcp: formOrdem.value.prioridadePcp,
       dataCorte: formModelo.value.dataCorte,
-      dataPrevistaProducao: formOrdem.value.dataPrevistaProducao
-        ? new Date(formOrdem.value.dataPrevistaProducao).toISOString()
-        : null,
       observacoes: formOrdem.value.observacoes.trim() || null,
     })
     completedOrder.value = {
@@ -492,7 +479,6 @@ async function selecionarOrdemPendente(ordem: OrdemTeste) {
   formOrdem.value = {
     plantaId: ordem.plantaId,
     prioridadePcp: ordem.prioridadePcp,
-    dataPrevistaProducao: dateForInput(ordem.dataPrevistaProducao),
     observacoes: ordem.observacoes || '',
   }
   const loaded = await Promise.allSettled([carregarCatalogo(), carregarMaquinas()])
@@ -609,7 +595,7 @@ async function finalizarModelagem(payload: RotaSalvaPayload) {
     }
     selectedOrder.value = null
     await carregarOrdensPendentes()
-    toast('success', 'Modelagem concluída. A rota foi vinculada à ordem e a produção foi liberada.')
+    toast('success', 'Modelagem concluída. A rota foi vinculada e o teste está pronto para iniciar.')
   } catch (error: any) {
     errorRota.value = error.response?.data?.error || 'Não foi possível finalizar a configuração da rota.'
   } finally {
@@ -645,7 +631,7 @@ function iniciarNovaOrdem() {
   selectedExistingModelId.value = ''
   selectedInactiveBrandName.value = ''
   formModelo.value = { nome: '', codigoProduto: '', marcaId: '', dataCorte: '' }
-  formOrdem.value = { plantaId: plantasPermitidas.value[0]?.id || '', prioridadePcp: 'MEDIA', dataPrevistaProducao: '', observacoes: '' }
+  formOrdem.value = { plantaId: plantasPermitidas.value[0]?.id || '', prioridadePcp: 'MEDIA', observacoes: '' }
   errorModelo.value = ''
   errorOrdem.value = ''
 }
@@ -702,7 +688,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
       <div v-if="completedOrder" class="wiz-card wiz-success-card">
         <div class="wiz-done-icon-wrap" aria-hidden="true"><CheckCircle :size="34" /></div>
         <h1 class="wiz-done-title">
-          {{ completedOrder.status === 'AGUARDANDO_MODELAGEM' ? 'Ordem criada — Aguardando Modelagem' : 'Modelagem concluída — Liberado para produção' }}
+          {{ completedOrder.status === 'AGUARDANDO_MODELAGEM' ? 'Ordem criada — Aguardando Modelagem' : 'Modelagem concluída — Teste pronto para iniciar' }}
         </h1>
         <p class="wiz-done-desc">
           {{ completedOrder.status === 'AGUARDANDO_MODELAGEM'
@@ -717,7 +703,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
           <span><strong>Modelo:</strong> {{ completedOrder.modelo?.nome || formModelo.nome }}</span>
           <span><strong>Código:</strong> {{ completedOrder.modelo?.codigoProduto || formModelo.codigoProduto }}</span>
           <span class="pending-badge" :class="{ released: completedOrder.status !== 'AGUARDANDO_MODELAGEM' }">
-            {{ completedOrder.status === 'AGUARDANDO_MODELAGEM' ? 'Aguardando Modelagem' : 'Liberado para produção' }}
+            {{ completedOrder.status === 'AGUARDANDO_MODELAGEM' ? 'Aguardando Modelagem' : 'Pronto para iniciar teste de produção' }}
           </span>
         </div>
         <div class="wiz-footer-actions">
@@ -853,10 +839,6 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
                   <select id="prioridadePcp" v-model="formOrdem.prioridadePcp" class="form-select" required>
                     <option value="BAIXA">Baixa</option><option value="MEDIA">Média</option><option value="ALTA">Alta</option><option value="URGENTE">Urgente</option>
                   </select>
-                </div>
-                <div class="form-group">
-                  <label for="dataPrevistaProducao" class="form-label"><Calendar :size="13" /> Início previsto na produção</label>
-                  <input id="dataPrevistaProducao" v-model="formOrdem.dataPrevistaProducao" class="form-input" type="datetime-local" />
                 </div>
                 <div class="form-group col-span-2">
                   <label for="observacoes" class="form-label">Observações da ordem</label>

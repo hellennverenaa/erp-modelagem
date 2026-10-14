@@ -60,7 +60,6 @@ router.put('/:id/modelagem/finalizar', exigirPermissao('CONFIGURAR_MODELO_ORDEM'
  *                   prioridadePcp: { type: string, enum: [BAIXA, MEDIA, ALTA, URGENTE] }
  *                   possuiCaixaTeste: { type: boolean }
  *                   observacoes: { type: string, nullable: true }
- *                   dataPrevistaProducao: { type: string, nullable: true }
  *                   slasPorSetor: { type: object, nullable: true }
  *     responses:
  *       201: { description: Modelo, peças, rota e ordem foram persistidos }

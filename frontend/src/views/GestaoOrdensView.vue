@@ -23,7 +23,6 @@ import {
   Info,
   Printer,
   Settings,
-  Calendar,
   Clock,
   Sliders,
   Scissors,
@@ -80,7 +79,6 @@ interface OrdemTeste {
   liberadoProducao: boolean
   possuiCaixaTeste: boolean | null
   observacoes: string | null
-  dataPrevistaProducao?: string | null
   slasPorSetor?: Record<string, number> | null
   createdAt: string
   updatedAt: string
@@ -700,7 +698,6 @@ const logsAuditoria = ref<Array<{
 }>>([])
 const loadingManutencao = ref(false)
 const formManutencao = ref({
-  dataPrevistaProducao: '',
   slas: [] as SlaSetorFormItem[],
   pecas: [] as Array<{ id: string; nome: string; setorCorteOpcaoId: string }>
 })
@@ -709,12 +706,6 @@ const maquinasCorteManutencao = ref<Array<{ id: string; label: string; valor: st
 async function abrirManutencao(ordem: OrdemTeste) {
   manutencaoOrdem.value = ordem
   activeTabManutencao.value = 'geral'
-
-  let dtStr = ''
-  if (ordem.dataPrevistaProducao) {
-    const d = new Date(ordem.dataPrevistaProducao)
-    dtStr = d.toISOString().slice(0, 16)
-  }
 
   // Fonte primaria: SLAs proprios da ordem
   const ordemSlaMap: Record<string, number> = ordem.slasPorSetor || {}
@@ -793,7 +784,6 @@ async function abrirManutencao(ordem: OrdemTeste) {
   }
 
   formManutencao.value = {
-    dataPrevistaProducao: dtStr,
     slas: slasItems,
     pecas: pecasList.map(p => ({
       id: p.id,
@@ -889,7 +879,6 @@ async function salvarManutencao() {
   loadingManutencao.value = true
   try {
     const payload: any = {
-      dataPrevistaProducao: formManutencao.value.dataPrevistaProducao || null,
       pecas: formManutencao.value.pecas.map(p => ({
         id: p.id,
         setorCorteOpcaoId: p.setorCorteOpcaoId
@@ -936,7 +925,6 @@ const form = ref({
   plantaId: '',
   prioridadePcp: '',
   observacoes: '',
-  dataPrevistaProducao: '',
 })
 const formErrors = ref<Record<string, string>>({})
 
@@ -1057,9 +1045,6 @@ async function handleCreateOrdem() {
       plantaId:      form.value.plantaId,
       prioridadePcp: form.value.prioridadePcp,
       observacoes:   form.value.observacoes || null,
-      dataPrevistaProducao: form.value.dataPrevistaProducao
-        ? new Date(form.value.dataPrevistaProducao).toISOString()
-        : null,
     })
     addToast('success', 'Ordem criada com status Aguardando Modelagem.')
     // Recarrega dropdown para remover o modelo que agora tem ordem ativa
@@ -1089,7 +1074,7 @@ async function handleCreateOrdem() {
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
 function openModal() {
-  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '', dataPrevistaProducao: '' }
+  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '' }
   formErrors.value = {}
   showModal.value = true
 }
@@ -1505,11 +1490,6 @@ onMounted(async () => {
                 </span>
               </div>
 
-              <div class="form-field">
-                <label for="dataPrevistaProducao" class="form-label">Início previsto na produção <span class="optional-tag">opcional</span></label>
-                <input id="dataPrevistaProducao" v-model="form.dataPrevistaProducao" type="datetime-local" class="form-input" />
-              </div>
-
               <!-- Observações (opcional) -->
               <div class="form-field">
                 <label for="txt-observacoes" class="form-label">Observações <span class="optional-tag">opcional</span></label>
@@ -1805,20 +1785,6 @@ onMounted(async () => {
             <div class="modal-body p-6 space-y-4">
               <!-- ABA 1: Prazos e SLAs -->
               <div v-if="activeTabManutencao === 'geral'" class="space-y-5">
-                <!-- Campo data -->
-                <div class="form-group">
-                  <label for="manut-data-prevista" class="form-label flex items-center gap-1">
-                    <Calendar :size="13" class="text-zinc-400" />
-                    <span>Data Prevista de Inicio na Producao</span>
-                  </label>
-                  <input
-                    id="manut-data-prevista"
-                    type="datetime-local"
-                    v-model="formManutencao.dataPrevistaProducao"
-                    class="form-input"
-                  />
-                </div>
-
                 <!-- Cabecalho SLA -->
                 <div class="flex items-center justify-between gap-3 flex-wrap">
                   <div class="flex items-center gap-2">

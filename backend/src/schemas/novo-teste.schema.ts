@@ -24,10 +24,6 @@ export const finalizarNovoTesteSchema = z.object({
     prioridadePcp: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'URGENTE']),
     possuiCaixaTeste: z.boolean().default(false),
     observacoes: z.string().nullable().optional(),
-    dataPrevistaProducao: z.string().nullable().optional().refine(
-      (value) => value == null || Number.isFinite(new Date(value).getTime()),
-      'Data prevista de produção inválida.',
-    ),
     slasPorSetor: z.record(z.string(), z.number().nonnegative()).nullable().optional(),
   }),
 }).superRefine((data, ctx) => {

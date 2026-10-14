@@ -153,9 +153,6 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       liberadoProducao: false,
       possuiCaixaTeste: input.ordem.possuiCaixaTeste,
       observacoes: input.ordem.observacoes || null,
-      dataPrevistaProducao: input.ordem.dataPrevistaProducao
-        ? new Date(input.ordem.dataPrevistaProducao)
-        : null,
       slasPorSetor: input.ordem.slasPorSetor || null,
     }));
 

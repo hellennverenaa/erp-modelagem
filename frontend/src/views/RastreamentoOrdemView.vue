@@ -86,7 +86,6 @@ interface OrdemOP {
     rotas?: Array<{ setorId?: string; setor?: { id: string }; ordem: number }>
   }
   planta?: { id: string; nome: string }
-  dataPrevistaProducao?: string | null
   historico: RastreamentoItem[]
   nodesCx: NodeTrackItem[]
   nodesLp: NodeTrackItem[]
@@ -279,7 +278,6 @@ async function fetchOrdensEPosicoes() {
           slasPorSetor: ordem.slasPorSetor,
           modelo: ordem.modelo,
           planta: ordem.planta,
-          dataPrevistaProducao: ordem.dataPrevistaProducao,
           historico: hist,
           nodesCx: [],
           nodesLp: [],

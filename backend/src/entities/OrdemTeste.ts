@@ -89,9 +89,6 @@ export class OrdemTeste {
   @Column({ name: 'data_fim_prevista', type: 'timestamp', nullable: true })
   dataFimPrevista: Date | null;
 
-  @Column({ name: 'data_prevista_producao', type: 'timestamp', nullable: true })
-  dataPrevistaProducao: Date | null;
-
   @Column({ name: 'slas_por_setor', type: 'jsonb', nullable: true })
   slasPorSetor: Record<string, number> | null;
 
