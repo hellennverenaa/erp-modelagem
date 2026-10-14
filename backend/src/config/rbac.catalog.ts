@@ -16,14 +16,11 @@ export const RBAC_SCREENS: RbacScreenDefinition[] = [
   { routeName: 'inspecao', routePath: '/dashboard/inspecao', label: 'Inspeção de Qualidade', viewPermission: 'TELA_INSPECAO_QUALIDADE', editPermission: 'EDITAR_TELA_INSPECAO_QUALIDADE' },
   { routeName: 'rastreamento-ordem', routePath: '/dashboard/rastreamento', label: 'Rastreamento', viewPermission: 'TELA_RASTREAMENTO' },
   { routeName: 'novo-teste', routePath: '/dashboard/novo-teste', label: 'Nova Ordem de Teste', viewPermission: 'TELA_NOVA_ORDEM_TESTE', editPermission: 'EDITAR_TELA_NOVA_ORDEM_TESTE' },
-  { routeName: 'checklist', routePath: '/dashboard/checklist/:ordemTesteId/:setorId', label: 'Checklist de Setor', viewPermission: 'TELA_CHECKLIST', editPermission: 'EDITAR_TELA_CHECKLIST' },
 ];
 
 export const RBAC_GLOBAL_ACTIONS: Array<{ acao: string; label: string }> = [
   { acao: 'EDITAR_ROTA', label: 'Editar rota de produção' },
-  { acao: 'ACESSAR_TODOS_SETORES', label: 'Acessar checklists de todos os setores' },
   { acao: 'ACESSAR_TODAS_PLANTAS', label: 'Acessar dados de todas as plantas' },
-  { acao: 'ADICIONAR_ITEM_AVULSO_CHECKLIST', label: 'Adicionar item avulso ao checklist' },
   { acao: 'ADMINISTRAR_BIPAGEM', label: 'Administrar dados operacionais da bipagem' },
   { acao: 'ADMINISTRAR_CONFIGURACOES', label: 'Administrar configurações do sistema' },
 ];
@@ -31,7 +28,6 @@ export const RBAC_GLOBAL_ACTIONS: Array<{ acao: string; label: string }> = [
 export const RBAC_SECTOR_ACTIONS: Array<{ acao: string; label: string }> = [
   { acao: 'BIPAR_ENTRADA', label: 'Bipar entrada' },
   { acao: 'BIPAR_SAIDA', label: 'Bipar saída' },
-  { acao: 'PREENCHER_CHECKLIST', label: 'Preencher checklist' },
   { acao: 'INSPECIONAR_SETOR', label: 'Inspecionar setor' },
 ];
 

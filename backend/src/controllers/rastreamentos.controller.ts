@@ -3,7 +3,6 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { AppDataSource } from '../config/database';
 import { Rastreamento, RastreamentoStatus, TipoLote } from '../entities/Rastreamento';
-import { Checklist, ChecklistStatus } from '../entities/Checklist';
 import { Inspecao, TipoInspecao, ResultadoInspecao } from '../entities/Inspecao';
 import { OcorrenciaProducao } from '../entities/OcorrenciaProducao';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
@@ -42,7 +41,7 @@ async function resolveLocalOperadorId(userObj: any): Promise<string | null> {
 // RastreamentosController — Motor do ERP (Bipagem de Entrada/Saída)
 // ═══════════════════════════════════════════════════════════════════════════
 // Implementa a lógica de Gate de Qualidade Seletiva:
-//   Categoria A — Handoff Automático (com validação de checklist)
+//   Categoria A — Handoff Automático sem checklist
 //   Categoria B — Gate Obrigatório (inspeção ou Lab exigido)
 // Calcula SLA Dinâmico descontando pausas por ocorrências (interrompeSla=true)
 // Zero Hardcode: setores identificados via JOIN com config_opcoes
@@ -495,7 +494,6 @@ export class RastreamentosController {
       }
 
       const rastreamentoRepo  = AppDataSource.getRepository(Rastreamento);
-      const checklistRepo     = AppDataSource.getRepository(Checklist);
       const inspecaoRepo      = AppDataSource.getRepository(Inspecao);
       const ocorrenciaRepo    = AppDataSource.getRepository(OcorrenciaProducao);
       const configOpcaoRepo   = AppDataSource.getRepository(ConfigOpcao);
@@ -602,38 +600,7 @@ export class RastreamentosController {
       // Zero Hardcode: não compara strings fixas de nome de setor
       let foundInspecaoId: string | null = null;
 
-      if (isSetorHandoffAutomatico) {
-        // ── CATEGORIA A: Handoff Automático ─────────────────────────────
-        // Verifica checklist mais recente desse setor/ordem
-        const checklist = await checklistRepo.findOne({
-          where: { ordemTesteId, setorId },
-          order: { dataPreenchimento: 'DESC' },
-        });
-
-        if (checklist && checklist.status === ChecklistStatus.COM_PENDENCIAS) {
-          if (checklist.bloqueante) {
-            // TRAVA: Bipagem bloqueada por pendências bloqueantes
-            return res.status(403).json({
-              error: 'Bipagem travada por pendências bloqueantes no checklist.',
-              code: 'CHECKLIST_BLOQUEANTE',
-              details: {
-                checklistId: checklist.id,
-                status: checklist.status,
-                bloqueante: checklist.bloqueante,
-              },
-            });
-          }
-          // CONCESSÃO: avança com alerta (não bloqueia, mas registra)
-          // TODO: Disparar e-mail/WebSocket para modelistas e gerente (Genkit flow)
-          console.warn(
-            `[Gate Categoria A] Concessão concedida para ordemTeste=${ordemTesteId} ` +
-            `setor=${setorId}. Checklist com pendências não-bloqueantes. ` +
-            `Alerta disparado (e-mail/WebSocket pendente de integração Genkit).`
-          );
-        }
-        // Se checklist PREENCHIDO ou não existir → avança normalmente
-
-      } else {
+      if (!isSetorHandoffAutomatico) {
         // ── CATEGORIA B: Gate Obrigatório ────────────────────────────────
         // Todos os demais setores a partir dos subsetores de Corte por Máquina.
         // Exige inspeção aprovada (SAIDA_SETOR, LABORATORIO ou LABORATORIO_APOIO)

@@ -14,7 +14,7 @@ const router = Router();
  */
 router.get('/modelo/:modeloId', exigirAlgumaPermissao([
   'TELA_CATALOGO_MODELOS', 'TELA_CATALOGO_PECAS', 'TELA_GESTAO_ORDENS',
-  'TELA_NOVA_ORDEM_TESTE', 'TELA_CHECKLIST',
+  'TELA_NOVA_ORDEM_TESTE',
 ]), async (req: Request, res: Response) => {
   try {
     const modeloId = req.params.modeloId as string;

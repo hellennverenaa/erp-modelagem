@@ -96,12 +96,6 @@ const router = createRouter({
           meta: { requiresAuth: true, permission: 'TELA_NOVA_ORDEM_TESTE' },
         },
         {
-          path: 'checklist/:ordemTesteId/:setorId',
-          name: 'checklist',
-          component: () => import('../views/ChecklistView.vue'),
-          meta: { requiresAuth: true, permission: 'TELA_CHECKLIST' },
-        },
-        {
           path: 'rastreamento/:ordemTesteId?',
           name: 'rastreamento-ordem',
           component: () => import('../views/RastreamentoOrdemView.vue'),

@@ -124,7 +124,7 @@ router.patch('/perfis/:id', exigirAdminAutomacao, adminController.updatePerfil);
  *         description: Não autorizado
  */
 router.get('/setores', exigirAlgumaPermissaoOuAdminAutomacao([
-  'TELA_BIPAGEM', 'TELA_CHECKLIST', 'TELA_INSPECAO_QUALIDADE', 'TELA_CONSTRUTOR_ROTA',
+  'TELA_BIPAGEM', 'TELA_INSPECAO_QUALIDADE', 'TELA_CONSTRUTOR_ROTA',
 ]), adminController.getSetores);
 
 /**

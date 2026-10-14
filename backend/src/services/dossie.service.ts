@@ -81,7 +81,7 @@ function generateDossieHtml(
     </div>
   `;
 
-  // Checklists
+  // Registros de checklist anteriores à desativação, mantidos no dossiê como histórico.
   const chkHtml = checklists.map(c => {
     const itemRows = c.itens.map(it => `
       <tr>
@@ -114,7 +114,7 @@ function generateDossieHtml(
 
   const checklistsHtml = `
     <div class="section">
-      <h3>2. Checklists de Conferência</h3>
+      <h3>2. Checklists Históricos de Conferência</h3>
       ${chkHtml.length ? chkHtml : '<p>Nenhum checklist preenchido para esta ordem.</p>'}
     </div>
   `;

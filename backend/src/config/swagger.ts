@@ -22,7 +22,6 @@ API REST para rastreamento de testes de produção calçadista.
 **Funcionalidades Principais:**
 - Rastreamento de bipagem por peça/setor
 - Gestão de Ordens de Teste com Caixa Teste e Lote Principal
-- Checklists dinâmicos com itens avulsos
 - Inspeção de Qualidade seletiva (Handoff Automático + Gate Obrigatório)
 - Micro-fluxo de Corte Automático com dupla bipagem
 - Micro-fluxo de Apoio com Lab interno
@@ -235,7 +234,6 @@ API REST para rastreamento de testes de produção calçadista.
       { name: 'auth', description: 'Autenticação e tokens' },
       { name: 'lotes', description: 'Ordens de Teste e Lotes de Produção' },
       { name: 'rastreamentos', description: 'Bipagem e movimentação' },
-      { name: 'checklists', description: 'Templates e preenchimento' },
       { name: 'inspecoes', description: 'Qualidade e laboratório' },
       { name: 'corte', description: 'Micro-fluxo de corte por máquina' },
       { name: 'apoio', description: 'Micro-fluxo do setor de apoio' },

@@ -120,3 +120,14 @@ Impedir que duas criações concorrentes gravem o mesmo código, tanto no cadast
 
 ### 26 — TASK-026: Fazer o wizard gravar a rota no snapshot da ordem
 Adaptar a finalização do wizard para reutilizar o serviço de cadastro agregado e gravar na ordem a mesma versão da rota definida para o modelo. Modelo, peças, rota e ordem devem ser confirmados juntos na transação final.
+
+### 27 — TASK-027: Desativar temporariamente o checklist
+Desativar a função de checklist no ERP inteiro enquanto ela não fizer parte do processo. Remover a tela, a API de preenchimento, o seed de novos itens e a trava de saída na Bipagem. Preservar entidades, tabelas, migrations e registros existentes; o dossiê continua podendo incluir respostas históricas.
+
+**Escopo aprovado em 2026-10-14:** desativar o checklist no ERP todo, conforme confirmação da usuária. Remover a tela e rota frontend, endpoints de leitura/escrita, permissões específicas e seed; a saída de setores de handoff automático não deve consultar checklist. Preservar dados e leitura histórica no dossiê. O Gate de Inspeção de Qualidade para os demais setores permanece independente.
+
+**Entrega técnica em 2026-10-14:** removidos a tela e rota frontend, os endpoints/controller de checklist, permissões ativas, seed de novos itens e envio de e-mail de checklist. A saída de setores de handoff automático não consulta mais checklists; o gate separado de inspeção dos demais setores continua ativo. O dossiê mantém a leitura de registros históricos.
+
+**Preservação e validação:** nenhuma migration foi criada ou executada; tabelas, entidades, relações e registros existentes permanecem no banco. `npm run build` passou em `backend/` e `frontend/`; `git diff --check` passou. Nenhum teste automatizado ou fluxo manual foi executado. O backend compilado foi iniciado na porta 3001 e conectou ao banco, sem migrations pendentes.
+
+**Estado:** validado pela usuária em 2026-10-14 ao iniciar a análise da TASK-005; alterações commitadas separadamente antes de iniciar o próximo ponto.
