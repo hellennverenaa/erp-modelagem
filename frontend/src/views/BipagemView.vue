@@ -784,7 +784,7 @@ onMounted(async () => {
 
             <!-- Upload de Imagem -->
             <div class="field-group">
-              <span class="field-label">Foto do Gargalo</span>
+              <span class="field-label">Evidências</span>
               <div v-if="!fotoPreview" class="photo-upload-box" @click="fotoInputRef?.click()">
                 <Upload :size="24" class="upload-box-icon" aria-hidden="true" />
                 <span class="upload-box-text">Tirar foto do Tablet ou selecionar imagem</span>
