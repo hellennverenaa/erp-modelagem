@@ -47,11 +47,13 @@
 ### 26 — TASK-026: Remover indicadores de pausa da Torre e restringir interrupção de SLA por usuário
 **Estado: implementação entregue — validação funcional/manual pendente. Dependência: TASK-025 (PR #11).** A Torre não expõe mais o KPI de downtime, motivos de parada nem parada por lote; o payload `/dashboard/kpis` e os tipos foram reduzidos e as consultas de pausa removidas. O Lead Time, gargalos, ocorrências e cálculo de SLA em rastreamentos permanecem. A coluna individual `pode_interromper_sla` é administrada na aba Usuários, com escrita somente para `ADMIN_AUTOMACAO`, auditoria RBAC e verificação server-side baseada na conta autenticada. A interface de Bipagem só mostra o controle para contas autorizadas.
 
-**Evidências de validação:** `cd frontend && npm run build` e `cd backend && npm run build` concluídos; `git diff --check` sem erros; busca nos consumidores do dashboard sem referências aos campos e rótulos de pausa removidos. **Pendências:** validação funcional da API/interface com usuários autorizados e não autorizados; migration criada, mas não aplicada a banco; revisão visual no navegador não executada. Próximo passo: aplicar a migration no ambiente alvo e validar o fluxo de concessão, revogação e tentativa de pausa.
+**Evidências de validação:** `cd frontend && npm run build` e `cd backend && npm run build` concluídos; `git diff --check` sem erros; busca nos consumidores do dashboard sem referências aos campos e rótulos de pausa removidos. Em 2026-10-15, o estado inicial do banco PostgreSQL local configurado mostrou 18 de 19 migrations aplicadas; as migrations `1791980400000`, `1791980500000` e `1791980600000` já constavam no histórico do banco. A `1791980700000-AdicionaPermissaoIndividualPausarSla` foi executada com sucesso e commit transacional. A consulta final `migration:show` confirmou as 19 migrations aplicadas, sem pendências. O comando de preparação também concluiu a verificação/criação idempotente do schema `erp_modelagem` e da extensão `uuid-ossp`. **Pendências:** validação funcional da API/interface com usuários autorizados e não autorizados; revisão visual no navegador não executada. Próximo passo: validar o fluxo de concessão, revogação e tentativa de pausa.
 
-## Migrations criadas e pendentes de aplicação
+## Migrations relacionadas à TASK-026
 
-- `1791980400000-ConcedeConfiguracaoModeloAdminAutomacao`: concede a ação de configuração do modelo ao perfil de automação.
-- `1791980500000-HabilitaMatrizRbacDelegada`: habilita a permissão da Matriz no catálogo RBAC e para o perfil de automação.
-- `1791980600000-RemoveDataPrevistaProducao`: remove a coluna `data_prevista_producao` e os valores existentes, conforme autorizado.
-- `1791980700000-AdicionaPermissaoIndividualPausarSla`: adiciona `usuarios.pode_interromper_sla` com padrão negado para concessão individual da ação. Criada nesta entrega; ainda não aplicada.
+- `1791980400000-ConcedeConfiguracaoModeloAdminAutomacao`: aplicada no banco local; concede a ação de configuração do modelo ao perfil de automação.
+- `1791980500000-HabilitaMatrizRbacDelegada`: aplicada no banco local; habilita a permissão da Matriz no catálogo RBAC e para o perfil de automação.
+- `1791980600000-RemoveDataPrevistaProducao`: já aplicada no banco local antes desta execução; remove a coluna `data_prevista_producao` e os valores existentes.
+- `1791980700000-AdicionaPermissaoIndividualPausarSla`: aplicada nesta execução no banco local; adiciona `usuarios.pode_interromper_sla` como `boolean NOT NULL DEFAULT false`, deixando a pausa negada por padrão.
+
+O estado acima foi confirmado somente no PostgreSQL local apontado pela configuração desta sessão. Outros ambientes precisam de consulta e aplicação próprias; não foram acessados.
