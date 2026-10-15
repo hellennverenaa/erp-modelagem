@@ -662,7 +662,7 @@ async function carregarModelos() {
   if (props.isWizardMode || props.modeloId) return
   loadingModelos.value = true
   try {
-    const response = await api.get('/admin/modelos')
+    const response = await api.get('/rotas/modelos')
     modelos.value = response.data || []
   } catch (err) {
     console.error('[RouteBuilder] Falha ao carregar modelos:', err)

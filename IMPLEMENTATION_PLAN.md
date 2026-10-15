@@ -79,3 +79,8 @@ O estado acima foi confirmado somente no PostgreSQL local apontado pela configur
 ## Migration relacionada à TASK-028
 
 - `1791981000000-PersisteSlaNaRotaModelo`: adiciona `rota_modelo.sla_alvo_min` com padrão de 120 minutos e migra valores de SLA do snapshot/mapa de cada ordem para a versão correspondente da rota. Criada nesta entrega; ainda não aplicada em banco.
+
+### 29 — TASK-029: Listar modelos sem rota no Construtor de Rota
+**Estado: implementação entregue — validação funcional/manual pendente.** Separada a listagem do Construtor da listagem usada na criação de ordens. O novo `GET /rotas/modelos`, protegido pela permissão `TELA_CONSTRUTOR_ROTA`, retorna somente os campos necessários de todos os modelos ativos, sem filtrar ordens ou rotas. A tela individual usa esse endpoint; o carregamento da rota continua escopado à planta selecionada. O endpoint `/admin/modelos` mantém o filtro 1:1 para criação de ordens.
+
+**Evidências:** `cd backend && npm run build`, `cd frontend && npm run build` e `git diff --check` concluídos. Não há teste automatizado dedicado a essa listagem. **Pendências:** validar manualmente um modelo ativo sem rota, um modelo com ordem mas sem rota, um modelo com rota em outra planta, modelo inativo e acesso à listagem por usuário com e sem a permissão do Construtor. O endpoint de criação de ordens deve continuar omitindo modelos já vinculados a uma ordem.

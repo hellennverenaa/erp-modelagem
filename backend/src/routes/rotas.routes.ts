@@ -7,6 +7,29 @@ const rotasController = new RotasController();
 
 /**
  * @swagger
+ * /api/rotas/modelos:
+ *   get:
+ *     summary: Lista modelos ativos para configuração de rotas
+ *     description: Inclui modelos com ou sem ordem de teste e com ou sem rota cadastrada.
+ *     tags: [Rota]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de modelos ativos
+ *       401:
+ *         description: Não autorizado
+ *       403:
+ *         description: Acesso negado
+ */
+router.get(
+  '/modelos',
+  exigirAlgumaPermissao(['TELA_CONSTRUTOR_ROTA']),
+  rotasController.listarModelos,
+);
+
+/**
+ * @swagger
  * /api/rotas/{modeloId}:
  *   put:
  *     summary: Salva a rota de produção de um modelo em uma planta

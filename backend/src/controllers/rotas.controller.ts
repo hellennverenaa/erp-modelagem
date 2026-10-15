@@ -25,6 +25,24 @@ const salvarRotaSchema = z.object({
 });
 
 export class RotasController {
+  /** Lista modelos ativos para configuração de rotas, mesmo que já tenham ordem. */
+  public listarModelos = async (_req: Request, res: Response): Promise<Response> => {
+    try {
+      const modelos = await AppDataSource.getRepository(Modelo).find({
+        select: { id: true, nome: true, codigoProduto: true },
+        where: { ativo: true },
+        order: { nome: 'ASC' },
+      });
+      return res.json(modelos);
+    } catch (error) {
+      console.error('[RotasController.listarModelos] Erro ao listar modelos:', error);
+      return res.status(500).json({
+        error: 'Erro ao listar modelos para construção de rotas.',
+        code: 'MODEL_ROUTE_LIST_FAILED',
+      });
+    }
+  };
+
   /**
    * PUT /api/rotas/:modeloId
    * Salva (sobrescreve) a rota de produção de um modelo.
