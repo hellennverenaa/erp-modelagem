@@ -39,7 +39,7 @@ const ocorrenciasController = new OcorrenciasController();
  *                 example: "550e8400-e29b-41d4-a716-446655440000"
  *               tipoOcorrencia:
  *                 type: string
- *                 enum: [GARGALO_MAQUINA, FALTA_MATERIAL, PROBLEMA_QUALIDADE, BLOQUEIO_PROCESSO, ACIDENTE_TRABALHO, OUTRO]
+ *                 enum: [GARGALO_MAQUINA, FALTA_MATERIAL, PROBLEMA_QUALIDADE, BLOQUEIO_PROCESSO, ACIDENTE_TRABALHO, LIBERACAO_PARCIAL, AGUARDANDO_RESPOSTA_SUL, OUTRO]
  *                 example: "GARGALO_MAQUINA"
  *               gravidade:
  *                 type: string

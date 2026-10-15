@@ -57,3 +57,12 @@
 - `1791980700000-AdicionaPermissaoIndividualPausarSla`: aplicada nesta execução no banco local; adiciona `usuarios.pode_interromper_sla` como `boolean NOT NULL DEFAULT false`, deixando a pausa negada por padrão.
 
 O estado acima foi confirmado somente no PostgreSQL local apontado pela configuração desta sessão. Outros ambientes precisam de consulta e aplicação próprias; não foram acessados.
+
+### 27 — TASK-027: Ampliar categorias de gargalo e detalhar ocorrências do tipo Outro
+**Estado: implementação entregue — validação funcional/manual pendente. Dependência: TASK-026.** O formulário de Bipagem oferece `Liberação parcial` e `Aguardando resposta do Sul`. `OUTRO` mostra o campo condicional `Qual ocorrência?`, armazenado no `titulo` existente (limite de 200 caracteres); a descrição detalhada continua separada. O enum TypeScript, enum PostgreSQL e contrato Swagger foram atualizados, e o Dossiê apresenta rótulos legíveis para as novas categorias. Upload de evidências, identificação por crachá e autorização individual para interromper SLA permanecem preservados.
+
+**Evidências de validação:** `cd backend && npm run build`, `cd frontend && npm run build` e `git diff --check` concluídos. A migration `1791980800000-AdicionaTiposOcorrenciaProducao` foi aplicada no PostgreSQL local configurado e `migration:show` confirmou 20 de 20 migrations aplicadas. **Pendências:** validar manualmente na interface a seleção das categorias e o campo de `OUTRO`, além da gravação e leitura no Dossiê; nenhum teste automatizado dedicado existe no projeto. Outros ambientes não foram acessados nem migrados.
+
+## Migration relacionada à TASK-027
+
+- `1791980800000-AdicionaTiposOcorrenciaProducao`: aplicada somente no banco local; adiciona `LIBERACAO_PARCIAL` e `AGUARDANDO_RESPOSTA_SUL` ao enum PostgreSQL antes de `OUTRO`. O rollback recusa remover os valores quando já houver ocorrências usando-os.

@@ -83,6 +83,7 @@ const ocorrenciaForm = reactive({
   gravidade: 'MEDIA',
   interrompeSla: false
 })
+const isOutroTipoOcorrencia = computed(() => ocorrenciaForm.tipoOcorrencia === 'OUTRO')
 
 const fotoInputRef = ref<HTMLInputElement | null>(null)
 const fotoFile = ref<File | null>(null)
@@ -711,15 +712,28 @@ onMounted(async () => {
                 </div>
               </div>
 
-            <!-- Título -->
-            <div class="field-group">
+            <!-- O tipo Outro usa o título como descrição curta do tipo informado. -->
+            <div v-if="!isOutroTipoOcorrencia" class="field-group">
               <label for="modal-titulo" class="field-label">Titulo</label>
               <input
                 id="modal-titulo"
                 v-model="ocorrenciaForm.titulo"
                 type="text"
                 class="text-input"
+                maxlength="200"
                 placeholder="Ex: Faca quebrada na Atom A1"
+                required
+              />
+            </div>
+            <div v-else class="field-group">
+              <label for="modal-titulo-outro" class="field-label">Qual ocorrência?</label>
+              <input
+                id="modal-titulo-outro"
+                v-model="ocorrenciaForm.titulo"
+                type="text"
+                class="text-input"
+                maxlength="200"
+                placeholder="Descreva resumidamente a ocorrência"
                 required
               />
             </div>
@@ -748,6 +762,8 @@ onMounted(async () => {
                     <option value="PROBLEMA_QUALIDADE">Problema de Qualidade</option>
                     <option value="BLOQUEIO_PROCESSO">Bloqueio de Processo</option>
                     <option value="ACIDENTE_TRABALHO">Acidente de Trabalho</option>
+                    <option value="LIBERACAO_PARCIAL">Liberação parcial</option>
+                    <option value="AGUARDANDO_RESPOSTA_SUL">Aguardando resposta do Sul</option>
                     <option value="OUTRO">Outro</option>
                   </select>
                 </div>
