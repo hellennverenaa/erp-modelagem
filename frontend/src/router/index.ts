@@ -4,13 +4,13 @@ import LoginView from '../views/LoginView.vue'
 import { authStore } from '../api/auth.store'
 
 function dashboardStartPath(): string {
+  if (authStore.hasPermission('TELA_TORRE_CONTROLE')) return '/dashboard/gerencial'
   if (authStore.isAdminAutomacao.value || authStore.hasPermission('TELA_GESTAO_RBAC')) return '/dashboard/rbac'
 
   const user = authStore.user.value
 
   const preferredScreens = [
     ['TELA_GESTAO_ORDENS', '/dashboard/ordens'],
-    ['TELA_TORRE_CONTROLE', '/dashboard/gerencial'],
     ['TELA_BIPAGEM', '/dashboard/bipagem'],
     ['TELA_CATALOGO_MODELOS', '/dashboard/modelos'],
     ['TELA_CATALOGO_PECAS', '/dashboard/catalogo-pecas'],

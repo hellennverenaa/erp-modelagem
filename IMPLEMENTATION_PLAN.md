@@ -2,6 +2,11 @@
 
 ## Pontos pendentes
 
+### 28 — TASK-028: Priorizar Torre de Controle como tela inicial
+**Estado: implementação entregue — validação funcional/manual pendente. Dependências: nenhuma.** Ao entrar no dashboard, usuários com `TELA_TORRE_CONTROLE` são direcionados para `/dashboard/gerencial` antes das regras de RBAC e das demais telas preferenciais. A autorização da rota e os destinos para usuários sem essa permissão permanecem preservados. Alterado `frontend/src/router/index.ts`; sem alterações de API, permissões ou migrations.
+
+**Evidências de validação:** `cd frontend && npm run build` concluído; `git diff --check` sem erros. Não há framework automatizado configurado para o frontend. A validação funcional em navegador com usuários autorizados e sem acesso à Torre permanece pendente; nenhum teste funcional foi executado.
+
 ### 02 — TASK-002: Definir as regras de Bordado, Apoio e bifurcação
 **Estado: pendente.** Definir com o processo como Bordado e Apoio se relacionam na rota e na produção: substituição, paralelo ou subprocesso. Esclarecer como Serigrafia determina a bifurcação e a Conferência Inicial, preservando Navalha e Almoxarifado de Modelagem e mostrando Telas somente quando houver Serigrafia. A regra deve vir da rota, sem configuração duplicada na ordem.
 
