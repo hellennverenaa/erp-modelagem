@@ -4,7 +4,7 @@ import { AppDataSource } from '../config/database';
 import { Usuario } from '../entities/Usuario';
 import { Perfil } from '../entities/Perfil';
 import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
-import { obterPermissoesGlobais } from './rbac.service';
+import { obterPermissoesGlobais, usuarioPodeInterromperSla } from './rbac.service';
 import { Planta } from '../entities/Planta';
 
 export interface SsoLoginResult {
@@ -23,6 +23,7 @@ export interface SsoLoginResult {
     perfilId: string;
     perfilNome: string | null;
     permissoes: Record<string, boolean>;
+    podeInterromperSla: boolean;
     setorId: string | null;
     plantaId: string;
     gestorId: string | null;
@@ -321,6 +322,11 @@ export class AuthService {
     }
 
     const permissoes = await obterPermissoesGlobais(userLocal.perfilId);
+    const podeInterromperSla = await usuarioPodeInterromperSla(
+      userLocal.id,
+      userLocal.usuario,
+      userLocal.perfil?.nome,
+    );
 
     return {
       token,
@@ -338,6 +344,7 @@ export class AuthService {
         perfilId: userLocal.perfilId,
         perfilNome: userLocal.perfil?.nome || null,
         permissoes,
+        podeInterromperSla,
         setorId: userLocal.setorId,
         plantaId: userLocal.plantaId,
         gestorId: userLocal.gestorId,

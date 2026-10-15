@@ -19,7 +19,7 @@ export class DashboardController {
       const agora = new Date();
 
       // ==========================================
-      // KPI A: LEAD TIME ABSOLUTO + DOWNTIME + ORDENS EM ANDAMENTO
+      // KPI A: LEAD TIME ABSOLUTO + ORDENS EM ANDAMENTO
       // ==========================================
       // Inclui todos os status, exceto REPROVADO. Ordens recém-criadas também
       // devem aparecer no KPI enquanto aguardam material, conferência ou validação.
@@ -41,7 +41,6 @@ export class DashboardController {
         codigoBarras: string;
         tipoLote: string;
         leadTimeHoras: number;
-        downtimeHoras: number;
         modelo: string;
         marca: string;
         dataInicio: Date;
@@ -57,7 +56,6 @@ export class DashboardController {
                 codigoBarras: ordem.codigoBarras,
                 tipoLote: 'LOTE_PRINCIPAL', // Fallback assumido
                 leadTimeHoras: safeNum(tempoDecorridoMin / 60),
-                downtimeHoras: 0,
                 modelo: ordem.modelo?.nome ?? 'N/A',
                 marca: ordem.modelo?.marca?.nome ?? 'N/A',
                 dataInicio: ordem.dataInicio
@@ -79,8 +77,6 @@ export class DashboardController {
           if (trackings.length === 0) continue;
 
           let totalMinAbsoluto = 0;
-          let totalDowntimeMin = 0;
-
           for (const r of trackings) {
             if (r.dataSaida) {
               totalMinAbsoluto += r.tempoPermanenciaMin ?? 0;
@@ -88,25 +84,12 @@ export class DashboardController {
               const entrada = r.dataEntrada ?? r.createdAt;
               totalMinAbsoluto += Math.max(0, Math.floor((agora.getTime() - entrada.getTime()) / 60000));
             }
-
-            const occurrences = await AppDataSource
-              .getRepository(OcorrenciaProducao)
-              .createQueryBuilder('oc')
-              .where('oc.rastreamentoId = :rid', { rid: r.id })
-              .andWhere('oc.interrompeSla = :sla', { sla: true })
-              .getMany();
-
-            for (const oc of occurrences) {
-              const end = oc.dataResolucao?.getTime() ?? agora.getTime();
-              totalDowntimeMin += Math.max(0, Math.floor((end - oc.dataOcorrencia.getTime()) / 60000));
-            }
           }
 
           leadTimeResultados.push({
             codigoBarras: ordem.codigoBarras,
             tipoLote: tipo,
             leadTimeHoras: safeNum(totalMinAbsoluto / 60),
-            downtimeHoras: safeNum(totalDowntimeMin / 60),
             modelo: ordem.modelo?.nome ?? 'N/A',
             marca: ordem.modelo?.marca?.nome ?? 'N/A',
             dataInicio: ordem.dataInicio
@@ -127,52 +110,10 @@ export class DashboardController {
         ? lpList.slice(0, 5).reduce((s, c) => s + c.leadTimeHoras, 0) / Math.min(5, lpList.length)
         : 0;
 
-      // Downtime global de TODA a base ativa
-      const ocDowntime = await AppDataSource
-        .getRepository(OcorrenciaProducao)
-        .createQueryBuilder('oc')
-        .where('oc.interrompeSla = :sla', { sla: true })
-        .getMany();
-
-      let downtimeTotalMinGlobal = 0;
-      const motivosMap: Record<string, { minutos: number; quantidade: number }> = {};
-
-      const tipoRotulos: Record<string, string> = {
-        GARGALO_MAQUINA: 'Quebra / Parada de Máquina',
-        FALTA_MATERIAL: 'Falta de Insumos / Materiais',
-        PROBLEMA_QUALIDADE: 'Divergência de Qualidade',
-        BLOQUEIO_PROCESSO: 'Bloqueio de Processo',
-        ACIDENTE_TRABALHO: 'Acidente de Trabalho',
-        OUTRO: 'Outros Motivos'
-      };
-
-      for (const oc of ocDowntime) {
-        const end = oc.dataResolucao?.getTime() ?? agora.getTime();
-        const min = Math.max(0, Math.floor((end - oc.dataOcorrencia.getTime()) / 60000));
-        downtimeTotalMinGlobal += min;
-
-        const nomeMotivo = tipoRotulos[oc.tipoOcorrencia] ?? oc.titulo ?? 'Outros Motivos';
-        if (!motivosMap[nomeMotivo]) motivosMap[nomeMotivo] = { minutos: 0, quantidade: 0 };
-        motivosMap[nomeMotivo].minutos += min;
-        motivosMap[nomeMotivo].quantidade += 1;
-      }
-
-      const motivosParada = Object.entries(motivosMap).map(([motivo, d]) => ({
-        motivo,
-        minutos: d.minutos,
-        horas: safeNum(d.minutos / 60, 1),
-        quantidade: d.quantidade,
-        percentual: safeNum(downtimeTotalMinGlobal > 0 ? (d.minutos / downtimeTotalMinGlobal) * 100 : 0, 1)
-      }));
-      motivosParada.sort((a, b) => b.minutos - a.minutos);
-
       const kpiA = {
         totalOrdensAtivas: ordensAtivas.length, // Propriedade nova solicitada
         mediaCaixaTeste: safeNum(avgCT),
         mediaLotePrincipal: safeNum(avgLP),
-        downtimeTotalMin: downtimeTotalMinGlobal,
-        downtimeTotalHoras: safeNum(downtimeTotalMinGlobal / 60, 1),
-        motivosParada,
         grafico: leadTimeResultados.slice(0, 10)
       };
 

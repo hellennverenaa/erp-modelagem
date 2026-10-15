@@ -430,5 +430,6 @@ router.put('/permissoes', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RB
  *         description: Erro interno do servidor
  */
 router.put('/usuarios/:id/perfil', exigirAlgumaPermissaoOuAdminAutomacao(['TELA_GESTAO_RBAC']), adminController.updateUsuarioPerfil);
+router.patch('/usuarios/:id/permissao-pausa-sla', exigirAdminAutomacao, adminController.updateUsuarioPermissaoPausaSla);
 
 export default router;

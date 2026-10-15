@@ -37,6 +37,7 @@ interface User {
     id: string
     nome: string
   } | null
+  podeInterromperSla: boolean
 }
 
 interface Perfil {
@@ -95,6 +96,10 @@ function isContaAdminAutomacao(usuario: string) {
   return contasAdminAutomacao.has(usuario.trim().toLowerCase())
 }
 
+function isUsuarioAdminAutomacao(user: User) {
+  return user.perfil?.nome === 'ADMIN_AUTOMACAO' && isContaAdminAutomacao(user.usuario)
+}
+
 function isPerfilSistema(nome: string) {
   return ['ADMIN', 'VISUALIZADOR', 'ADMIN_AUTOMACAO'].includes(nome)
 }
@@ -112,6 +117,7 @@ const selectedPerfilId = ref<string>('')
 const manageableProfiles = computed(() => profiles.value.filter((profile) =>
   authStore.isAdminAutomacao.value || profile.nome !== 'ADMIN_AUTOMACAO',
 ))
+const isAdminAutomacao = computed(() => authStore.isAdminAutomacao.value)
 const selectableProfiles = computed(() => manageableProfiles.value.filter((profile) => profile.ativo))
 type WizardStep = 'telas' | 'globais' | 'setores' | 'revisao'
 const wizardSteps: Array<{ id: WizardStep; title: string; description: string }> = [
@@ -143,6 +149,7 @@ const auditError = ref('')
 const auditItems = ref<AuditEntry[]>([])
 const auditTotal = ref(0)
 const updatingUserProfile = ref<Record<string, boolean>>({})
+const updatingUserSlaPermission = ref<Record<string, boolean>>({})
 
 interface AuditEntry {
   id: string
@@ -341,6 +348,26 @@ async function alterarPerfilColaborador(usuarioId: string, event: Event) {
     await fetchUsers()
   } finally {
     updatingUserProfile.value[usuarioId] = false
+  }
+}
+
+async function alternarPermissaoPausaSla(user: User) {
+  if (!isAdminAutomacao.value || isUsuarioAdminAutomacao(user) || updatingUserSlaPermission.value[user.id]) return
+
+  updatingUserSlaPermission.value[user.id] = true
+  try {
+    const { data } = await api.patch(`/admin/usuarios/${user.id}/permissao-pausa-sla`, {
+      permitido: !user.podeInterromperSla,
+    })
+    user.podeInterromperSla = data.podeInterromperSla === true
+    showToast(user.podeInterromperSla
+      ? `Permissão para interromper o SLA concedida a ${user.nomeCompleto}.`
+      : `Permissão para interromper o SLA removida de ${user.nomeCompleto}.`)
+  } catch (error: any) {
+    showToast(error.response?.data?.error || 'Não foi possível atualizar a permissão de pausa do SLA.', 'error')
+    await fetchUsers()
+  } finally {
+    updatingUserSlaPermission.value[user.id] = false
   }
 }
 
@@ -710,12 +737,13 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                     <th>Setor Lotação</th>
                     <th>Planta Fabril</th>
                     <th class="text-center">Status</th>
+                    <th v-if="isAdminAutomacao" class="text-center">Pausar SLA</th>
                     <th class="text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="usersLoadError">
-                    <td colspan="8" class="table-empty" role="alert">{{ usersLoadError }}</td>
+                    <td :colspan="isAdminAutomacao ? 9 : 8" class="table-empty" role="alert">{{ usersLoadError }}</td>
                   </tr>
                   <tr v-for="user in filteredUsers" v-if="!usersLoadError" :key="user.id">
                     <td class="td-primary">
@@ -752,6 +780,22 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                         <span>{{ user.ativo ? 'Ativo' : 'Inativo' }}</span>
                       </span>
                     </td>
+                    <td v-if="isAdminAutomacao" class="text-center">
+                      <span v-if="isUsuarioAdminAutomacao(user)" class="text-xs font-medium text-slate-500">Permanente</span>
+                      <button
+                        v-else
+                        type="button"
+                        class="matrix-toggle"
+                        :class="{ 'matrix-toggle--active': user.podeInterromperSla }"
+                        role="switch"
+                        :aria-checked="user.podeInterromperSla"
+                        :aria-label="`${user.podeInterromperSla ? 'Revogar' : 'Conceder'} permissão de pausa do SLA para ${user.nomeCompleto}`"
+                        :disabled="updatingUserSlaPermission[user.id]"
+                        @click="alternarPermissaoPausaSla(user)"
+                      >
+                        <span class="matrix-toggle-thumb"></span>
+                      </button>
+                    </td>
                     <td class="text-center">
                       <button
                         type="button"
@@ -764,7 +808,7 @@ Depois: {{ JSON.stringify(entry.dadosNovos, null, 2) }}</pre>
                     </td>
                   </tr>
                   <tr v-if="!usersLoadError && filteredUsers.length === 0">
-                    <td colspan="8" class="table-empty">
+                    <td :colspan="isAdminAutomacao ? 9 : 8" class="table-empty">
                       Nenhum colaborador corresponde aos filtros de busca.
                     </td>
                   </tr>

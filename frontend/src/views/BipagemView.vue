@@ -90,6 +90,7 @@ const fotoPreview = ref<string | null>(null)
 
 // ─── 2. Computeds ──────────────────────────────────────────────────────────
 const user = computed(() => authStore.user.value)
+const podeInterromperSla = computed(() => authStore.podeInterromperSla.value)
 
 const podeEditarSetor = computed(() =>
   authStore.hasPermission('EDITAR_TELA_BIPAGEM') || authStore.hasPermission('ADMINISTRAR_BIPAGEM')
@@ -765,8 +766,8 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- Toggle Interromper SLA -->
-            <div class="toggle-row">
+            <!-- Apenas contas autorizadas podem solicitar a interrupção do SLA. -->
+            <div v-if="podeInterromperSla" class="toggle-row">
               <div class="toggle-info">
                 <span class="toggle-title">Interromper SLA (Pausar Relogio)</span>
                 <span class="toggle-desc">Pausa sistemicamente o SLA de permanencia neste setor</span>

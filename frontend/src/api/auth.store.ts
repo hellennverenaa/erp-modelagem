@@ -10,6 +10,7 @@ export interface UsuarioLogado {
   perfilId?: string
   perfilNome?: string | null
   permissoes?: Record<string, boolean>
+  podeInterromperSla?: boolean
   setorId?: string | null
   plantaId?: string | null
 }
@@ -31,6 +32,10 @@ const isAdminAutomacao = computed(() => {
   const usuario = user.value.usuario?.trim().toLowerCase()
   return perfil === 'ADMIN_AUTOMACAO' && !!usuario && contasAdminAutomacao.has(usuario)
 })
+
+const podeInterromperSla = computed(() =>
+  isAdminAutomacao.value || user.value?.podeInterromperSla === true,
+)
 
 // Avaliador de permissões dinâmicas (se tiver permissão global ou específica para a ação)
 function hasPermission(acao: string): boolean {
@@ -78,6 +83,7 @@ export const authStore = {
   token,
   user,
   isAdminAutomacao,
+  podeInterromperSla,
   hasPermission,
   refreshCurrentUser,
   login,

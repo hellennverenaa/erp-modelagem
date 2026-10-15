@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { io } from 'socket.io-client'
 import api, { getApiOrigin, getApiSocketPath } from '../api/axios'
 import DashboardGerencialMetrics from '../components/DashboardGerencialMetrics.vue'
-import type { FpySetor, GargaloItem, KpiAData, KpiCData, KpiDData, MotivoParada, RetrabalhoSetor } from '../types/dashboardGerencial'
+import type { FpySetor, GargaloItem, KpiAData, KpiCData, KpiDData, RetrabalhoSetor } from '../types/dashboardGerencial'
 import {
   Image as ImageIcon,
   X,
@@ -28,9 +28,6 @@ const kpiA = ref<KpiAData>({
   totalOrdensAtivas: 0,
   mediaCaixaTeste: 0,
   mediaLotePrincipal: 0,
-  downtimeTotalMin: 0,
-  downtimeTotalHoras: 0,
-  motivosParada: [],
   grafico: []
 })
 
@@ -67,20 +64,10 @@ async function fetchKpis() {
       totalOrdensAtivas: raw.kpiA?.totalOrdensAtivas ?? 0,
       mediaCaixaTeste: raw.kpiA?.mediaCaixaTeste ?? 0,
       mediaLotePrincipal: raw.kpiA?.mediaLotePrincipal ?? 0,
-      downtimeTotalMin: raw.kpiA?.downtimeTotalMin ?? 0,
-      downtimeTotalHoras: raw.kpiA?.downtimeTotalHoras ?? 0,
-      motivosParada: (raw.kpiA?.motivosParada ?? []).map((m: any): MotivoParada => ({
-        motivo: m.motivo ?? 'Desconhecido',
-        minutos: m.minutos ?? 0,
-        horas: m.horas ?? 0,
-        quantidade: m.quantidade ?? 0,
-        percentual: m.percentual ?? 0
-      })),
       grafico: (raw.kpiA?.grafico ?? []).map((g: any) => ({
         codigoBarras: g.codigoBarras ?? '',
         tipoLote: g.tipoLote ?? '',
         leadTimeHoras: g.leadTimeHoras ?? 0,
-        downtimeHoras: g.downtimeHoras ?? 0,
         modelo: g.modelo ?? '',
         marca: g.marca ?? '',
         dataInicio: g.dataInicio ?? ''
@@ -208,14 +195,6 @@ function formatHour(val: number | null | undefined) {
   return `${h}h ${m}min`
 }
 
-function formatMin(totalMin: number) {
-  if (!totalMin || totalMin <= 0) return '0min'
-  const h = Math.floor(totalMin / 60)
-  const m = totalMin % 60
-  if (h === 0) return `${m}min`
-  return `${h}h ${m}min`
-}
-
 function formatDate(d: string) {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
@@ -309,9 +288,9 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- Skeleton alinhado à arquitetura 4 / 8-4 / 5-7 -->
+      <!-- Skeleton alinhado à arquitetura 3 / 8-4 / 5-7 -->
       <div v-if="loading" class="grid grid-cols-1 gap-5 animate-pulse sm:grid-cols-2 lg:grid-cols-12" aria-label="Carregando indicadores">
-        <div v-for="item in 4" :key="'kpi-' + item" class="h-[210px] rounded-xl border border-slate-200/80 bg-white p-5 sm:col-span-1 lg:col-span-3">
+        <div v-for="item in 3" :key="'kpi-' + item" class="h-[210px] rounded-xl border border-slate-200/80 bg-white p-5 sm:col-span-1 lg:col-span-4">
           <div class="h-3 w-24 rounded bg-slate-200"></div>
           <div class="mt-6 h-8 w-28 rounded bg-slate-200"></div>
           <div class="mt-5 h-2 w-full rounded bg-slate-100"></div>
@@ -347,7 +326,6 @@ onUnmounted(() => {
         :kpi-c="kpiC"
         :kpi-d="kpiD"
         :format-hour="formatHour"
-        :format-min="formatMin"
         :format-date="formatDate"
         @abrir-galeria="abrirGaleria"
       />

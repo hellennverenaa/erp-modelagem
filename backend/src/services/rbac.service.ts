@@ -1,6 +1,8 @@
 import { In, IsNull } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
+import { Usuario } from '../entities/Usuario';
+import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 
 export async function obterPermissoesGlobais(perfilId: string): Promise<Record<string, boolean>> {
   const rows = await AppDataSource.getRepository(PerfilPermissao).find({
@@ -26,4 +28,19 @@ export async function perfilPossuiAlgumaPermissao(perfilId: string, acoes: strin
     select: { id: true },
   });
   return !!row;
+}
+
+export async function usuarioPodeInterromperSla(
+  userId: string,
+  usuario: string,
+  perfilNome?: string | null,
+): Promise<boolean> {
+  const perfilAdminAutomacao = perfilNome?.trim().toUpperCase() === PERFIL_ADMIN_AUTOMACAO;
+  if (perfilAdminAutomacao && ehUsuarioAdminAutomacao(usuario)) return true;
+
+  const user = await AppDataSource.getRepository(Usuario).findOne({
+    where: { id: userId, ativo: true },
+    select: { id: true, podeInterromperSla: true },
+  });
+  return user?.podeInterromperSla === true;
 }
