@@ -15,7 +15,7 @@ export interface PecaCorteInput {
 }
 
 const REQUIRED_TYPES = [
-  'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 'CORTE_RECEBIMENTO',
+  'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_RECEBIMENTO',
   'CORTE_SEPARACAO', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
   'CORTE_LECTRA', 'APOIO', 'COSTURA', 'MONTAGEM', 'LABORATORIO',
 ];
@@ -29,6 +29,11 @@ export class RouteIntegrityError extends Error {
     super(message);
     this.name = 'RouteIntegrityError';
   }
+}
+
+export interface RouteIntegrityOptions {
+  /** Permite a composição histórica da rota quando a ordem está presa a uma versão anterior. */
+  allowLegacyConditionalSectors?: boolean;
 }
 
 /** Serializa gravações de peças/rota e a finalização da configuração do modelo. */
@@ -45,6 +50,7 @@ export async function validateRouteIntegrity(
   rota: RotaEtapaInput[],
   pecas: PecaCorteInput[],
   plantaId?: string,
+  options: RouteIntegrityOptions = {},
 ): Promise<void> {
   if (rota.length === 0 || pecas.length === 0) {
     throw new RouteIntegrityError('Cadastre peças e construa a rota antes de criar a ordem.');
@@ -92,6 +98,9 @@ export async function validateRouteIntegrity(
   if (faltantes.length > 0) {
     throw new RouteIntegrityError(`A rota está incompleta. Setores ausentes: ${faltantes.join(', ')}.`);
   }
+  if (!options.allowLegacyConditionalSectors && tiposDaRota.has('TELAS') !== tiposDaRota.has('SERIGRAFIA')) {
+    throw new RouteIntegrityError('O setor Telas deve estar presente somente quando Serigrafia estiver ativa.');
+  }
   for (const tipo of CUT_TYPES) {
     if (tiposDaRota.has(tipo) !== tiposDasPecas.has(tipo)) {
       throw new RouteIntegrityError(`O sub-setor ${tipo} deve constar na rota somente quando tiver peças vinculadas.`);
@@ -107,7 +116,9 @@ export async function validatePersistedModelRoute(
 ): Promise<void> {
   const { etapas: rota } = await getPersistedModelRoute(manager, modeloId, plantaId, versao);
   const pecas = await manager.getRepository(Peca).find({ where: { modeloId } });
-  await validateRouteIntegrity(manager, rota, pecas, plantaId);
+  await validateRouteIntegrity(manager, rota, pecas, plantaId, {
+    allowLegacyConditionalSectors: versao !== undefined && versao !== null,
+  });
 }
 
 export async function getPersistedModelRoute(

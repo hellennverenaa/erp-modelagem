@@ -3,7 +3,9 @@
 ## Pontos pendentes
 
 ### 02 — TASK-002: Definir as regras de Bordado, Apoio e bifurcação
-**Estado: pendente.** Definir com o processo como Bordado e Apoio se relacionam na rota e na produção: substituição, paralelo ou subprocesso. Esclarecer como Serigrafia determina a bifurcação e a Conferência Inicial, preservando Navalha e Almoxarifado de Modelagem e mostrando Telas somente quando houver Serigrafia. A regra deve vir da rota, sem configuração duplicada na ordem.
+**Estado: em andamento.** Definir com o processo como Bordado e Apoio se relacionam na rota e na produção: substituição, paralelo ou subprocesso. Esclarecer como Serigrafia determina a bifurcação e a Conferência Inicial, preservando Navalha e Almoxarifado de Modelagem. A regra deve vir da rota, sem configuração duplicada na ordem.
+
+**Escopo concluído nesta entrega:** Incluir o setor Telas na Conferência Inicial somente quando Serigrafia estiver ativa em Setores Condicionais, tanto no Passo 4 do fluxo de criação quanto no Construtor de Rota individual. A migration normaliza novas versões de rotas existentes e preserva versões anteriores e snapshots. O restante da tarefa continua em andamento para definir as regras de Bordado, Apoio e bifurcação.
 
 ### 14 — TASK-014: Fazer o backend operacional executar a rota da ordem
 **Estado: pendente.** Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.

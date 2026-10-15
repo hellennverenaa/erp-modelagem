@@ -186,7 +186,7 @@ const fixedStart: RouteBlock = {
   tipo: 'fixo',
   icon: CheckCheck,
   color: '#1e40af',
-  description: 'Almoxarifado · Navalha · Telas',
+  description: 'Almoxarifado · Navalha',
 }
 
 const fixedMiddle: RouteBlock[] = [
@@ -224,6 +224,9 @@ const zonePosMontagem = ref<RouteBlock[]>([])
 // ─── Conditional toggles ─────────────────────────────────────────────────
 const toggleSerigrafia   = ref(false)
 const toggleVulcanizado  = ref(false)
+const fixedStartDescription = computed(() =>
+  toggleSerigrafia.value ? 'Almoxarifado · Navalha · Telas' : fixedStart.description,
+)
 
 // Toggles para as máquinas extras de corte
 const toggleCorteCN      = ref(false)
@@ -502,7 +505,9 @@ async function salvarRota() {
     ...zonePosMontagem.value,
   ]
   const nomesEsperados = [
-    'Almoxarifado da Modelagem', 'Navalha', 'Telas', 'Corte Recebimento',
+    'Almoxarifado da Modelagem', 'Navalha',
+    ...(toggleSerigrafia.value ? ['Telas'] : []),
+    'Corte Recebimento',
     'Corte Separação', 'Corte Dublagem', 'Corte Ponte', 'Corte Lectra',
     ...(maquinas.atom ? ['Corte Atom'] : []),
     ...(maquinas.cn ? ['Corte CN'] : []),
@@ -521,11 +526,13 @@ async function salvarRota() {
   const rotaSalvar: any[] = []
   let currentOrdem = 1
 
-  // 1. Conferência Inicial (Almoxarifado, Navalha, Telas) em paralelo
+  // 1. Conferência Inicial (Telas acompanha Serigrafia quando ativada)
   const confOrdem = currentOrdem
   rotaSalvar.push({ setorId: getId('Almoxarifado da Modelagem'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   rotaSalvar.push({ setorId: getId('Navalha'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
-  rotaSalvar.push({ setorId: getId('Telas'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (toggleSerigrafia.value) {
+    rotaSalvar.push({ setorId: getId('Telas'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  }
   currentOrdem++
 
   // 2. Corte Automático (Corte Recebimento, Corte Separação, Corte Dublagem)
@@ -1122,7 +1129,7 @@ defineExpose({
                 </div>
                 <div class="tl-block-text">
                   <span class="tl-block-name">{{ fixedStart.label }}</span>
-                  <span class="tl-block-sub">{{ fixedStart.description }}</span>
+                  <span class="tl-block-sub">{{ fixedStartDescription }}</span>
                 </div>
               </div>
               <div class="tl-block-right flex-row-layout">
