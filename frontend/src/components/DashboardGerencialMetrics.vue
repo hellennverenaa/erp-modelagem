@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, toRefs } from 'vue'
+import { computed, ref, toRefs, watch } from 'vue'
 import {
   Activity,
   Check,
@@ -20,10 +20,21 @@ const props = defineProps<{
   formatDate: (value: string) => string
 }>()
 const { kpiA, kpiB, kpiC, kpiD, formatHour, formatMin, formatDate } = toRefs(props)
+const activePointIndex = ref<number | null>(0)
+const leadTimeNumberFormatter = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 })
 
 const emit = defineEmits<{
   (event: 'abrir-galeria', fotos: string[]): void
 }>()
+
+watch(() => props.kpiA.grafico.length, quantidade => {
+  activePointIndex.value = quantidade > 0 ? 0 : null
+}, { immediate: true })
+
+const activeLeadTime = computed(() => {
+  const index = activePointIndex.value
+  return index === null ? null : props.kpiA.grafico[index] ?? null
+})
 
 const leadTimePoints = computed(() => {
   const values = props.kpiA.grafico
@@ -32,12 +43,24 @@ const leadTimePoints = computed(() => {
   const xEnd = 485
   const yTop = 18
   const yBottom = 78
+  const firstDate = Date.parse(values[0]?.dataInicio ?? '')
+  const lastDate = Date.parse(values[values.length - 1]?.dataInicio ?? '')
+  const newestFirst = Number.isFinite(firstDate) && Number.isFinite(lastDate)
+    ? firstDate >= lastDate
+    : true
 
   return values.map((item, index) => ({
     item,
-    x: xStart + (index / Math.max(1, values.length - 1)) * (xEnd - xStart),
+    x: newestFirst
+      ? xEnd - (index / Math.max(1, values.length - 1)) * (xEnd - xStart)
+      : xStart + (index / Math.max(1, values.length - 1)) * (xEnd - xStart),
     y: yBottom - (item.leadTimeHoras / maxValue) * (yBottom - yTop)
   }))
+})
+
+const activeLeadTimePoint = computed(() => {
+  const index = activePointIndex.value
+  return index === null ? null : leadTimePoints.value[index] ?? null
 })
 
 const leadTimePath = computed(() => leadTimePoints.value
@@ -75,7 +98,17 @@ function rotuloModelo(item: LeadTimeItem) {
 }
 
 function rotuloLeadTime(value: number) {
-  return (Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)) + 'h'
+  return leadTimeNumberFormatter.format(value) + 'h'
+}
+
+function rotuloParada(value: number) {
+  return leadTimeNumberFormatter.format(value) + 'h de parada'
+}
+
+function rotuloTipoLote(tipoLote: string) {
+  if (tipoLote === 'LOTE_PRINCIPAL') return 'Lote Principal'
+  if (tipoLote === 'CAIXA_TESTE') return 'Caixa Teste'
+  return tipoLote || 'Tipo de lote não informado'
 }
 
 function resumoGargalosPorSetorEGravidade() {
@@ -129,22 +162,20 @@ function tituloPonto(item: LeadTimeItem) {
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-xs font-semibold text-slate-500">WIP Total</p>
-          <p class="mt-1 text-[11px] text-slate-400">Ordens ativas</p>
+          <p class="mt-1 text-[11px] text-slate-400">Ordens ativas no fluxo de produção</p>
         </div>
-        <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">Em rota</span>
+        <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">Em acompanhamento</span>
       </div>
       <div class="mt-5 text-4xl font-bold tracking-tight text-slate-900 tabular-nums">{{ kpiA.totalOrdensAtivas }}</div>
-      <div class="mt-auto border-t border-slate-100 pt-3">
-        <div class="flex items-center gap-2 text-[11px] text-slate-500">
+      <div class="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+        <p class="text-[10px] leading-snug text-slate-500">Total de ordens ativas em acompanhamento</p>
+        <span class="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-indigo-700">
           <span class="relative flex h-2 w-2">
-            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-60"></span>
-            <span class="relative inline-flex h-2 w-2 rounded-full bg-indigo-600"></span>
+            <span v-if="kpiA.totalOrdensAtivas > 0" class="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-60"></span>
+            <span class="relative inline-flex h-2 w-2 rounded-full" :class="kpiA.totalOrdensAtivas > 0 ? 'bg-indigo-600' : 'bg-slate-300'"></span>
           </span>
-        {{ kpiA.totalOrdensAtivas }} {{ kpiA.totalOrdensAtivas === 1 ? 'ordem ativa registrada' : 'ordens ativas registradas' }}
-        </div>
-        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100" aria-label="Atividade de ordens em acompanhamento">
-          <div class="h-full w-full origin-left rounded-full bg-indigo-500/70 animate-pulse"></div>
-        </div>
+          {{ kpiA.totalOrdensAtivas > 0 ? 'Fluxo ativo' : 'Sem ordens ativas' }}
+        </span>
       </div>
     </section>
 
@@ -152,17 +183,17 @@ function tituloPonto(item: LeadTimeItem) {
     <section class="sm:col-span-1 lg:col-span-3 flex min-h-[210px] flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]" aria-label="Lead time da Caixa Teste">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <p class="text-xs font-semibold text-slate-500">Lead Time</p>
-          <p class="mt-1 text-[11px] text-slate-400">Caixa Teste</p>
+          <p class="text-xs font-semibold text-slate-700">Lead Time · Caixa Teste</p>
+          <p class="mt-1 text-[11px] leading-snug text-slate-400">Tempo médio de validação do modelo piloto</p>
         </div>
-        <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">Média atual</span>
+        <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">Lote Piloto</span>
       </div>
       <div class="mt-5 text-3xl font-bold tracking-tight text-slate-900 tabular-nums">{{ formatHour(kpiA.mediaCaixaTeste) }}</div>
       <div class="mt-auto pt-5">
-        <div class="h-2 overflow-hidden rounded-full bg-slate-100" :title="'Proporção em relação à maior média exibida'">
+        <div class="h-2 overflow-hidden rounded-full bg-slate-100" aria-label="Comparação visual entre os tempos médios dos dois tipos de lote">
           <div class="h-full rounded-full bg-indigo-600 transition-all duration-500" :style="{ width: larguraLeadTime(kpiA.mediaCaixaTeste) + '%' }"></div>
         </div>
-        <p class="mt-2 text-[10px] text-slate-400 tabular-nums">{{ Math.round(larguraLeadTime(kpiA.mediaCaixaTeste)) }}% da maior média atual</p>
+        <p class="mt-2 text-[10px] leading-snug text-slate-400">Média de até 5 caixas piloto mais recentes em acompanhamento</p>
       </div>
     </section>
 
@@ -170,17 +201,17 @@ function tituloPonto(item: LeadTimeItem) {
     <section class="sm:col-span-1 lg:col-span-3 flex min-h-[210px] flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] transition-all duration-200 hover:border-slate-300/90 hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]" aria-label="Lead time do Lote Principal">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <p class="text-xs font-semibold text-slate-500">Lead Time</p>
-          <p class="mt-1 text-[11px] text-slate-400">Lote Principal</p>
+          <p class="text-xs font-semibold text-slate-700">Lead Time · Lote Principal</p>
+          <p class="mt-1 text-[11px] leading-snug text-slate-400">Tempo médio do lote principal no fluxo de produção</p>
         </div>
-        <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">Média atual</span>
+        <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700">Produção em Escala</span>
       </div>
       <div class="mt-5 text-3xl font-bold tracking-tight text-slate-900 tabular-nums">{{ formatHour(kpiA.mediaLotePrincipal) }}</div>
       <div class="mt-auto pt-5">
-        <div class="h-2 overflow-hidden rounded-full bg-slate-100" :title="'Proporção em relação à maior média exibida'">
+        <div class="h-2 overflow-hidden rounded-full bg-slate-100" aria-label="Comparação visual entre os tempos médios dos dois tipos de lote">
           <div class="h-full rounded-full bg-indigo-600 transition-all duration-500" :style="{ width: larguraLeadTime(kpiA.mediaLotePrincipal) + '%' }"></div>
         </div>
-        <p class="mt-2 text-[10px] text-slate-400 tabular-nums">{{ Math.round(larguraLeadTime(kpiA.mediaLotePrincipal)) }}% da maior média atual</p>
+        <p class="mt-2 text-[10px] leading-snug text-slate-400">Média de até 5 lotes principais mais recentes em acompanhamento</p>
       </div>
     </section>
 
@@ -196,7 +227,7 @@ function tituloPonto(item: LeadTimeItem) {
             <PauseCircle :size="14" :class="kpiA.downtimeTotalMin > 0 ? 'text-rose-600' : 'text-slate-500'" />
             <p class="text-xs font-semibold text-slate-500">Downtime Acumulado</p>
           </div>
-          <p class="mt-1 text-[11px] text-slate-400">Paradas que pausaram o SLA</p>
+          <p class="mt-1 text-[11px] leading-snug text-slate-400">Tempo total de produção travada por problemas</p>
         </div>
         <span
           class="inline-flex h-8 min-w-8 items-center justify-center rounded-full border px-2 text-xs font-bold tabular-nums"
@@ -211,8 +242,9 @@ function tituloPonto(item: LeadTimeItem) {
         {{ kpiA.downtimeTotalHoras }}h
       </div>
       <div class="mt-auto border-t border-slate-100 pt-3 text-[11px]" :class="kpiA.downtimeTotalMin > 0 ? 'text-rose-700' : 'text-emerald-700'">
-        {{ kpiA.downtimeTotalMin > 0 ? kpiA.motivosParada.length + (kpiA.motivosParada.length === 1 ? ' motivo registrado' : ' motivos registrados') : 'Sem pausas de SLA' }}
-        <span class="ml-1 tabular-nums text-slate-500">· {{ formatMin(kpiA.downtimeTotalMin) }}</span>
+        {{ kpiA.downtimeTotalMin > 0
+          ? 'Total parado: ' + kpiA.downtimeTotalMin + ' min'
+          : 'Nenhuma parada que pausou SLA registrada (0 min)' }}
       </div>
     </section>
 
@@ -222,11 +254,12 @@ function tituloPonto(item: LeadTimeItem) {
         <div>
           <div class="flex items-center gap-2 text-indigo-600">
             <Activity :size="16" />
-            <span class="text-[10px] font-semibold uppercase tracking-[0.14em]">Telemetria do ciclo</span>
+            <span class="text-[10px] font-semibold uppercase tracking-[0.14em]">Acompanhamento da produção</span>
           </div>
           <h2 class="mt-1 text-lg font-semibold tracking-tight text-slate-900">Variação do Lead Time</h2>
+          <p class="mt-1 max-w-2xl text-[11px] leading-snug text-slate-500">Compare quantas horas cada modelo levou para atravessar o processo produtivo</p>
         </div>
-        <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-500">Ordens retornadas pela API</span>
+        <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-500">Últimos {{ kpiA.grafico.length }} lotes medidos</span>
       </div>
 
       <div v-if="kpiA.grafico.length > 1" class="pt-5">
@@ -235,7 +268,7 @@ function tituloPonto(item: LeadTimeItem) {
             viewBox="0 0 520 120"
             class="h-full w-full overflow-visible"
             role="img"
-            aria-label="Variação do lead time das ordens retornadas pela API"
+            aria-label="Variação do tempo dos lotes acompanhados na produção"
           >
             <defs>
               <linearGradient id="tc-lead-time-area" x1="0" y1="0" x2="0" y2="1">
@@ -252,23 +285,89 @@ function tituloPonto(item: LeadTimeItem) {
             <text x="2" y="81" fill="#94A3B8" font-size="9">0h</text>
             <path :d="leadTimeAreaPath" fill="url(#tc-lead-time-area)" />
             <path :d="leadTimePath" fill="none" stroke="#4F46E5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            <line
+              v-if="activeLeadTimePoint"
+              :x1="activeLeadTimePoint.x"
+              :x2="activeLeadTimePoint.x"
+              :y1="activeLeadTimePoint.y"
+              y2="78"
+              stroke="#6366F1"
+              stroke-width="1.5"
+              stroke-dasharray="3 4"
+              pointer-events="none"
+            />
             <g v-for="(point, index) in leadTimePoints" :key="point.item.codigoBarras + '-' + index">
-              <circle :cx="point.x" :cy="point.y" r="8" fill="#4F46E5" fill-opacity="0.12" />
+              <circle v-if="activePointIndex === index" :cx="point.x" :cy="point.y" r="12" fill="#4F46E5" fill-opacity="0.16" class="animate-pulse" pointer-events="none" />
+              <circle :cx="point.x" :cy="point.y" r="8" fill="#4F46E5" fill-opacity="0.12" pointer-events="none" />
               <text :x="point.x" :y="Math.max(10, point.y - 8)" text-anchor="middle" fill="#4338CA" font-size="9" font-weight="600" class="tabular-nums">{{ rotuloLeadTime(point.item.leadTimeHoras) }}</text>
               <circle :cx="point.x" :cy="point.y" r="3.5" fill="#FFFFFF" stroke="#4F46E5" stroke-width="2.5" tabindex="0">
                 <title>{{ tituloPonto(point.item) }}</title>
               </circle>
-              <text :x="point.x" y="101" text-anchor="middle" fill="#64748B" font-size="8.5" font-weight="500">{{ rotuloModelo(point.item) }}</text>
+              <text :x="point.x" y="101" text-anchor="middle" fill="#64748B" font-size="8.5" font-weight="500" pointer-events="none">{{ rotuloModelo(point.item) }}</text>
+              <circle
+                :cx="point.x"
+                :cy="point.y"
+                r="18"
+                fill="transparent"
+                class="cursor-pointer"
+                role="button"
+                tabindex="0"
+                :aria-label="'Selecionar ciclo de ' + rotuloModelo(point.item) + ', ' + rotuloLeadTime(point.item.leadTimeHoras)"
+                @mouseenter="activePointIndex = index"
+                @focus="activePointIndex = index"
+                @click="activePointIndex = index"
+                @keydown.enter.prevent="activePointIndex = index"
+                @keydown.space.prevent="activePointIndex = index"
+              >
+                <title>{{ tituloPonto(point.item) }}</title>
+              </circle>
             </g>
           </svg>
         </div>
-        <p class="mt-2 text-[10px] text-slate-400">Passe o cursor ou foque um ponto para consultar os dados do ciclo.</p>
+        <div class="mt-1 flex items-center justify-between text-[10px] font-medium text-slate-400">
+          <span>← Mais antigos</span>
+          <span>Mais recentes →</span>
+        </div>
       </div>
       <div v-else class="flex min-h-52 flex-col items-center justify-center gap-2 text-center">
         <Activity :size="20" class="text-slate-300" />
-        <p class="text-sm font-medium text-slate-500">Dados insuficientes para exibir a variação.</p>
-        <p class="text-[11px] text-slate-400">O gráfico requer mais de um registro retornado pela API.</p>
+        <p class="text-sm font-medium text-slate-500">
+          {{ kpiA.grafico.length === 1 ? 'Há um lote acompanhado, mas ainda não há outro para comparar.' : 'Ainda não há lotes medidos para exibir.' }}
+        </p>
       </div>
+
+      <article v-if="activeLeadTime" class="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4" aria-live="polite" aria-label="Detalhes do lote selecionado">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-[9px] font-semibold uppercase tracking-[0.12em] text-indigo-600">Lote selecionado</p>
+            <h3 class="mt-1 truncate text-sm font-semibold text-slate-900">
+              {{ activeLeadTime.modelo || 'Modelo não informado' }}
+              <span v-if="activeLeadTime.marca" class="font-medium text-slate-500">· {{ activeLeadTime.marca }}</span>
+            </h3>
+          </div>
+          <span class="shrink-0 rounded-full border border-indigo-100 bg-white px-2.5 py-1 text-[10px] font-semibold text-indigo-700">
+            {{ rotuloTipoLote(activeLeadTime.tipoLote) }}
+          </span>
+        </div>
+        <div class="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+          <div class="min-w-0">
+            <p class="text-[9px] font-medium text-slate-500">Código / OP</p>
+            <p class="mt-0.5 truncate text-[11px] font-semibold text-slate-800 tabular-nums" :title="activeLeadTime.codigoBarras">{{ activeLeadTime.codigoBarras || 'Não informado' }}</p>
+          </div>
+          <div>
+            <p class="text-[9px] font-medium text-slate-500">Tempo de ciclo</p>
+            <p class="mt-0.5 text-[11px] font-semibold text-slate-800 tabular-nums">{{ rotuloLeadTime(activeLeadTime.leadTimeHoras) }}</p>
+          </div>
+          <div>
+            <p class="text-[9px] font-medium text-slate-500">Parada de SLA</p>
+            <p class="mt-0.5 text-[11px] font-semibold text-slate-800 tabular-nums">{{ rotuloParada(activeLeadTime.downtimeHoras) }}</p>
+          </div>
+          <div>
+            <p class="text-[9px] font-medium text-slate-500">Início do ciclo</p>
+            <p class="mt-0.5 text-[11px] font-semibold text-slate-800 tabular-nums">{{ formatDate(activeLeadTime.dataInicio) }}</p>
+          </div>
+        </div>
+      </article>
     </section>
 
     <!-- Saúde Operacional · 4 colunas -->
@@ -290,7 +389,7 @@ function tituloPonto(item: LeadTimeItem) {
 
           <p v-if="kpiB.length === 0" class="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-800">
             <Check :size="14" class="shrink-0" />
-            Nenhum gargalo ativo registrado
+            Setores livres — nenhum lote travado aguardando liberação
           </p>
           <div v-else>
             <div class="mb-3 space-y-2">
@@ -339,12 +438,14 @@ function tituloPonto(item: LeadTimeItem) {
         <section class="p-5">
           <div class="mb-3 flex items-center justify-between gap-2">
             <h3 class="text-xs font-semibold text-slate-800">Motivos de Parada</h3>
-            <span class="text-[9px] font-medium uppercase tracking-wide text-slate-400">Histórico acumulado</span>
+            <span v-if="kpiA.motivosParada.length > 0" class="text-[9px] font-medium text-slate-400 tabular-nums">
+              {{ kpiA.motivosParada.length }} {{ kpiA.motivosParada.length === 1 ? 'motivo' : 'motivos' }}
+            </span>
           </div>
 
           <p v-if="kpiA.motivosParada.length === 0" class="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-800">
             <Check :size="14" class="shrink-0" />
-            Sem registros de parada no histórico consultado
+            Nenhuma interrupção de SLA registrada nos lotes
           </p>
           <div v-else class="max-h-56 space-y-3 overflow-y-auto pr-1">
             <div v-for="item in kpiA.motivosParada" :key="item.motivo">
@@ -375,6 +476,7 @@ function tituloPonto(item: LeadTimeItem) {
           <div>
             <p class="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Qualidade fabril</p>
             <h2 class="mt-1 text-base font-semibold tracking-tight text-slate-900">First Pass Yield (FPY)</h2>
+            <p class="mt-1 max-w-xs text-[10px] leading-snug text-slate-500">Percentual de peças aprovadas de primeira (sem precisar de conserto)</p>
           </div>
         </div>
         <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[9px] text-slate-500">Ciclo monitorado</span>
@@ -431,10 +533,10 @@ function tituloPonto(item: LeadTimeItem) {
           </span>
           <div>
             <p class="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">{{ kpiC.totalInspecoes }}</p>
-            <p class="text-[10px] leading-snug text-slate-500">{{ kpiC.totalInspecoes === 1 ? 'inspeção considerada' : 'inspeções consideradas' }}</p>
+            <p class="text-[10px] leading-snug text-slate-500">{{ kpiC.totalInspecoes === 1 ? 'inspeção de saída registrada' : 'inspeções de saída registradas' }}</p>
           </div>
           <p class="text-[10px] leading-snug text-slate-400">
-            {{ fpySemDados ? 'Aguardando inspeções consideradas no ciclo.' : 'Qualidade aprovada na primeira inspeção.' }}
+            {{ fpySemDados ? 'Ainda não há inspeções de saída de setor registradas.' : 'Aprovação na primeira inspeção de saída.' }}
           </p>
         </div>
       </div>
@@ -468,6 +570,7 @@ function tituloPonto(item: LeadTimeItem) {
           <div>
             <p class="text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700">Histórico acumulado</p>
             <h2 class="mt-1 text-base font-semibold tracking-tight text-slate-900">Índice de Retrabalho por Setor de Origem</h2>
+            <p class="mt-1 max-w-xl text-[10px] leading-snug text-slate-500">Setores que originaram defeitos ou necessidade de refazer a peça</p>
           </div>
         </div>
         <span class="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600 tabular-nums">
@@ -482,14 +585,14 @@ function tituloPonto(item: LeadTimeItem) {
           </span>
           <div>
             <p class="text-xs font-semibold text-emerald-800">Monitoramento estável</p>
-            <p class="mt-0.5 text-[10px] text-emerald-700">Nenhum caso retornado no histórico consultado.</p>
+            <p class="mt-0.5 text-[10px] text-emerald-700">Nenhuma peça precisou voltar para conserto nos setores.</p>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="rounded-lg border border-slate-200/80 bg-slate-50/70 px-4 py-3">
             <p class="text-[10px] font-medium text-slate-500">Ocorrências</p>
             <p class="mt-1 text-2xl font-bold tracking-tight text-slate-900 tabular-nums">0</p>
-            <p class="text-[9px] text-slate-400">no histórico</p>
+            <p class="text-[9px] text-slate-400">registradas</p>
           </div>
           <div class="rounded-lg border border-slate-200/80 bg-slate-50/70 px-4 py-3">
             <p class="text-[10px] font-medium text-slate-500">Reprocessamento</p>

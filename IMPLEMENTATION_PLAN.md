@@ -39,6 +39,11 @@
 
 **Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros. Não foi possível iniciar o servidor Vite para inspeção visual: o sandbox bloqueou a abertura de `127.0.0.1:5173` (`EPERM`). A verificação visual responsiva em desktop/mobile permanece pendente; nenhum teste funcional foi executado.
 
+### 25 — TASK-025: Tornar o gráfico do Lead Time interativo e simplificar os rótulos
+**Estado: implementação entregue — validação visual/interativa pendente. Dependência: TASK-024.** `DashboardGerencialMetrics.vue` agora seleciona o ciclo mais recente inicialmente, oferece área de interação mouse/teclado nos pontos do SVG e mostra os detalhes do lote selecionado em cartão HTML. O eixo respeita a ordem cronológica real retornada pelo backend, com os lotes mais antigos à esquerda. Os rótulos técnicos foram substituídos por linguagem de chão de fábrica compatível com o escopo atual das consultas: WIP conta ordens não reprovadas, médias usam até cinco ciclos recentes em acompanhamento, downtime não é filtrado por gravidade e FPY considera inspeções de saída de setor. Endpoint, WebSocket, galeria e cálculos do backend permanecem preservados. Sem mudanças no backend ou migrations.
+
+**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros; busca pelos rótulos técnicos substituídos sem ocorrências. A interação visual do hover, teclado e card de detalhes ainda precisa ser confirmada no navegador; nenhum teste funcional foi executado.
+
 ## Migrations criadas e pendentes de aplicação
 
 - `1791980400000-ConcedeConfiguracaoModeloAdminAutomacao`: concede a ação de configuração do modelo ao perfil de automação.
