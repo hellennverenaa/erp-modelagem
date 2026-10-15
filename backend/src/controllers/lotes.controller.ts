@@ -200,7 +200,10 @@ export class LotesController {
 
         await validatePersistedModelRoute(manager, atual.modeloId, atual.plantaId);
         const { versao, etapas } = await getPersistedModelRoute(manager, atual.modeloId, atual.plantaId);
-        const slasPorSetor = parsed.data.slasPorSetor || {};
+        const slasPorSetor = { ...(parsed.data.slasPorSetor || {}) };
+        for (const etapa of etapas) {
+          slasPorSetor[etapa.setorId] = etapa.slaAlvoMin;
+        }
 
         atual.rotaVersao = versao;
         atual.rotaSnapshot = {
@@ -452,6 +455,9 @@ export class LotesController {
         });
       }
       await validatePersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
+      const { etapas } = await getPersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
+      const slasDaRota = Object.fromEntries(etapas.map((etapa) => [etapa.setorId, etapa.slaAlvoMin]));
+      const slasDaOrdem = { ...slasDaRota, ...(slasPorSetor || {}) };
 
       const lote = loteRepo.create({
         modeloId,
@@ -464,7 +470,7 @@ export class LotesController {
         liberadoProducao: false,
         possuiCaixaTeste,
         observacoes: observacoes || null,
-        slasPorSetor: slasPorSetor || null,
+        slasPorSetor: slasDaOrdem,
       });
 
       const savedLote = await loteRepo.save(lote);
@@ -645,19 +651,21 @@ export class LotesController {
 
       // SLA Efetivo Anterior
       const slasAnterioresEfetivos: Record<string, number> = {};
-      if (lote.slasPorSetor && Object.keys(lote.slasPorSetor).length > 0) {
+      if (lote.slasPorSetor != null) {
         Object.assign(slasAnterioresEfetivos, lote.slasPorSetor);
+      } else if (lote.rotaSnapshot?.slasPorSetor != null) {
+        Object.assign(slasAnterioresEfetivos, lote.rotaSnapshot.slasPorSetor);
       } else {
         const modeloSlaMap = (lote.modelo as any)?.slasPorSetor;
         if (modeloSlaMap && typeof modeloSlaMap === 'object') {
           Object.assign(slasAnterioresEfetivos, modeloSlaMap);
-        } else if (Array.isArray(lote.modelo?.rotas)) {
-          for (const r of lote.modelo!.rotas!.filter((rota) => rota.plantaId === lote!.plantaId)) {
-            const key = r.setor?.id || r.setorId || r.setor?.nome;
-            if (key) {
-              slasAnterioresEfetivos[key] = (r as any).tempoSla || (r as any).tempo_sla || 0;
-            }
-          }
+        }
+        const rotasDaPlanta = (lote.modelo?.rotas || []).filter((rota) => rota.plantaId === lote!.plantaId);
+        const versaoRota = lote.rotaVersao ?? rotasDaPlanta.reduce((maior, rota) => Math.max(maior, rota.versao || 1), 0);
+        for (const rota of rotasDaPlanta.filter((item) => (item.versao || 1) === versaoRota)) {
+          const key = rota.setor?.id || rota.setorId || rota.setor?.nome;
+          const valor = Number((rota as any).slaAlvoMin ?? (rota as any).tempoSla ?? (rota as any).tempo_sla ?? 0);
+          if (key && Number.isFinite(valor)) slasAnterioresEfetivos[key] = valor;
         }
       }
 

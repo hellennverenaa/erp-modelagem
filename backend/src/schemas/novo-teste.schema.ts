@@ -24,7 +24,7 @@ export const finalizarNovoTesteSchema = z.object({
     prioridadePcp: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'URGENTE']),
     possuiCaixaTeste: z.boolean().default(false),
     observacoes: z.string().nullable().optional(),
-    slasPorSetor: z.record(z.string(), z.number().nonnegative()).nullable().optional(),
+    slasPorSetor: z.record(z.string(), z.number().int().nonnegative()).nullable().optional(),
   }),
 }).superRefine((data, ctx) => {
   const catalogoIds = data.pecas.map((peca) => peca.catalogoPecaId);

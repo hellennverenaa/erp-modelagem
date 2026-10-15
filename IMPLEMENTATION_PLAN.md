@@ -68,3 +68,14 @@ O estado acima foi confirmado somente no PostgreSQL local apontado pela configur
 ## Migration relacionada à TASK-027
 
 - `1791980800000-AdicionaTiposOcorrenciaProducao`: aplicada somente no banco local; adiciona `LIBERACAO_PARCIAL` e `AGUARDANDO_RESPOSTA_SUL` ao enum PostgreSQL antes de `OUTRO`. O rollback recusa remover os valores quando já houver ocorrências usando-os.
+
+### 28 — TASK-028: Persistir SLA da rota e iniciar o tempo na entrada do setor
+**Estado: implementação entregue — validação funcional/manual pendente. Relação: entrega parcial relacionada à TASK-016.** Persistir o prazo em minutos em cada etapa/versionamento da rota, carregar o valor salvo no Construtor de Rota e disponibilizá-lo para a TV por meio do mapa congelado na ordem/snapshot ou da rota vinculada. O tempo exibido usa `dataEntrada` do rastreamento; etapas sintéticas sem uma entrada registrada permanecem aguardando, sem contador nem atraso.
+
+**Entrega:** `RotaModelo.slaAlvoMin` guarda o prazo da etapa e a migration backfill lê mapas de ordens/snapshots para a versão correspondente, usando 120 minutos quando não há valor histórico. O controller de rotas salva o mapa recebido; o Construtor de Rota hidrata os valores ao reabrir o modelo. Os fluxos de finalização/criação da ordem copiam os SLAs da rota para o mapa por ordem, e o fluxo de manutenção preserva os overrides existentes. A TV prioriza mapa da ordem, depois snapshot e por fim o SLA da rota; não inicia o contador para a Conferência Inicial sintética. `dataEntrada` real continua vindo do rastreamento persistido.
+
+**Evidências:** `cd backend && npm run build` e `cd frontend && npm run build` concluídos; `git diff --check` sem erros. Não há teste automatizado dedicado a SLA/TV e o `npm test` do backend é placeholder; não foi executado. A migration foi criada, mas não aplicada. **Pendências:** validar salvar/reabrir uma rota, finalizar uma ordem e conferir na TV a contagem antes/depois de refresh, atraso e espera por entrada; conferir também os dados após aplicar a migration no banco alvo.
+
+## Migration relacionada à TASK-028
+
+- `1791981000000-PersisteSlaNaRotaModelo`: adiciona `rota_modelo.sla_alvo_min` com padrão de 120 minutos e migra valores de SLA do snapshot/mapa de cada ordem para a versão correspondente da rota. Criada nesta entrega; ainda não aplicada em banco.

@@ -32,7 +32,7 @@ interface RastreamentoItem {
   operadorSaida?: { id: string; nomeCompleto?: string; usuario?: string; email?: string }
   tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL'
   status: string
-  dataEntrada: string
+  dataEntrada: string | null
   dataSaida?: string | null
   tempoPermanenciaMin?: number | null
   ocorrencias?: Array<{
@@ -50,7 +50,7 @@ interface NodeTrackItem {
   key: string
   setorId: string
   nome: string
-  dataEntrada: string
+  dataEntrada: string | null
   dataSaida?: string | null
   status: string
   ordem: number
@@ -77,13 +77,14 @@ interface OrdemOP {
   status: string
   possuiCaixaTeste: boolean
   slasPorSetor?: Record<string, number> | null
+  rotaSnapshot?: { slasPorSetor?: Record<string, number> | null } | null
   modelo?: {
     id: string
     nome: string
     referencia?: string
     codigoProduto?: string
     dataCorte?: string | null
-    rotas?: Array<{ setorId?: string; setor?: { id: string }; ordem: number }>
+    rotas?: Array<{ setorId?: string; setor?: { id: string; nome?: string }; ordem: number; slaAlvoMin?: number | null }>
   }
   planta?: { id: string; nome: string }
   historico: RastreamentoItem[]
@@ -157,8 +158,8 @@ function sortNodesByRoute(nodes: NodeTrackItem[], rotasModelo: Array<{ setorId?:
       return orderA - orderB
     }
 
-    const dateA = new Date(a.dataEntrada).getTime()
-    const dateB = new Date(b.dataEntrada).getTime()
+    const dateA = a.dataEntrada ? new Date(a.dataEntrada).getTime() : 0
+    const dateB = b.dataEntrada ? new Date(b.dataEntrada).getTime() : 0
     return dateA - dateB
   })
 }
@@ -230,9 +231,10 @@ function formatEstacao(nome: string | null | undefined): string {
 }
 
 function getElapsedTimeInfo(node: NodeTrackItem) {
-  if (!node.dataEntrada) return { text: '0m 0s', isOverdue: false, totalMins: 0 }
+  if (!node.dataEntrada) return { text: 'Aguardando entrada', isOverdue: false, totalMins: 0 }
 
   const entryDate = new Date(node.dataEntrada).getTime()
+  if (!Number.isFinite(entryDate)) return { text: 'Aguardando entrada', isOverdue: false, totalMins: 0 }
   const diffMs = now.value.getTime() - entryDate
   if (diffMs <= 0) return { text: '0m 0s', isOverdue: false, totalMins: 0 }
 
@@ -266,8 +268,32 @@ async function fetchOrdensEPosicoes() {
 
     const ordensProcessadas: OrdemOP[] = ordensAtivas.map((ordem) => {
       const hist: RastreamentoItem[] = ordem.rastreamentos || []
-      const slasMap: Record<string, number> = ordem.slasPorSetor || {}
       const rotasModelo = (ordem.modelo as any)?.rotas || (ordem.modelo as any)?.rota_modelo || []
+      const slasDaRota: Record<string, number> = {}
+      for (const etapa of rotasModelo) {
+        const slaAlvoMin = etapa.slaAlvoMin ?? etapa.sla_alvo_min
+        if (slaAlvoMin == null || !Number.isFinite(Number(slaAlvoMin))) continue
+        const setorId = etapa.setorId || etapa.setor?.id
+        const setorNome = etapa.setor?.nome || etapa.setorNome
+        if (setorId) slasDaRota[setorId] = Number(slaAlvoMin)
+        if (setorNome) slasDaRota[setorNome] = Number(slaAlvoMin)
+      }
+      const ordemQualquer: any = ordem
+      const snapshot = ordem.rotaSnapshot || ordemQualquer.rota_snapshot
+      const slasSnapshot = snapshot?.slasPorSetor || snapshot?.slas_por_setor || {}
+      const slasOrdem = ordem.slasPorSetor || ordemQualquer.slas_por_setor || {}
+      const mapaSlaDaOrdem = ordem.slasPorSetor ?? ordemQualquer.slas_por_setor
+      const mapaSlaDoSnapshot = snapshot?.slasPorSetor ?? snapshot?.slas_por_setor
+      const slasMap: Record<string, number> = mapaSlaDaOrdem != null
+        ? slasOrdem
+        : mapaSlaDoSnapshot != null
+          ? slasSnapshot
+          : slasDaRota
+      const getSlaAlvoMin = (setorId: string, setorNome?: string | null): number | null => {
+        const raw = slasMap[setorId] ?? (setorNome ? slasMap[setorNome] : undefined)
+        const value = Number(raw)
+        return raw != null && Number.isFinite(value) && value > 0 ? value : null
+      }
 
       if (ordem.status === 'AGUARDANDO_MODELAGEM') {
         return {
@@ -303,7 +329,7 @@ async function fetchOrdensEPosicoes() {
         status: h.status,
         ordem: 1,
         tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
-        slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
+        slaAlvoMin: getSlaAlvoMin(h.setorId, h.setor?.nome),
         bipagemApenasSaida: h.setor?.bipagemApenasSaida || false,
         operadorEntradaNome: h.operadorEntrada?.nomeCompleto || h.operadorEntrada?.usuario || null,
         operadorSaidaNome: h.operadorSaida?.nomeCompleto || h.operadorSaida?.usuario || null,
@@ -320,7 +346,7 @@ async function fetchOrdensEPosicoes() {
         status: h.status,
         ordem: 1,
         tempoPermanenciaMin: h.tempoPermanenciaMin ?? null,
-        slaAlvoMin: slasMap[h.setorId] ? Number(slasMap[h.setorId]) : null,
+        slaAlvoMin: getSlaAlvoMin(h.setorId, h.setor?.nome),
         bipagemApenasSaida: h.setor?.bipagemApenasSaida || false,
         operadorEntradaNome: h.operadorEntrada?.nomeCompleto || h.operadorEntrada?.usuario || null,
         operadorSaidaNome: h.operadorSaida?.nomeCompleto || h.operadorSaida?.usuario || null,
@@ -333,11 +359,11 @@ async function fetchOrdensEPosicoes() {
           key: `cx-${ordem.id}-init`,
           setorId: 'init',
           nome: 'Conferência Inicial',
-          dataEntrada: new Date().toISOString(),
+          dataEntrada: null,
           status: 'EM_PROCESSO',
           ordem: 1,
           tempoPermanenciaMin: null,
-          slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
+          slaAlvoMin: getSlaAlvoMin('init', 'Conferência Inicial'),
           bipagemApenasSaida: false,
           operadorEntradaNome: null,
           operadorSaidaNome: null,
@@ -351,11 +377,11 @@ async function fetchOrdensEPosicoes() {
           key: `lp-${ordem.id}-init`,
           setorId: 'init',
           nome: 'Conferência Inicial',
-          dataEntrada: new Date().toISOString(),
+          dataEntrada: null,
           status: 'EM_PROCESSO',
           ordem: 1,
           tempoPermanenciaMin: null,
-          slaAlvoMin: slasMap['init'] ? Number(slasMap['init']) : null,
+          slaAlvoMin: getSlaAlvoMin('init', 'Conferência Inicial'),
           bipagemApenasSaida: false,
           operadorEntradaNome: null,
           operadorSaidaNome: null,

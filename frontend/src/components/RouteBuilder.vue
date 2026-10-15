@@ -700,6 +700,8 @@ async function carregarRotaDoModelo(modeloId: string) {
   if (!modeloId || !plantaEfetivaId.value) return
 
   // Reset temporário antes de carregar
+  sectorSlaMap.value = {}
+  sectorSlaConfigMap.value = {}
   zoneAntesApoio.value = []
   zoneJuntoApoio.value = []
   zoneEntreApoioCostura.value = []
@@ -725,6 +727,13 @@ async function carregarRotaDoModelo(modeloId: string) {
     await carregarMaquinasDoModelo(modeloId)
     const response = await api.get(`/rotas/${modeloId}`, { params: { plantaId: plantaEfetivaId.value } })
     const rotaData = response.data?.rota || []
+
+    for (const etapa of rotaData) {
+      const slaAlvoMin = Number(etapa.slaAlvoMin)
+      if (etapa.setorId && etapa.slaAlvoMin != null && Number.isFinite(slaAlvoMin)) {
+        sectorSlaMap.value[etapa.setorId] = slaAlvoMin
+      }
+    }
 
     if (rotaData.length === 0) return // Não tem rota, usa inicial
 

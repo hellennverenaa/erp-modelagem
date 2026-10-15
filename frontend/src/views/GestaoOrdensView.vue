@@ -52,6 +52,7 @@ interface RotaModeloItem {
   id: string
   ordem: number
   obrigatorio: boolean
+  slaAlvoMin?: number | null
   setor: {
     id: string
     nome: string
@@ -715,14 +716,14 @@ async function abrirManutencao(ordem: OrdemTeste) {
 
   // Fonte de setores: rota cadastrada no banco para o modelo desta ordem
   // Se a rota ainda nao estiver carregada na ordem, busca via API
-  let rotaSetores: Array<{ id: string; nome: string; ordem: number }> = []
+  let rotaSetores: Array<{ id: string; nome: string; ordem: number; slaAlvoMin?: number | null }> = []
 
   if (Array.isArray(ordem.modelo?.rotas) && ordem.modelo!.rotas!.some((r: any) => (r.plantaId || r.planta?.id) === ordem.plantaId)) {
     // Usa somente a rota da planta desta ordem.
     rotaSetores = ordem.modelo!.rotas!
       .filter((r: any) => (r.plantaId || r.planta?.id) === ordem.plantaId)
       .sort((a, b) => a.ordem - b.ordem)
-      .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem }))
+      .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem, slaAlvoMin: r.slaAlvoMin }))
   } else if (ordem.modeloId) {
     // Fallback: busca a rota via API caso nao tenha vindo na listagem principal
     try {
@@ -734,7 +735,8 @@ async function abrirManutencao(ordem: OrdemTeste) {
           .map(r => ({
             id: r.setor?.id || r.setorId || r.id,
             nome: r.setor?.nome || r.setorNome || r.nome || 'Setor',
-            ordem: r.ordem || 0
+            ordem: r.ordem || 0,
+            slaAlvoMin: r.slaAlvoMin ?? r.sla_alvo_min ?? null
           }))
         if (ordem.modelo) {
           ;(ordem.modelo as any).rotas = rotaData
@@ -749,10 +751,11 @@ async function abrirManutencao(ordem: OrdemTeste) {
     }
   }
 
-  // Monta a lista de SLA a partir dos setores reais da rota
-  // Prioridade 1: SLA proprio da ordem; Prioridade 2: herda modelo; Prioridade 3: 0 min
+  // Monta a lista a partir da rota; um mapa da ordem existente pode zerar prazos específicos.
   const slasItems: SlaSetorFormItem[] = rotaSetores.map(setor => {
-    const rawMin = ordemSlaMap[setor.nome] ?? ordemSlaMap[setor.id] ?? modeloSlaMap[setor.nome] ?? modeloSlaMap[setor.id]
+    const rawMin = ordem.slasPorSetor != null
+      ? ordemSlaMap[setor.nome] ?? ordemSlaMap[setor.id] ?? 0
+      : setor.slaAlvoMin ?? modeloSlaMap[setor.nome] ?? modeloSlaMap[setor.id]
     if (rawMin !== undefined && rawMin !== null) {
       const { valor, unidade } = hydratateReverseSla(rawMin)
       return { setorKey: setor.id, setorNome: setor.nome, valor, unidade }

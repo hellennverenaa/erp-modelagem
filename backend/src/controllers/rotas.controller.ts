@@ -21,7 +21,7 @@ const salvarRotaSchema = z.object({
   plantaId: z.string().uuid(),
   // Uma rota vazia apagaria a configuração existente na transação abaixo.
   rota: z.array(itemRotaSchema).min(1, { message: 'A rota deve conter ao menos um setor.' }),
-  slasPorSetor: z.record(z.string(), z.number().nonnegative()).optional().nullable(),
+  slasPorSetor: z.record(z.string(), z.number().int().nonnegative()).optional().nullable(),
 });
 
 export class RotasController {
@@ -45,7 +45,7 @@ export class RotasController {
       });
     }
 
-      const { rota, plantaId } = parseResult.data;
+      const { rota, plantaId, slasPorSetor } = parseResult.data;
 
     try {
       if (!req.user) return res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
@@ -93,6 +93,7 @@ export class RotasController {
             plantaId,
             setorId: item.setorId,
             ordem: item.ordem,
+            slaAlvoMin: slasPorSetor?.[item.setorId] ?? 120,
             obrigatorio: item.obrigatorio,
             tipoExecucao: item.tipoExecucao,
             bipagemApenasSaida: item.bipagemApenasSaida,
