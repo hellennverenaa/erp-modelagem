@@ -1,16 +1,7 @@
-export interface MotivoParada {
-  motivo: string
-  minutos: number
-  horas: number
-  quantidade: number
-  percentual: number
-}
-
 export interface LeadTimeItem {
   codigoBarras: string
   tipoLote: string
   leadTimeHoras: number
-  downtimeHoras: number
   modelo: string
   marca: string
   dataInicio: string
@@ -20,9 +11,6 @@ export interface KpiAData {
   totalOrdensAtivas: number
   mediaCaixaTeste: number
   mediaLotePrincipal: number
-  downtimeTotalMin: number
-  downtimeTotalHoras: number
-  motivosParada: MotivoParada[]
   grafico: LeadTimeItem[]
 }
 

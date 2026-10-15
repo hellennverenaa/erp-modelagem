@@ -8,6 +8,7 @@ import { Setor } from '../entities/Setor';
 import { Usuario } from '../entities/Usuario';
 import { webSocketService } from '../services/websocket.service';
 import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
+import { usuarioPodeInterromperSla } from '../services/rbac.service';
 
 const criarOcorrenciaSchema = z.object({
   ordemTesteId: z.string().uuid({ message: 'ordemTesteId deve ser um UUID valido.' }),
@@ -39,6 +40,18 @@ export class OcorrenciasController {
       }
 
       const data = parseResult.data;
+
+      // A autorização usa a conta autenticada, antes de qualquer identificação por crachá.
+      if (data.interrompeSla && !await usuarioPodeInterromperSla(
+        req.user!.userId,
+        req.user!.usuario || '',
+        req.user!.perfilNome,
+      )) {
+        return res.status(403).json({
+          error: 'Sua conta não tem permissão para interromper o SLA.',
+          code: 'SLA_PAUSE_PERMISSION_DENIED',
+        });
+      }
 
       // Integracao com Seguranca RFID
       if (data.codigoCrachao) {

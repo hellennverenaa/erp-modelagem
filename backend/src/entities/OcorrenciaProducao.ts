@@ -20,6 +20,8 @@ export enum TipoOcorrencia {
   PROBLEMA_QUALIDADE = 'PROBLEMA_QUALIDADE', // Defeito detectado pelo operador antes da inspeção
   BLOQUEIO_PROCESSO  = 'BLOQUEIO_PROCESSO',  // Impedimentos externos
   ACIDENTE_TRABALHO  = 'ACIDENTE_TRABALHO',  // Segurança do trabalho
+  LIBERACAO_PARCIAL = 'LIBERACAO_PARCIAL',
+  AGUARDANDO_RESPOSTA_SUL = 'AGUARDANDO_RESPOSTA_SUL',
   OUTRO              = 'OUTRO',
 }
 

@@ -96,6 +96,9 @@ export class Usuario {
   @Column({ type: 'boolean', default: true })
   ativo: boolean;
 
+  @Column({ name: 'pode_interromper_sla', type: 'boolean', default: false })
+  podeInterromperSla: boolean;
+
   @Column({ name: 'ultimo_acesso', type: 'timestamp', nullable: true })
   ultimoAcesso: Date | null;
 

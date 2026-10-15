@@ -83,6 +83,7 @@ const ocorrenciaForm = reactive({
   gravidade: 'MEDIA',
   interrompeSla: false
 })
+const isOutroTipoOcorrencia = computed(() => ocorrenciaForm.tipoOcorrencia === 'OUTRO')
 
 const fotoInputRef = ref<HTMLInputElement | null>(null)
 const fotoFile = ref<File | null>(null)
@@ -90,6 +91,7 @@ const fotoPreview = ref<string | null>(null)
 
 // ─── 2. Computeds ──────────────────────────────────────────────────────────
 const user = computed(() => authStore.user.value)
+const podeInterromperSla = computed(() => authStore.podeInterromperSla.value)
 
 const podeEditarSetor = computed(() =>
   authStore.hasPermission('EDITAR_TELA_BIPAGEM') || authStore.hasPermission('ADMINISTRAR_BIPAGEM')
@@ -710,15 +712,28 @@ onMounted(async () => {
                 </div>
               </div>
 
-            <!-- Título -->
-            <div class="field-group">
+            <!-- O tipo Outro usa o título como descrição curta do tipo informado. -->
+            <div v-if="!isOutroTipoOcorrencia" class="field-group">
               <label for="modal-titulo" class="field-label">Titulo</label>
               <input
                 id="modal-titulo"
                 v-model="ocorrenciaForm.titulo"
                 type="text"
                 class="text-input"
+                maxlength="200"
                 placeholder="Ex: Faca quebrada na Atom A1"
+                required
+              />
+            </div>
+            <div v-else class="field-group">
+              <label for="modal-titulo-outro" class="field-label">Qual ocorrência?</label>
+              <input
+                id="modal-titulo-outro"
+                v-model="ocorrenciaForm.titulo"
+                type="text"
+                class="text-input"
+                maxlength="200"
+                placeholder="Descreva resumidamente a ocorrência"
                 required
               />
             </div>
@@ -747,6 +762,8 @@ onMounted(async () => {
                     <option value="PROBLEMA_QUALIDADE">Problema de Qualidade</option>
                     <option value="BLOQUEIO_PROCESSO">Bloqueio de Processo</option>
                     <option value="ACIDENTE_TRABALHO">Acidente de Trabalho</option>
+                    <option value="LIBERACAO_PARCIAL">Liberação parcial</option>
+                    <option value="AGUARDANDO_RESPOSTA_SUL">Aguardando resposta do Sul</option>
                     <option value="OUTRO">Outro</option>
                   </select>
                 </div>
@@ -765,8 +782,8 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- Toggle Interromper SLA -->
-            <div class="toggle-row">
+            <!-- Apenas contas autorizadas podem solicitar a interrupção do SLA. -->
+            <div v-if="podeInterromperSla" class="toggle-row">
               <div class="toggle-info">
                 <span class="toggle-title">Interromper SLA (Pausar Relogio)</span>
                 <span class="toggle-desc">Pausa sistemicamente o SLA de permanencia neste setor</span>
@@ -783,7 +800,7 @@ onMounted(async () => {
 
             <!-- Upload de Imagem -->
             <div class="field-group">
-              <span class="field-label">Foto do Gargalo</span>
+              <span class="field-label">Evidências</span>
               <div v-if="!fotoPreview" class="photo-upload-box" @click="fotoInputRef?.click()">
                 <Upload :size="24" class="upload-box-icon" aria-hidden="true" />
                 <span class="upload-box-text">Tirar foto do Tablet ou selecionar imagem</span>

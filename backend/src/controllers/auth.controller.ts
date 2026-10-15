@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthService, AuthError } from '../services/auth.service';
-import { obterPermissoesGlobais } from '../services/rbac.service';
+import { obterPermissoesGlobais, usuarioPodeInterromperSla } from '../services/rbac.service';
 
 export class AuthController {
   public me = async (req: Request, res: Response): Promise<Response> => {
@@ -16,6 +16,11 @@ export class AuthController {
         perfilId: req.user.perfilId,
         perfilNome: req.user.perfilNome,
         permissoes: await obterPermissoesGlobais(req.user.perfilId),
+        podeInterromperSla: await usuarioPodeInterromperSla(
+          req.user.userId,
+          req.user.usuario || '',
+          req.user.perfilNome,
+        ),
         setorId: req.user.setorId || null,
         plantaId: req.user.plantaId,
       });

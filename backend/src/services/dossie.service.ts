@@ -3,12 +3,17 @@ import { AppDataSource } from '../config/database';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { Rastreamento } from '../entities/Rastreamento';
 import { Checklist } from '../entities/Checklist';
-import { OcorrenciaProducao } from '../entities/OcorrenciaProducao';
+import { OcorrenciaProducao, TipoOcorrencia } from '../entities/OcorrenciaProducao';
 import { Inspecao } from '../entities/Inspecao';
 import { DossieModelo, DossieStatus } from '../entities/DossieModelo';
 import puppeteer, { Browser } from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
+
+const tiposOcorrenciaLegiveis: Partial<Record<TipoOcorrencia, string>> = {
+  [TipoOcorrencia.LIBERACAO_PARCIAL]: 'Liberação parcial',
+  [TipoOcorrencia.AGUARDANDO_RESPOSTA_SUL]: 'Aguardando resposta do Sul',
+};
 
 /**
  * Monta o HTML com os dados consolidados do teste para renderização no PDF
@@ -124,7 +129,7 @@ function generateDossieHtml(
     <tr>
       <td>${o.setor?.nome || 'N/A'}</td>
       <td><strong>${o.titulo}</strong><br/>${o.descricao}</td>
-      <td>${o.tipoOcorrencia}</td>
+      <td>${tiposOcorrenciaLegiveis[o.tipoOcorrencia] ?? o.tipoOcorrencia}</td>
       <td>${o.gravidade}</td>
       <td>${o.status}</td>
       <td>${o.dataOcorrencia ? new Date(o.dataOcorrencia).toLocaleString('pt-BR') : '-'}</td>

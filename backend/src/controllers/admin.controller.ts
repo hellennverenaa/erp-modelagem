@@ -690,6 +690,9 @@ export class AdminController {
         setor: user.setor ? { id: user.setor.id, nome: user.setor.nome } : null,
         plantaId: user.plantaId,
         planta: user.planta ? { id: user.planta.id, nome: user.planta.nome } : null,
+        podeInterromperSla: user.podeInterromperSla || (
+          user.perfil?.nome === PERFIL_ADMIN_AUTOMACAO && ehUsuarioAdminAutomacao(user.usuario)
+        ),
       })));
     } catch (error) {
       console.error('[AdminController] Erro ao listar usuários:', error);
@@ -1046,6 +1049,66 @@ export class AdminController {
     } catch (error) {
       console.error('[AdminController] Erro ao atualizar perfil do usuário:', error);
       return res.status(500).json({ error: 'Erro ao atualizar perfil do usuário.' });
+    }
+  }
+
+  /** Concede ou revoga a permissão individual de interromper o SLA. */
+  public async updateUsuarioPermissaoPausaSla(req: Request, res: Response): Promise<Response> {
+    if (!isAutomationActor(req)) {
+      return res.status(403).json({
+        error: 'Somente ADMIN_AUTOMACAO pode definir quem pode interromper o SLA.',
+        code: 'RBAC_AUTOMACAO_REQUIRED',
+      });
+    }
+
+    const id = z.string().uuid().safeParse(req.params.id);
+    const payload = z.object({ permitido: z.boolean() }).safeParse(req.body);
+    if (!id.success) {
+      return res.status(400).json({ error: 'Identificador de usuário inválido.', code: 'USUARIO_ID_INVALID' });
+    }
+    if (!payload.success) {
+      return res.status(400).json({ error: 'Informe se a pausa do SLA deve ser permitida.', code: 'RBAC_PERMISSION_INVALID' });
+    }
+
+    try {
+      const userRepo = AppDataSource.getRepository(Usuario);
+      const user = await userRepo.findOne({ where: { id: id.data }, relations: { perfil: true } });
+      if (!user) {
+        return res.status(404).json({ error: 'Usuário não encontrado.', code: 'USUARIO_NOT_FOUND' });
+      }
+      if (user.perfil?.nome === PERFIL_ADMIN_AUTOMACAO && ehUsuarioAdminAutomacao(user.usuario)) {
+        return res.status(409).json({
+          error: 'Contas ADMIN_AUTOMACAO mantêm acesso permanente à interrupção do SLA.',
+          code: 'RBAC_AUTOMACAO_PERMISSION_PROTECTED',
+        });
+      }
+
+      const anterior = user.podeInterromperSla;
+      const permitido = payload.data.permitido;
+      const salvo = await AppDataSource.transaction(async (manager) => {
+        user.podeInterromperSla = permitido;
+        const atualizado = await manager.getRepository(Usuario).save(user);
+        if (anterior !== permitido) {
+          await auditarRbac(
+            manager,
+            req,
+            'RBAC_USUARIO_PAUSA_SLA_ALTERADA',
+            'usuarios',
+            atualizado.id,
+            { podeInterromperSla: anterior },
+            { podeInterromperSla: permitido },
+          );
+        }
+        return atualizado;
+      });
+
+      return res.json({
+        id: salvo.id,
+        podeInterromperSla: salvo.podeInterromperSla,
+      });
+    } catch (error) {
+      console.error('[AdminController] Erro ao atualizar permissão individual de pausa do SLA:', error);
+      return res.status(500).json({ error: 'Erro ao atualizar permissão para interromper o SLA.' });
     }
   }
 }
