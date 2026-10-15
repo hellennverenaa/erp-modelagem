@@ -22,6 +22,7 @@ export const RBAC_SCREENS: RbacScreenDefinition[] = [
 export const RBAC_GLOBAL_ACTIONS: Array<{ acao: string; label: string }> = [
   { acao: 'EDITAR_ROTA', label: 'Editar rota de produção' },
   { acao: 'CONFIGURAR_MODELO_ORDEM', label: 'Configurar peças, caixa teste e rota do modelo' },
+  { acao: 'CONFIGURAR_ORDEM_TESTE', label: 'Configurar SLAs e remanejamento de peças da ordem' },
   { acao: 'ACESSAR_TODAS_PLANTAS', label: 'Acessar dados de todas as plantas' },
   { acao: 'ADMINISTRAR_BIPAGEM', label: 'Administrar dados operacionais da bipagem' },
   { acao: 'ADMINISTRAR_CONFIGURACOES', label: 'Administrar configurações do sistema' },

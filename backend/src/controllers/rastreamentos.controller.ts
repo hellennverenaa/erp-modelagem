@@ -13,6 +13,7 @@ import { Usuario } from '../entities/Usuario';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { webSocketService } from '../services/websocket.service';
 import { getPersistedModelRoute, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
+import { getTipoSetorIdsCorteDaOrdem } from '../services/ordem-pecas.service';
 
 const isUuidString = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
@@ -200,7 +201,10 @@ export class RastreamentosController {
 
       // 1.1. Busca a Ordem de Teste correspondente para obter o modeloId
       const ordemRepo = AppDataSource.getRepository(OrdemTeste);
-      const ordem = await ordemRepo.findOne({ where: { id: ordemTesteId } });
+      const ordem = await ordemRepo.findOne({
+        where: { id: ordemTesteId },
+        relations: { modelo: { pecas: true } },
+      });
       if (!ordem) {
         return res.status(404).json({
           error: 'Ordem de teste não encontrada.',
@@ -234,7 +238,15 @@ export class RastreamentosController {
         },
       });
 
-      if (!pertenceARota) {
+      let pertenceAoCorte = false;
+      const pecasDaOrdem = ordem.modelo?.pecas || [];
+      if (pecasDaOrdem.length > 0 && setorInfo?.ativo && setorInfo.plantaId === ordem.plantaId) {
+        const tiposSetorCorteIds = await getTipoSetorIdsCorteDaOrdem(AppDataSource.manager, ordem, pecasDaOrdem);
+        pertenceAoCorte = tiposSetorCorteIds.includes(setorInfo.tipoOpcaoId);
+      }
+      const ordemSetorAtual = pertenceARota?.ordem ?? (pertenceAoCorte ? setorInfo?.ordemFluxo : null);
+
+      if (ordemSetorAtual == null) {
         return res.status(403).json({
           error: 'Acesso Negado: Este setor não pertence à rota de produção definida para este modelo.',
           code: 'ROTA_INVALIDA',
@@ -254,7 +266,7 @@ export class RastreamentosController {
           .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
           .andWhere('r.tipoLote = :tipoLote', { tipoLote })
           .andWhere('r.dataEntrada IS NOT NULL')
-          .andWhere('rm.ordem > :ordemAtual', { ordemAtual: pertenceARota.ordem });
+          .andWhere('rm.ordem > :ordemAtual', { ordemAtual: ordemSetorAtual });
 
         if (pecaId) {
           queryBuilder.andWhere('r.pecaId = :pecaId', { pecaId });
@@ -272,9 +284,9 @@ export class RastreamentosController {
       }
 
       // 1.2.1. Trava Estrita de Sequência (Anti-Teletransporte)
-      if (pertenceARota.ordem > 1) {
+      if (ordemSetorAtual > 1) {
         const isCaixaTeste = tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE';
-        let isInicioCorteOuEtapa5 = pertenceARota.ordem === 5;
+        let isInicioCorteOuEtapa5 = ordemSetorAtual === 5;
         
         // Verifica se é um dos subsetores iniciais do corte para garantir o bypass
         const allowedInitialSectors = ['CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM'];
@@ -292,7 +304,7 @@ export class RastreamentosController {
               modeloId: ordem.modeloId,
               plantaId: ordem.plantaId,
               versao: versaoRota,
-              ordem: pertenceARota.ordem - 1,
+              ordem: ordemSetorAtual - 1,
             },
           });
 
@@ -567,12 +579,8 @@ export class RastreamentosController {
       let pertenceAoCorte = false;
       const pecas = ordem.modelo?.pecas || [];
       if (pecas.length > 0) {
-        const setorCorteOpcaoIds = pecas.map(p => p.setorCorteOpcaoId).filter(Boolean);
-        if (setorCorteOpcaoIds.length > 0) {
-          if (setorCorteOpcaoIds.includes(setorId) || (setorInfo.tipoOpcaoId && setorCorteOpcaoIds.includes(setorInfo.tipoOpcaoId))) {
-            pertenceAoCorte = true;
-          }
-        }
+        const tiposSetorCorteIds = await getTipoSetorIdsCorteDaOrdem(AppDataSource.manager, ordem, pecas);
+        pertenceAoCorte = setorInfo.plantaId === ordem.plantaId && tiposSetorCorteIds.includes(setorInfo.tipoOpcaoId);
       }
 
       if (!pertenceARota && !pertenceAoCorte) {

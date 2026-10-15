@@ -92,6 +92,10 @@ export class OrdemTeste {
   @Column({ name: 'slas_por_setor', type: 'jsonb', nullable: true })
   slasPorSetor: Record<string, number> | null;
 
+  // Sobrescritas de subsetor de corte aplicáveis somente a esta ordem.
+  @Column({ name: 'pecas_remanejadas', type: 'jsonb', nullable: true })
+  pecasRemanejadas: Record<string, string> | null;
+
   @Column({ name: 'rota_snapshot', type: 'jsonb', nullable: true })
   rotaSnapshot: OrdemRotaSnapshot | null;
 

@@ -81,6 +81,7 @@ interface OrdemTeste {
   possuiCaixaTeste: boolean | null
   observacoes: string | null
   slasPorSetor?: Record<string, number> | null
+  pecasRemanejadas?: Record<string, string> | null
   createdAt: string
   updatedAt: string
   modelo?: Modelo
@@ -287,6 +288,12 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
         console.warn('[GestaoOrdensView] Falha ao carregar peças do modelo:', errPecas)
       }
     }
+
+    const pecasRemanejadas = ordemCompleta.pecasRemanejadas || ordem.pecasRemanejadas || {}
+    pecas = pecas.map(peca => ({
+      ...peca,
+      setorCorteOpcaoId: pecasRemanejadas[peca.id] || peca.setorCorteOpcaoId,
+    }))
 
     if (pecas.length === 0) {
       addToast('error', 'Nenhuma peça cadastrada para este modelo.')
@@ -650,8 +657,11 @@ function formatPermanencia(min: number | null) {
 }
 
 // ─── Modal de Manutenção e Remanejamento ─────────────────────────────────────
-const canEditSla = computed(() => authStore.hasPermission('EDITAR_ROTA'))
 const canEditOrdens = computed(() => authStore.hasPermission('EDITAR_TELA_GESTAO_ORDENS'))
+const canConfigureOrdem = computed(() =>
+  canEditOrdens.value && authStore.hasPermission('CONFIGURAR_ORDEM_TESTE')
+)
+const canEditSla = computed(() => canConfigureOrdem.value && authStore.hasPermission('EDITAR_ROTA'))
 const canViewRastreamento = computed(() => authStore.hasPermission('TELA_RASTREAMENTO'))
 const canCreateOrdem = computed(() =>
   authStore.hasPermission('TELA_NOVA_ORDEM_TESTE') && authStore.hasPermission('EDITAR_TELA_NOVA_ORDEM_TESTE')
@@ -685,8 +695,9 @@ function hydratateReverseSla(minutos: number): { valor: number; unidade: 'min' |
 
 const showManutencaoModal = ref(false)
 const manutencaoOrdem = ref<OrdemTeste | null>(null)
-const activeTabManutencao = ref<'geral' | 'pecas' | 'auditoria'>('geral')
+const activeTabManutencao = ref<'geral' | 'pecas' | 'historico'>('geral')
 const loadingAuditoria = ref(false)
+const manutencaoRastreamentos = ref<RastreamentoHistorico[]>([])
 const logsAuditoria = ref<Array<{
   id: string
   acao: string
@@ -707,6 +718,8 @@ const maquinasCorteManutencao = ref<Array<{ id: string; label: string; valor: st
 async function abrirManutencao(ordem: OrdemTeste) {
   manutencaoOrdem.value = ordem
   activeTabManutencao.value = 'geral'
+  logsAuditoria.value = []
+  manutencaoRastreamentos.value = []
 
   // Fonte primaria: SLAs proprios da ordem
   const ordemSlaMap: Record<string, number> = ordem.slasPorSetor || {}
@@ -791,7 +804,7 @@ async function abrirManutencao(ordem: OrdemTeste) {
     pecas: pecasList.map(p => ({
       id: p.id,
       nome: p.nome,
-      setorCorteOpcaoId: (p as any).setorCorteOpcaoId || (p as any).setorCorteOpcao?.id || ''
+      setorCorteOpcaoId: ordem.pecasRemanejadas?.[p.id] || (p as any).setorCorteOpcaoId || (p as any).setorCorteOpcao?.id || ''
     }))
   }
 
@@ -811,20 +824,36 @@ async function abrirManutencao(ordem: OrdemTeste) {
   showManutencaoModal.value = true
 }
 
-async function loadAuditoria() {
-  activeTabManutencao.value = 'auditoria'
+async function loadHistorico() {
+  activeTabManutencao.value = 'historico'
   if (!manutencaoOrdem.value) return
   loadingAuditoria.value = true
   logsAuditoria.value = []
-  try {
-    const res = await api.get(`/lotes/${manutencaoOrdem.value.id}/auditoria`)
-    logsAuditoria.value = res.data || []
-  } catch (err) {
-    console.error('[loadAuditoria] Erro ao buscar historico de auditoria:', err)
-    logsAuditoria.value = []
-  } finally {
-    loadingAuditoria.value = false
+  manutencaoRastreamentos.value = []
+
+  const [auditoriaResult, rastreamentoResult] = await Promise.allSettled([
+    api.get(`/lotes/${manutencaoOrdem.value.id}/auditoria`),
+    api.get<HistoricoResponse>(`/rastreamentos/historico/${manutencaoOrdem.value.id}`),
+  ])
+
+  const falhas: string[] = []
+  if (auditoriaResult.status === 'fulfilled') {
+    logsAuditoria.value = auditoriaResult.value.data || []
+  } else {
+    console.error('[loadHistorico] Erro ao buscar auditoria de configuração:', auditoriaResult.reason)
+    falhas.push('alterações de configuração')
   }
+  if (rastreamentoResult.status === 'fulfilled') {
+    manutencaoRastreamentos.value = rastreamentoResult.value.data.historico || []
+  } else {
+    console.error('[loadHistorico] Erro ao buscar rastreamentos da ordem:', rastreamentoResult.reason)
+    falhas.push('movimentações por setor')
+  }
+  if (falhas.length) {
+    addToast('error', `Não foi possível carregar ${falhas.join(' e ')}.`)
+  }
+
+  loadingAuditoria.value = false
 }
 
 function getSetorNome(key: string): string {
@@ -882,7 +911,9 @@ async function salvarManutencao() {
   loadingManutencao.value = true
   try {
     const payload: any = {
-      pecas: formManutencao.value.pecas.map(p => ({
+      pecas: formManutencao.value.pecas
+        .filter(p => p.setorCorteOpcaoId)
+        .map(p => ({
         id: p.id,
         setorCorteOpcaoId: p.setorCorteOpcaoId
       }))
@@ -912,11 +943,11 @@ async function salvarManutencao() {
       logsAuditoria.value = loteAtualizado.auditLogs
     }
 
-    addToast('success', 'Manutenção da Ordem salva com sucesso!')
+    addToast('success', 'Configuração da Ordem salva com sucesso!')
     showManutencaoModal.value = false
   } catch (err: any) {
     console.error('[salvarManutencao] Erro:', err)
-    addToast('error', err.response?.data?.error || 'Erro ao salvar manutenção.')
+    addToast('error', err.response?.data?.error || 'Erro ao salvar configuração da ordem.')
   } finally {
     loadingManutencao.value = false
   }
@@ -1296,15 +1327,15 @@ onMounted(async () => {
                     <span>Rastrear Dual</span>
                   </button>
                   <button
-                    v-if="canEditOrdens"
+                    v-if="canConfigureOrdem"
                     type="button"
                     class="btn-action-timeline"
                     style="background: #f1f5f9; color: #334155; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
                     @click="abrirManutencao(ordem)"
-                    title="Manutenção da Ordem (SLAs e Remanejamento)"
+                    title="Configuração da Ordem (SLAs e Remanejamento)"
                   >
                     <Settings :size="14" aria-hidden="true" />
-                    <span>Manutenção</span>
+                    <span>Configuração</span>
                   </button>
                   <button
                     v-if="canPrintOrdens"
@@ -1715,7 +1746,7 @@ onMounted(async () => {
     </Teleport>
 
     <!-- ══════════════════════════════════════════════════════
-         MODAL — MANUTENÇÃO DA ORDEM & REMANEJAMENTO DE PEÇAS
+         MODAL — CONFIGURAÇÃO DA ORDEM & REMANEJAMENTO DE PEÇAS
     ══════════════════════════════════════════════════════════ -->
     <Teleport to="body">
       <Transition name="modal">
@@ -1724,7 +1755,7 @@ onMounted(async () => {
           class="modal-backdrop"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="modal-title-manutencao"
+          aria-labelledby="modal-title-configuracao"
           @click.self="showManutencaoModal = false"
         >
           <div class="modal-panel modal-panel--manutencao">
@@ -1734,7 +1765,7 @@ onMounted(async () => {
                   <Settings :size="20" />
                 </div>
                 <div>
-                  <h2 id="modal-title-manutencao" class="modal-title">Manutenção da Ordem {{ manutencaoOrdem?.codigoBarras }}</h2>
+                  <h2 id="modal-title-configuracao" class="modal-title">Configuração da Ordem {{ manutencaoOrdem?.codigoBarras }}</h2>
                   <p class="modal-description">Edite prazos, metas de tempo (SLA) ou altere a máquina de peças técnicas.</p>
                 </div>
               </div>
@@ -1749,11 +1780,11 @@ onMounted(async () => {
             </div>
 
             <!-- Abas do Modal -->
-            <div class="flex items-center gap-1 px-5 pt-3 border-b border-white/8 bg-zinc-900/60 overflow-x-auto">
+            <div class="flex items-center gap-1 px-5 pt-3 border-b border-slate-200 bg-slate-50 overflow-x-auto">
               <button
                 type="button"
                 class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
-                :class="activeTabManutencao === 'geral' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
+                :class="activeTabManutencao === 'geral' ? 'border-blue-700 text-blue-800 bg-white' : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-white/70'"
                 @click="activeTabManutencao = 'geral'"
               >
                 <div class="flex items-center gap-1.5">
@@ -1764,7 +1795,7 @@ onMounted(async () => {
               <button
                 type="button"
                 class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
-                :class="activeTabManutencao === 'pecas' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
+                :class="activeTabManutencao === 'pecas' ? 'border-blue-700 text-blue-800 bg-white' : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-white/70'"
                 @click="activeTabManutencao = 'pecas'"
               >
                 <div class="flex items-center gap-1.5">
@@ -1775,12 +1806,12 @@ onMounted(async () => {
               <button
                 type="button"
                 class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
-                :class="activeTabManutencao === 'auditoria' ? 'border-emerald-400 text-white bg-white/5' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-white/5'"
-                @click="loadAuditoria"
+                :class="activeTabManutencao === 'historico' ? 'border-blue-700 text-blue-800 bg-white' : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-white/70'"
+                @click="loadHistorico"
               >
                 <div class="flex items-center gap-1.5">
                   <History :size="13" />
-                  <span>3. Historico ISO</span>
+                  <span>3. Histórico</span>
                 </div>
               </button>
             </div>
@@ -1803,7 +1834,7 @@ onMounted(async () => {
                   </span>
                   <span
                     v-else
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold"
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-xs font-bold"
                   >
                     <ShieldCheck :size="11" />
                     Edicao liberada
@@ -1816,7 +1847,7 @@ onMounted(async () => {
                     v-for="s in formManutencao.slas"
                     :key="s.setorKey"
                     class="bg-slate-50/70 backdrop-blur-md border border-slate-200/80 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_4px_20px_rgba(0,0,0,0.02)] text-slate-800 transition-colors"
-                    :class="canEditSla ? 'hover:border-emerald-500/40' : 'opacity-80'"
+                    :class="canEditSla ? 'hover:border-blue-500/50' : 'opacity-80'"
                   >
                     <!-- Nome do setor -->
                     <div class="flex items-center justify-between min-w-0">
@@ -1824,7 +1855,7 @@ onMounted(async () => {
                         <Clock
                           :size="13"
                           class="shrink-0"
-                          :class="canEditSla ? 'text-emerald-600' : 'text-slate-400'"
+                          :class="canEditSla ? 'text-blue-700' : 'text-slate-400'"
                         />
                         <span
                           class="text-sm font-bold truncate text-slate-800"
@@ -1843,12 +1874,12 @@ onMounted(async () => {
                         min="0"
                         v-model.number="s.valor"
                         :disabled="!canEditSla"
-                        class="w-20 px-3 py-2 text-sm font-bold font-mono text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+                        class="w-20 px-3 py-2 text-sm font-bold font-mono text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
                       />
                       <select
                         v-model="s.unidade"
                         :disabled="!canEditSla"
-                        class="flex-1 min-w-[100px] px-3 py-2 text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+                        class="flex-1 min-w-[100px] px-3 py-2 text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
                       >
                         <option value="min">Minutos</option>
                         <option value="h">Horas</option>
@@ -1885,6 +1916,7 @@ onMounted(async () => {
                     <div class="sm:w-64">
                       <select
                         v-model="p.setorCorteOpcaoId"
+                        :disabled="!canConfigureOrdem"
                         class="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md font-medium text-slate-800"
                       >
                         <option value="">Selecione a maquina...</option>
@@ -1901,59 +1933,78 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <!-- ABA 3: Historico ISO -->
-              <div v-else-if="activeTabManutencao === 'auditoria'" class="space-y-3">
+              <!-- ABA 3: Histórico de rastreamento e configuração -->
+              <div v-else-if="activeTabManutencao === 'historico'" class="space-y-3">
                 <!-- Loading -->
                 <div v-if="loadingAuditoria" class="flex items-center justify-center py-12 gap-2">
-                  <Loader2 :size="18" class="animate-spin text-emerald-500" />
+                  <Loader2 :size="18" class="animate-spin text-blue-600" />
                   <span class="text-slate-400 text-sm">Carregando historico...</span>
                 </div>
 
                 <!-- Vazio -->
                 <div
-                  v-else-if="logsAuditoria.length === 0"
+                  v-else-if="logsAuditoria.length === 0 && manutencaoRastreamentos.length === 0"
                   class="p-8 text-center text-slate-400 text-sm border border-dashed border-slate-300 rounded-2xl bg-slate-50/50"
                 >
                   <History :size="28" class="mx-auto mb-2 text-slate-300" />
-                  <p>Nenhum registro de auditoria encontrado para esta ordem.</p>
+                  <p>Nenhuma movimentação ou alteração registrada para esta ordem.</p>
                 </div>
 
-                <!-- Lista de registros de auditoria -->
-                <div v-else class="max-h-80 overflow-y-auto pr-1 space-y-2">
-                  <div
-                    v-for="log in logsAuditoria"
-                    :key="log.id"
-                    class="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-2.5 transition-colors hover:border-emerald-300 hover:shadow-sm"
-                  >
-                    <!-- Cabeçalho: ação + timestamp -->
-                    <div class="flex items-start justify-between gap-2 flex-wrap">
-                      <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-black tracking-wider uppercase">
-                        <ShieldCheck :size="10" />
-                        {{ log.acao }}
-                      </span>
-                      <span class="text-slate-400 text-xs font-mono">
-                        {{ new Date(log.criadoEm).toLocaleString('pt-BR') }}
-                      </span>
-                    </div>
-
-                    <!-- Operador -->
-                    <div class="flex items-center gap-2">
-                      <span class="text-slate-500 text-xs font-semibold">Operador:</span>
-                      <span class="text-slate-800 text-xs font-bold">{{ log.usuario?.nomeCompleto || log.usuario?.nome || log.usuario?.usuario || 'Sistema' }}</span>
-                    </div>
-
-                    <!-- Diff Inteligente ISO (Apenas o que mudou) -->
-                    <div v-if="log.acao === 'PECA_REMANEJADA'" class="bg-emerald-50/80 rounded-lg p-3 border border-emerald-200">
-                      <p class="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                        <Scissors :size="13" class="text-emerald-600 shrink-0" />
-                        <span>{{ formatPecaRemanejada(log.dadosAnteriores, log.dadosNovos) }}</span>
+                <div v-else class="max-h-80 overflow-y-auto pr-1 space-y-5">
+                  <section class="space-y-2">
+                    <h3 class="text-xs font-black text-slate-700 uppercase tracking-wide">Movimentações pelos setores</h3>
+                    <p v-if="manutencaoRastreamentos.length === 0" class="text-xs text-slate-400">Nenhum rastreamento registrado.</p>
+                    <article
+                      v-for="item in manutencaoRastreamentos"
+                      :key="item.id"
+                      class="bg-white border border-slate-200 rounded-xl p-3 flex flex-col gap-1.5"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs font-bold text-slate-800">{{ item.setor?.nome || 'Setor desconhecido' }}</span>
+                        <span class="text-[10px] font-bold text-slate-500">{{ getRastreamentoStatus(item.status).label }}</span>
+                      </div>
+                      <p class="text-[11px] text-slate-500">
+                        Entrada: {{ formatDateTime(item.dataEntrada) }} · Saída: {{ formatDateTime(item.dataSaida) }}
                       </p>
-                    </div>
-                    <div v-else-if="log.dadosAnteriores || log.dadosNovos" class="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                      <p class="text-slate-500 text-xs font-bold mb-1 uppercase tracking-wide">Diferença de SLA (Diff ISO)</p>
-                      <pre class="text-slate-800 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ formatSlaDiff(log.dadosAnteriores, log.dadosNovos) }}</pre>
-                    </div>
-                  </div>
+                      <p class="text-[11px] text-slate-500">
+                        Operadores: {{ item.operadorEntrada?.nomeCompleto || '—' }} → {{ item.operadorSaida?.nomeCompleto || '—' }}
+                      </p>
+                    </article>
+                  </section>
+
+                  <section class="space-y-2">
+                    <h3 class="text-xs font-black text-slate-700 uppercase tracking-wide">Alterações de configuração</h3>
+                    <p v-if="logsAuditoria.length === 0" class="text-xs text-slate-400">Nenhuma alteração de SLA ou remanejamento registrado.</p>
+                    <article
+                      v-for="log in logsAuditoria"
+                      :key="log.id"
+                      class="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-2.5 transition-colors hover:border-blue-300 hover:shadow-sm"
+                    >
+                      <div class="flex items-start justify-between gap-2 flex-wrap">
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-xs font-black tracking-wider uppercase">
+                          <ShieldCheck :size="10" />
+                          {{ log.acao }}
+                        </span>
+                        <span class="text-slate-400 text-xs font-mono">{{ new Date(log.criadoEm).toLocaleString('pt-BR') }}</span>
+                      </div>
+
+                      <div class="flex items-center gap-2">
+                        <span class="text-slate-500 text-xs font-semibold">Operador:</span>
+                        <span class="text-slate-800 text-xs font-bold">{{ log.usuario?.nomeCompleto || log.usuario?.nome || log.usuario?.usuario || 'Sistema' }}</span>
+                      </div>
+
+                      <div v-if="log.acao === 'PECA_REMANEJADA'" class="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                        <p class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                          <Scissors :size="13" class="text-blue-700 shrink-0" />
+                          <span>{{ formatPecaRemanejada(log.dadosAnteriores, log.dadosNovos) }}</span>
+                        </p>
+                      </div>
+                      <div v-else-if="log.acao === 'SLA_ALTERADO' && (log.dadosAnteriores || log.dadosNovos)" class="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                        <p class="text-slate-500 text-xs font-bold mb-1 uppercase tracking-wide">Alteração de SLA</p>
+                        <pre class="text-slate-800 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ formatSlaDiff(log.dadosAnteriores, log.dadosNovos) }}</pre>
+                      </div>
+                    </article>
+                  </section>
                 </div>
               </div>
             </div>
@@ -1971,11 +2022,11 @@ onMounted(async () => {
                 type="button"
                 class="btn-primary"
                 @click="salvarManutencao"
-                v-if="canEditOrdens"
+                v-if="canConfigureOrdem"
                 :disabled="loadingManutencao"
               >
                 <Loader2 v-if="loadingManutencao" :size="14" class="animate-spin" />
-                <span>{{ loadingManutencao ? 'Salvando...' : 'Salvar Manutenção' }}</span>
+                <span>{{ loadingManutencao ? 'Salvando...' : 'Salvar Configuração' }}</span>
               </button>
             </div>
           </div>

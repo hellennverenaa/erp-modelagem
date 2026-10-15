@@ -4,7 +4,8 @@ import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { Rastreamento, RastreamentoStatus, TipoLote } from '../entities/Rastreamento';
 import { Setor } from '../entities/Setor';
-import { getPersistedModelRoute, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
+import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
+import { getSetorCorteOpcaoIdsDaOrdem, mapearSubsetoresParaTiposDeSetor } from '../services/ordem-pecas.service';
 
 export class CorteController {
   /**
@@ -37,11 +38,8 @@ export class CorteController {
       if (ordem.status === OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
         return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
       }
-      let setoresDaRota = new Set<string>();
       try {
         await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
-        const { etapas } = await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
-        setoresDaRota = new Set(etapas.map((etapa) => etapa.setorId));
       } catch (error) {
         if (error instanceof RouteIntegrityError) {
           return res.status(409).json({ error: `A ordem ainda não pode ser distribuída ao corte: ${error.message}`, code: 'ROTA_INVALIDA' });
@@ -54,32 +52,25 @@ export class CorteController {
         return res.status(400).json({ error: 'O modelo desta Ordem de Teste não possui peças configuradas.' });
       }
 
-      // Extrai um array ÚNICO dos setorCorteOpcaoId exigidos pelas peças da Ordem de Teste
-      const setorCorteOpcaoIds = Array.from(
-        new Set(pecas.map(p => p.setorCorteOpcaoId).filter(Boolean))
-      );
+      // Usa as opções efetivas da ordem; um remanejamento não altera o modelo.
+      const setorCorteOpcaoIds = getSetorCorteOpcaoIdsDaOrdem(ordem, pecas);
 
       if (setorCorteOpcaoIds.length === 0) {
-        return res.status(400).json({ error: 'Nenhuma peça possui subsetor de corte configurado no modelo.' });
+        return res.status(400).json({ error: 'Nenhuma peça possui subsetor de corte configurado para esta ordem.' });
       }
 
-      const todosSetores = await setorRepo.find({ where: { plantaId: ordem.plantaId, ativo: true } });
-      const setoresDestino: Setor[] = [];
-
-      for (const opcaoId of setorCorteOpcaoIds) {
-        const setorEncontrado = todosSetores.find(s => setoresDaRota.has(s.id) && (s.id === opcaoId || s.tipoOpcaoId === opcaoId));
-        if (setorEncontrado && !setoresDestino.some(s => s.id === setorEncontrado.id)) {
-          setoresDestino.push(setorEncontrado);
-        }
+      const tiposSetorPorOpcao = await mapearSubsetoresParaTiposDeSetor(AppDataSource.manager, setorCorteOpcaoIds);
+      if (tiposSetorPorOpcao.size !== setorCorteOpcaoIds.length) {
+        return res.status(409).json({ error: 'Uma das opções de corte da ordem não possui setor correspondente configurado.', code: 'SETOR_CORTE_NAO_CONFIGURADO' });
       }
+
+      const tiposSetorIds = [...new Set(tiposSetorPorOpcao.values())];
+      const setoresDestino: Setor[] = await setorRepo.find({
+        where: { plantaId: ordem.plantaId, tipoOpcaoId: In(tiposSetorIds), ativo: true },
+      });
 
       if (setoresDestino.length === 0) {
-        const setoresDiretos = await setorRepo.findBy({ id: In(setorCorteOpcaoIds) });
-        setoresDestino.push(...setoresDiretos.filter((setor) => setoresDaRota.has(setor.id)));
-      }
-
-      if (setoresDestino.length === 0) {
-        return res.status(409).json({ error: 'A rota vinculada a esta ordem não contém os setores exigidos pelas peças do corte.', code: 'ROTA_CORTE_INCOMPATIVEL' });
+        return res.status(409).json({ error: 'A planta desta ordem não possui setores ativos para as máquinas selecionadas.', code: 'SETOR_CORTE_NAO_DISPONIVEL' });
       }
 
       const rastreamentosCriados: Rastreamento[] = [];

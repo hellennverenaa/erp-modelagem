@@ -239,7 +239,13 @@ router.post('/', exigirPermissao('EDITAR_TELA_NOVA_ORDEM_TESTE'), lotesControlle
  *         description: Erro interno do servidor
  */
 router.put('/:id', exigirPermissao('EDITAR_TELA_GESTAO_ORDENS'), lotesController.updateLote);
-router.put('/:id/manutencao', verificaToken, exigirPermissao('EDITAR_TELA_GESTAO_ORDENS'), lotesController.updateManutencao);
+router.put(
+  '/:id/manutencao',
+  verificaToken,
+  exigirPermissao('EDITAR_TELA_GESTAO_ORDENS'),
+  exigirPermissao('CONFIGURAR_ORDEM_TESTE'),
+  lotesController.updateManutencao,
+);
 router.get('/:id/auditoria', exigirPermissao('TELA_GESTAO_ORDENS'), lotesController.getAuditoria);
 
 export default router;
