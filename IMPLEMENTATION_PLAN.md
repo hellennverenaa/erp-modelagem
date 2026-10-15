@@ -18,7 +18,9 @@
 **Estado: pendente.** Revisar endpoints, filtros, setores, tempos e agregações para consumir dados reais de ordens, rotas, bipagens, qualidade e ocorrências; identificar mocks e validar indicadores com registros de produção.
 
 ### 18 — TASK-018: Revisar a interface da Torre de Controle
-**Estado: pendente.** Revisar hierarquia visual, tipografia, espaçamento, cards, tabelas, indicadores e cores. Exibir estados de carregamento, erro e ausência de resultados em desktop e mobile.
+**Estado: implementação entregue — validação visual/manual pendente.** A view foi reorganizada em cards KPI independentes, gráfico e Saúde Operacional (8/4), e qualidade/retrabalho (5/7), com estados compactos, skeleton alinhado ao grid e erro de comunicação com retry. O grid visual está em `frontend/src/components/DashboardGerencialMetrics.vue`; tipos compartilhados ficam em `frontend/src/types/dashboardGerencial.ts`; API, sincronização e galeria permanecem em `frontend/src/views/DashboardGerencialView.vue`. Preservados o endpoint `/dashboard/kpis`, payloads, eventos/listeners WebSocket, helpers de formatação e funções da galeria. A referência `/home/hellen/Downloads/gemini-svg.svg` orientou a paleta clara, bordas slate e destaque índigo. Nenhuma mudança de backend ou migration.
+
+**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros. A tela ainda precisa de revisão visual/funcional no navegador em desktop e mobile; não foi executada nesta entrega. Próximo passo: validar a aparência e os estados com dados reais e confirmar o fluxo de abertura/navegação da galeria.
 
 ### 19 — TASK-019: Padronizar datas no backend e no banco
 **Estado: pendente.** Definir como instantes e prazos são recebidos, persistidos e serializados. Tratar valores históricos conforme sua interpretação atual, sem conversões em massa sem auditoria.
@@ -31,6 +33,16 @@
 
 ### 23 — TASK-023: Validar a jornada integrada
 **Estado: pendente.** Validar o fluxo completo de modelo, peças, rota, ordem, bipagem e Torre, incluindo cadastros individuais, permissões, anexos, horários e integridade dos dados.
+
+### 24 — TASK-024: Refinar a integração visual da Torre de Controle
+**Estado: implementação concluída; validação visual pendente. Dependência: TASK-018.** `frontend/src/index.css` voltou a herdar a fonte global definida em `App.vue`; `DashboardView.vue` alinha a busca e remove o padding somente na rota gerencial; `DashboardGerencialView.vue` compacta o cabeçalho e o espaçamento do conteúdo; `DashboardGerencialMetrics.vue` aplica os cards com microinterações, melhora os KPIs, identifica pontos do gráfico e equilibra FPY/retrabalho. Contrato da API, WebSocket e galeria preservados. Sem alterações de backend ou migrations.
+
+**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros. Não foi possível iniciar o servidor Vite para inspeção visual: o sandbox bloqueou a abertura de `127.0.0.1:5173` (`EPERM`). A verificação visual responsiva em desktop/mobile permanece pendente; nenhum teste funcional foi executado.
+
+### 25 — TASK-025: Tornar o gráfico do Lead Time interativo e simplificar os rótulos
+**Estado: implementação entregue — validação visual/interativa pendente. Dependência: TASK-024.** `DashboardGerencialMetrics.vue` agora seleciona o ciclo mais recente inicialmente, oferece área de interação mouse/teclado nos pontos do SVG e mostra os detalhes do lote selecionado em cartão HTML. O eixo respeita a ordem cronológica real retornada pelo backend, com os lotes mais antigos à esquerda. Os rótulos técnicos foram substituídos por linguagem de chão de fábrica compatível com o escopo atual das consultas: WIP conta ordens não reprovadas, médias usam até cinco ciclos recentes em acompanhamento, downtime não é filtrado por gravidade e FPY considera inspeções de saída de setor. Endpoint, WebSocket, galeria e cálculos do backend permanecem preservados. Sem mudanças no backend ou migrations.
+
+**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros; busca pelos rótulos técnicos substituídos sem ocorrências. A interação visual do hover, teclado e card de detalhes ainda precisa ser confirmada no navegador; nenhum teste funcional foi executado.
 
 ## Migrations criadas e pendentes de aplicação
 

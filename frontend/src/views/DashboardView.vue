@@ -378,7 +378,11 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <main class="main-content" id="main-content">
+      <main
+        class="main-content"
+        :class="{ 'main-content--dashboard-gerencial': route.path === '/dashboard/gerencial' }"
+        id="main-content"
+      >
         <RouterView />
       </main>
     </div>
@@ -603,6 +607,7 @@ onBeforeUnmount(() => {
 }
 
 .search-control {
+  position: relative;
   display: flex;
   min-width: 0;
   height: 2.65rem;
@@ -623,7 +628,10 @@ onBeforeUnmount(() => {
 }
 
 .search-icon {
+  display: block;
   flex: 0 0 auto;
+  align-self: center;
+  margin: 0;
 }
 
 .search-input {
@@ -949,6 +957,11 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   padding: 1.75rem;
   overflow: auto;
+}
+
+.main-content.main-content--dashboard-gerencial {
+  padding: 0;
+  background: #f8fafc;
 }
 
 .mobile-topbar {
