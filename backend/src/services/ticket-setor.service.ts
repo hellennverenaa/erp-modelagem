@@ -15,7 +15,15 @@ export async function garantirTicketsSetorDaOrdem(manager: EntityManager, ordem:
   }
 
   const ticketRepo = manager.getRepository(TicketSetor);
-  const tickets = [...etapasPorSetor.values()].map((etapa) => {
+  const ticketsExistentes = await ticketRepo.find({
+    where: { ordemTesteId: ordem.id },
+    select: { setorId: true },
+  });
+  const setoresComTicket = new Set(ticketsExistentes.map((ticket) => ticket.setorId));
+  const etapasSemTicket = [...etapasPorSetor.values()].filter((etapa) => !setoresComTicket.has(etapa.setorId));
+  if (etapasSemTicket.length === 0) return;
+
+  const tickets = etapasSemTicket.map((etapa) => {
     const { id, codigoBarras } = TicketSetor.criarCodigoBarras();
     return ticketRepo.create({
       id,

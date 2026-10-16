@@ -11,6 +11,7 @@ import { Planta } from '../entities/Planta';
 import { AuditLog } from '../entities/AuditLog';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
+import { TicketSetor } from '../entities/TicketSetor';
 import { perfilPossuiPermissao } from '../services/rbac.service';
 import { finalizarNovoTeste, NovoTesteServiceError } from '../services/novo-teste.service';
 import { getPersistedModelRoute, lockModelConfiguration, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
@@ -340,6 +341,61 @@ export class LotesController {
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordem de teste:', error);
       return res.status(500).json({ error: 'Erro ao buscar ordem de teste' });
+    }
+  };
+
+  /**
+   * GET /api/lotes/:id/tickets-setor
+   * Lista os tickets gerados para a rota congelada de uma ordem.
+   */
+  public getTicketsSetor = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const id = req.params.id as string;
+      if (!isUuid(id)) {
+        return res.status(400).json({ error: 'ID da ordem inválido.', code: 'LOTE_ID_INVALIDO' });
+      }
+
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && !req.user?.plantaId) {
+        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      }
+
+      const ordem = await AppDataSource.getRepository(OrdemTeste).findOne({
+        where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId },
+        relations: { modelo: true },
+      });
+      if (!ordem) {
+        return res.status(404).json({ error: 'Ordem de teste não encontrada.', code: 'LOTE_NOT_FOUND' });
+      }
+
+      const rotaCongelada = Boolean(ordem.rotaSnapshot?.etapas?.length);
+      if (rotaCongelada) {
+        await AppDataSource.transaction(async (manager) => {
+          await garantirTicketsSetorDaOrdem(manager, ordem);
+        });
+      }
+
+      const tickets = await AppDataSource.getRepository(TicketSetor).find({
+        where: { ordemTesteId: id },
+        order: { ordemEtapa: 'ASC', createdAt: 'ASC' },
+      });
+
+      return res.json({
+        ordemTesteId: ordem.id,
+        codigoBarras: ordem.codigoBarras,
+        modeloNome: ordem.modelo?.nome ?? 'Modelo não informado',
+        rotaCongelada,
+        tickets: tickets.map((ticket) => ({
+          id: ticket.id,
+          codigoBarras: ticket.codigoBarras,
+          ordemEtapa: ticket.ordemEtapa,
+          rotaVersao: ticket.rotaVersao,
+          setorNomeSnapshot: ticket.setorNomeSnapshot,
+        })),
+      });
+    } catch (error) {
+      console.error('[LotesController] Erro ao buscar tickets por setor:', error);
+      return res.status(500).json({ error: 'Erro ao buscar tickets por setor.' });
     }
   };
 

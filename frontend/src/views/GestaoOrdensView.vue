@@ -140,6 +140,22 @@ interface HistoricoResponse {
   historico: RastreamentoHistorico[]
 }
 
+interface TicketSetorInfo {
+  id: string
+  codigoBarras: string
+  ordemEtapa: number
+  rotaVersao: number
+  setorNomeSnapshot: string
+}
+
+interface TicketsSetorResponse {
+  ordemTesteId: string
+  codigoBarras: string
+  modeloNome: string
+  rotaCongelada?: boolean
+  tickets: TicketSetorInfo[]
+}
+
 // ─── Estado Reativo ────────────────────────────────────────────
 const router = useRouter()
 const ordens = ref<OrdemTeste[]>([])
@@ -171,11 +187,29 @@ const timelineOrdem = ref<OrdemTeste | null>(null)
 const timelineData = ref<RastreamentoHistorico[]>([])
 const loadingTimeline = ref(false)
 const loadingPdfId = ref<string | null>(null)
+const showAcompanharModal = ref(false)
+const acompanharOrdem = ref<OrdemTeste | null>(null)
+const showTicketsSetorModal = ref(false)
+const ticketsSetorOrdem = ref<OrdemTeste | null>(null)
+const ticketsSetorItems = ref<TicketSetorInfo[]>([])
+const ticketsSetorModeloNome = ref('')
+const rotaTicketsCongelada = ref<boolean | null>(null)
+const loadingTicketsSetor = ref(false)
+const loadingTicketsSetorId = ref<string | null>(null)
+const loadingTicketPrintId = ref<string | null>(null)
+const erroTicketsSetor = ref('')
 const user = computed(() => authStore.user.value)
 
 async function imprimirOrdem(ordem: OrdemTeste, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL' = 'LOTE_PRINCIPAL') {
   if (loadingPdfId.value) return
-  
+
+  const printWindow = window.open('about:blank', '_blank')
+  if (!printWindow) {
+    addToast('error', 'O navegador bloqueou a janela da etiqueta.')
+    return
+  }
+
+  printWindow.document.write('<!doctype html><title>Gerando etiqueta...</title><p style="font:16px sans-serif;padding:24px">Gerando etiqueta da ordem...</p>')
   loadingPdfId.value = `${ordem.id}-${tipoLote}`
   try {
     const response = await api.post('/etiquetas/gerar', {
@@ -188,12 +222,13 @@ async function imprimirOrdem(ordem: OrdemTeste, tipoLote: 'CAIXA_TESTE' | 'LOTE_
     
     const blob = new Blob([response.data], { type: 'application/pdf' })
     const pdfUrl = window.URL.createObjectURL(blob)
-    window.open(pdfUrl, '_blank')
+    printWindow.location.replace(pdfUrl)
     
     setTimeout(() => {
       window.URL.revokeObjectURL(pdfUrl)
     }, 60000)
   } catch (err) {
+    printWindow.close()
     console.error('[Imprimir] Erro ao gerar etiquetas em PDF:', err)
     addToast('error', 'Erro ao gerar etiqueta em PDF.')
   } finally {
@@ -202,6 +237,16 @@ async function imprimirOrdem(ordem: OrdemTeste, tipoLote: 'CAIXA_TESTE' | 'LOTE_
 }
 
 // ─── Gerador de Código de Barras SVG Code 128 (Zero Dependências) ────────────
+function escapeHtml(value: string | number | null | undefined): string {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char] ?? char)
+}
+
 function generateCode128Svg(text: string): string {
   const code128patterns: string[] = [
     '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
@@ -240,7 +285,7 @@ function generateCode128Svg(text: string): string {
     x += width
   }
   
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x + 10}" height="62" viewBox="0 0 ${x + 10} 62" style="display: block; margin: 0 auto;"><rect width="100%" height="100%" fill="#ffffff"/>${rects}<text x="${(x + 10) / 2}" y="57" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle" fill="#000000">${text}</text></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x + 10}" height="62" viewBox="0 0 ${x + 10} 62" style="display: block; margin: 0 auto;"><rect width="100%" height="100%" fill="#ffffff"/>${rects}<text x="${(x + 10) / 2}" y="57" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle" fill="#000000">${escapeHtml(text)}</text></svg>`
 }
 
 // ─── Lógica de Impressão de Tickets Físicos de Corte (Agrupados por Máquina) ──
@@ -594,6 +639,110 @@ async function imprimirTicketsCorte(ordem: OrdemTeste) {
   } finally {
     loadingTicketsId.value = null
   }
+}
+
+async function abrirTicketsSetor(ordem: OrdemTeste) {
+  if (loadingTicketsSetorId.value) return
+
+  loadingTicketsSetorId.value = ordem.id
+  ticketsSetorOrdem.value = ordem
+  ticketsSetorItems.value = []
+  ticketsSetorModeloNome.value = ordem.modelo?.nome || getModeloNome(ordem.modeloId)
+  rotaTicketsCongelada.value = null
+  erroTicketsSetor.value = ''
+  loadingTicketsSetor.value = true
+  showTicketsSetorModal.value = true
+
+  try {
+    const { data } = await api.get<TicketsSetorResponse>(`/lotes/${ordem.id}/tickets-setor`)
+    ticketsSetorItems.value = Array.isArray(data.tickets) ? data.tickets : []
+    ticketsSetorModeloNome.value = data.modeloNome || ticketsSetorModeloNome.value
+    rotaTicketsCongelada.value = typeof data.rotaCongelada === 'boolean' ? data.rotaCongelada : null
+  } catch (err: any) {
+    console.error('[TicketsSetor] Erro ao carregar tickets da ordem:', err)
+    const responseData = err?.response?.data
+    const rotaAusente = err?.response?.status === 404 && (
+      (typeof responseData === 'string' && /Cannot GET|Cannot POST/i.test(responseData)) ||
+      !responseData?.code
+    )
+    erroTicketsSetor.value = rotaAusente
+      ? 'A API em execução não reconheceu a rota de tickets por setor. Reinicie o backend e confirme que o gateway aponta para esta versão do projeto.'
+      : responseData?.error || 'Não foi possível carregar os tickets desta ordem.'
+  } finally {
+    loadingTicketsSetor.value = false
+    loadingTicketsSetorId.value = null
+  }
+}
+
+function fecharTicketsSetor() {
+  showTicketsSetorModal.value = false
+}
+
+function imprimirTodosTicketsSetor() {
+  const ticketIds = [...new Set(ticketsSetorItems.value.map(ticket => ticket.id))]
+  imprimirTicketsSetor(ticketIds)
+}
+
+async function imprimirTicketsSetor(ticketIds: string[]) {
+  const ordem = ticketsSetorOrdem.value
+  if (!ordem || ticketIds.length === 0 || loadingTicketPrintId.value) return
+
+  const printWindow = window.open('', '_blank')
+  if (!printWindow) {
+    addToast('error', 'O navegador bloqueou a janela de impressão dos tickets.')
+    return
+  }
+
+  loadingTicketPrintId.value = 'todos'
+  printWindow.document.write('<!doctype html><title>Gerando tickets...</title><p style="font:16px sans-serif;padding:24px">Gerando PDF dos tickets de setor...</p>')
+  try {
+    const { data } = await api.post('/etiquetas/tickets-setor', {
+      ordemTesteId: ordem.id,
+      ticketIds,
+    }, { responseType: 'blob' })
+    const pdfUrl = window.URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
+    printWindow.location.replace(pdfUrl)
+    setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60000)
+  } catch (err: any) {
+    printWindow.close()
+    console.error('[TicketsSetor] Erro ao gerar PDF dos tickets:', err)
+    const responseData = err?.response?.data
+    let message = 'Não foi possível gerar o PDF dos tickets de setor.'
+    if (responseData instanceof Blob) {
+      const responseText = await responseData.text()
+      if (err?.response?.status === 404 && /text\/html/i.test(responseData.type)) {
+        message = 'A API em execução não reconheceu a rota de impressão. Reinicie o backend e confirme o destino do gateway.'
+      } else {
+        try {
+          message = JSON.parse(responseText)?.error || message
+        } catch {
+          // Mantém a mensagem genérica quando a API não retorna um erro JSON.
+        }
+      }
+    }
+    addToast('error', message)
+  } finally {
+    loadingTicketPrintId.value = null
+  }
+}
+
+function abrirAcompanhamento(ordem: OrdemTeste) {
+  acompanharOrdem.value = ordem
+  showAcompanharModal.value = true
+}
+
+function fecharAcompanhamento() {
+  showAcompanharModal.value = false
+}
+
+function abrirTimelineDaOrdem(ordem: OrdemTeste) {
+  fecharAcompanhamento()
+  void openTimeline(ordem)
+}
+
+function abrirRastreamentoDaOrdem(ordem: OrdemTeste) {
+  fecharAcompanhamento()
+  void router.push({ name: 'rastreamento-ordem', params: { ordemTesteId: ordem.id } })
 }
 
 async function openTimeline(ordem: OrdemTeste) {
@@ -1305,26 +1454,27 @@ onMounted(async () => {
               <td class="text-center">
                 <div class="actions-flex">
                   <button
-                    :id="`btn-timeline-${ordem.id}`"
+                    v-if="canPrintOrdens"
                     type="button"
-                    class="btn-action-timeline"
-                    @click="openTimeline(ordem)"
-                    :aria-label="`Ver timeline de rastreamento da ordem ${ordem.codigoBarras}`"
-                    title="Ver Timeline de Rastreamento"
+                    class="btn-action-print"
+                    @click="abrirTicketsSetor(ordem)"
+                    :disabled="loadingTicketsSetorId === ordem.id"
+                    :aria-label="`Abrir etiquetas da ordem ${ordem.codigoBarras}`"
+                    title="Etiquetas do lote e dos setores"
                   >
-                    <Activity :size="14" aria-hidden="true" />
-                    <span>Timeline</span>
+                    <Loader2 v-if="loadingTicketsSetorId === ordem.id" :size="14" class="spin-anim" aria-hidden="true" />
+                    <Printer v-else :size="14" aria-hidden="true" />
+                    <span>{{ loadingTicketsSetorId === ordem.id ? 'Carregando...' : 'Etiquetas' }}</span>
                   </button>
                   <button
-                    v-if="canViewRastreamento"
                     type="button"
                     class="btn-action-timeline"
-                    style="background: #e0f2fe; color: #0369a1; border-color: #bae6fd; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #bae6fd;"
-                    @click="router.push({ name: 'rastreamento-ordem', params: { ordemTesteId: ordem.id } })"
-                    title="Ver Rastreamento Dual Dinâmico"
+                    @click="abrirAcompanhamento(ordem)"
+                    :aria-label="`Abrir opções de acompanhamento da ordem ${ordem.codigoBarras}`"
+                    title="Acompanhar ordem"
                   >
                     <Activity :size="14" aria-hidden="true" />
-                    <span>Rastrear Dual</span>
+                    <span>Acompanhar</span>
                   </button>
                   <button
                     v-if="canConfigureOrdem"
@@ -1337,63 +1487,6 @@ onMounted(async () => {
                     <Settings :size="14" aria-hidden="true" />
                     <span>Configuração</span>
                   </button>
-                  <button
-                    v-if="canPrintOrdens"
-                    type="button"
-                    class="btn-action-print"
-                    style="background: #f8fafc; color: #0f172a; border-color: #cbd5e1; padding: 4px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid #cbd5e1;"
-                    @click="imprimirTicketsCorte(ordem)"
-                    :disabled="loadingTicketsId === ordem.id"
-                    :aria-label="`Imprimir tickets físicos de corte da ordem ${ordem.codigoBarras}`"
-                    title="Imprimir Tickets Físicos de Corte (Baixa por Máquina)"
-                  >
-                    <Loader2 v-if="loadingTicketsId === ordem.id" :size="14" class="spin-anim" aria-hidden="true" />
-                    <Printer v-else :size="14" aria-hidden="true" />
-                    <span>{{ loadingTicketsId === ordem.id ? 'Gerando...' : 'Tickets Corte' }}</span>
-                  </button>
-                  <template v-if="ordem.possuiCaixaTeste">
-                    <button
-                      v-if="canPrintOrdens"
-                      type="button"
-                      class="btn-action-print"
-                      @click="imprimirOrdem(ordem, 'LOTE_PRINCIPAL')"
-                      :disabled="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` || loadingPdfId === `${ordem.id}-CAIXA_TESTE`"
-                      :aria-label="`Imprimir etiqueta de lote da ordem ${ordem.codigoBarras}`"
-                      title="Imprimir Lote"
-                    >
-                      <Loader2 v-if="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL`" :size="14" class="animate-spin" aria-hidden="true" />
-                      <Printer v-else :size="14" aria-hidden="true" />
-                      <span>{{ loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` ? 'Gerando...' : 'Lote' }}</span>
-                    </button>
-                    <button
-                      v-if="canPrintOrdens"
-                      type="button"
-                      class="btn-action-print"
-                      @click="imprimirOrdem(ordem, 'CAIXA_TESTE')"
-                      :disabled="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` || loadingPdfId === `${ordem.id}-CAIXA_TESTE`"
-                      :aria-label="`Imprimir etiqueta de caixa teste da ordem ${ordem.codigoBarras}`"
-                      title="Imprimir Caixa Teste"
-                    >
-                      <Loader2 v-if="loadingPdfId === `${ordem.id}-CAIXA_TESTE`" :size="14" class="animate-spin" aria-hidden="true" />
-                      <Printer v-else :size="14" aria-hidden="true" />
-                      <span>{{ loadingPdfId === `${ordem.id}-CAIXA_TESTE` ? 'Gerando...' : 'Caixa Teste' }}</span>
-                    </button>
-                  </template>
-                  <template v-else>
-                    <button
-                      v-if="canPrintOrdens"
-                      type="button"
-                      class="btn-action-print"
-                      @click="imprimirOrdem(ordem, 'LOTE_PRINCIPAL')"
-                      :disabled="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL`"
-                      :aria-label="`Imprimir etiqueta da ordem ${ordem.codigoBarras}`"
-                      title="Imprimir Lote"
-                    >
-                      <Loader2 v-if="loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL`" :size="14" class="animate-spin" aria-hidden="true" />
-                      <Printer v-else :size="14" aria-hidden="true" />
-                      <span>{{ loadingPdfId === `${ordem.id}-LOTE_PRINCIPAL` ? 'Gerando...' : 'Imprimir' }}</span>
-                    </button>
-                  </template>
                 </div>
               </td>
             </tr>
@@ -1565,6 +1658,189 @@ onMounted(async () => {
                 <Plus v-else :size="15" aria-hidden="true" />
                 <span>{{ loadingCreate ? 'Criando Ordem...' : 'Confirmar e Criar' }}</span>
               </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL — GESTÃO E IMPRESSÃO DAS ETIQUETAS DA ORDEM
+    ══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="showTicketsSetorModal"
+          class="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title-tickets-setor"
+          @click.self="fecharTicketsSetor"
+        >
+          <div class="modal-panel modal-panel--tickets-setor" style="max-width: 820px">
+            <div class="modal-header">
+              <div class="modal-header-left">
+                <div class="modal-icon-wrap" aria-hidden="true">
+                  <Printer :size="20" />
+                </div>
+                <div>
+                  <h2 id="modal-title-tickets-setor" class="modal-title">Etiquetas da ordem</h2>
+                  <p class="modal-description">
+                    Ordem {{ ticketsSetorOrdem?.codigoBarras }} · {{ ticketsSetorModeloNome }}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="modal-close"
+                aria-label="Fechar etiquetas da ordem"
+                @click="fecharTicketsSetor"
+              >
+                <X :size="18" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div class="modal-body modal-body--tickets-setor p-5">
+              <p class="mb-3 text-sm text-slate-600">
+                Imprima aqui as etiquetas do lote, de Corte e todos os tickets únicos dos setores desta ordem.
+              </p>
+
+              <section v-if="canPrintOrdens && ticketsSetorOrdem" class="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4" aria-label="Impressões da ordem">
+                <h3 class="mb-3 text-xs font-bold uppercase tracking-wide text-slate-600">Imprimir etiquetas e tickets</h3>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    class="btn-outline inline-flex items-center gap-2"
+                    :disabled="loadingPdfId !== null || loadingTicketPrintId !== null || loadingTicketsId === ticketsSetorOrdem.id"
+                    @click="imprimirOrdem(ticketsSetorOrdem, 'LOTE_PRINCIPAL')"
+                  >
+                    <Loader2 v-if="loadingPdfId === `${ticketsSetorOrdem.id}-LOTE_PRINCIPAL`" :size="14" class="animate-spin" aria-hidden="true" />
+                    <Printer v-else :size="14" aria-hidden="true" />
+                    {{ loadingPdfId === `${ticketsSetorOrdem.id}-LOTE_PRINCIPAL` ? 'Gerando...' : 'Lote principal' }}
+                  </button>
+                  <button
+                    v-if="ticketsSetorOrdem.possuiCaixaTeste"
+                    type="button"
+                    class="btn-outline inline-flex items-center gap-2"
+                    :disabled="loadingPdfId !== null || loadingTicketPrintId !== null || loadingTicketsId === ticketsSetorOrdem.id"
+                    @click="imprimirOrdem(ticketsSetorOrdem, 'CAIXA_TESTE')"
+                  >
+                    <Loader2 v-if="loadingPdfId === `${ticketsSetorOrdem.id}-CAIXA_TESTE`" :size="14" class="animate-spin" aria-hidden="true" />
+                    <Printer v-else :size="14" aria-hidden="true" />
+                    {{ loadingPdfId === `${ticketsSetorOrdem.id}-CAIXA_TESTE` ? 'Gerando...' : 'Caixa Teste' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-outline inline-flex items-center gap-2"
+                    :disabled="loadingTicketsId !== null || loadingPdfId !== null || loadingTicketPrintId !== null"
+                    @click="imprimirTicketsCorte(ticketsSetorOrdem)"
+                  >
+                    <Loader2 v-if="loadingTicketsId === ticketsSetorOrdem.id" :size="14" class="animate-spin" aria-hidden="true" />
+                    <Printer v-else :size="14" aria-hidden="true" />
+                    {{ loadingTicketsId === ticketsSetorOrdem.id ? 'Gerando...' : 'Tickets de Corte' }}
+                  </button>
+                </div>
+              </section>
+
+              <div class="mb-4 rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+                Use o botão abaixo para imprimir todos os tickets distintos em um único envio. O gabarito organiza até 10 por folha A4, em 2 colunas por 5 linhas, com início a 13 mm do topo.
+              </div>
+
+              <div v-if="loadingTicketsSetor" class="flex min-h-32 items-center justify-center gap-2 text-sm text-slate-500" role="status">
+                <Loader2 :size="18" class="animate-spin" aria-hidden="true" />
+                Carregando tickets da ordem...
+              </div>
+
+              <div v-else-if="erroTicketsSetor" class="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">
+                <AlertCircle :size="18" class="mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{{ erroTicketsSetor }}</span>
+              </div>
+
+              <div v-else-if="ticketsSetorItems.length === 0" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <template v-if="rotaTicketsCongelada === false">
+                  A rota desta ordem ainda não foi definida e congelada. Finalize a configuração da Modelagem para gerar os tickets dos setores.
+                </template>
+                <template v-else-if="rotaTicketsCongelada === true">
+                  A rota está congelada, mas nenhum ticket foi retornado. Atualize a tela; se a mensagem persistir, confirme se o backend em execução está atualizado.
+                </template>
+                <template v-else>
+                  Esta ordem ainda não possui tickets de setor. Verifique se a rota da ordem já foi definida e congelada.
+                </template>
+              </div>
+
+              <ol v-else class="space-y-2" aria-label="Tickets dos setores da ordem">
+                <li
+                  v-for="ticket in ticketsSetorItems"
+                  :key="ticket.id"
+                  class="rounded-lg border border-slate-200 bg-white p-3"
+                >
+                  <div class="min-w-0">
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-indigo-600">
+                      Etapa {{ ticket.ordemEtapa }} · Rota v{{ ticket.rotaVersao }}
+                    </p>
+                    <h3 class="mt-0.5 truncate text-sm font-semibold text-slate-900">{{ ticket.setorNomeSnapshot }}</h3>
+                    <p class="mt-1 break-all font-mono text-xs text-slate-600">{{ ticket.codigoBarras }}</p>
+                  </div>
+                </li>
+              </ol>
+            </div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn-outline" @click="fecharTicketsSetor">Fechar</button>
+              <button
+                type="button"
+                class="btn-primary"
+                :disabled="loadingTicketsSetor || ticketsSetorItems.length === 0 || loadingTicketPrintId !== null || loadingPdfId !== null || loadingTicketsId !== null"
+                @click="imprimirTodosTicketsSetor"
+              >
+                <Loader2 v-if="loadingTicketPrintId === 'todos'" :size="15" class="animate-spin" aria-hidden="true" />
+                <Printer v-else :size="15" aria-hidden="true" />
+                {{ loadingTicketPrintId === 'todos' ? 'Gerando PDF...' : 'Imprimir todos os setores' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL — OPÇÕES DE ACOMPANHAMENTO DA ORDEM
+    ══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="showAcompanharModal && acompanharOrdem"
+          class="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title-acompanhar"
+          @click.self="fecharAcompanhamento"
+        >
+          <div class="modal-panel" style="max-width: 520px">
+            <div class="modal-header">
+              <div class="modal-header-left">
+                <div class="modal-icon-wrap" aria-hidden="true"><Activity :size="20" /></div>
+                <div>
+                  <h2 id="modal-title-acompanhar" class="modal-title">Acompanhar ordem</h2>
+                  <p class="modal-description">{{ acompanharOrdem.codigoBarras }} · {{ acompanharOrdem.modelo?.nome || getModeloNome(acompanharOrdem.modeloId) }}</p>
+                </div>
+              </div>
+              <button type="button" class="modal-close" aria-label="Fechar opções de acompanhamento" @click="fecharAcompanhamento">
+                <X :size="18" aria-hidden="true" />
+              </button>
+            </div>
+            <div class="modal-body flex flex-col gap-3 p-5">
+              <button type="button" class="btn-outline flex w-full items-center gap-3 p-4 text-left" @click="abrirTimelineDaOrdem(acompanharOrdem)">
+                <Clock :size="18" aria-hidden="true" />
+                <span><strong class="block">Timeline</strong><small class="text-slate-500">Histórico de entradas, saídas e permanências</small></span>
+              </button>
+              <button v-if="canViewRastreamento" type="button" class="btn-outline flex w-full items-center gap-3 p-4 text-left" @click="abrirRastreamentoDaOrdem(acompanharOrdem)">
+                <Activity :size="18" aria-hidden="true" />
+                <span><strong class="block">Rastreamento detalhado</strong><small class="text-slate-500">Visualização das trilhas da ordem</small></span>
+              </button>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn-outline" @click="fecharAcompanhamento">Fechar</button>
             </div>
           </div>
         </div>
@@ -2435,6 +2711,18 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.modal-panel--tickets-setor {
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  min-height: 0;
+}
+
+.modal-body--tickets-setor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 
 /* Variante do modal de manutencao: glassmorphism claro + largura expandida */

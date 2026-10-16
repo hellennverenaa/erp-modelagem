@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { LotesController } from '../controllers/lotes.controller';
-import { exigirPermissao } from '../middlewares/rbac.middleware';
+import { exigirAlgumaPermissao, exigirPermissao } from '../middlewares/rbac.middleware';
 import { verificaToken } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -133,6 +133,15 @@ router.get('/', lotesController.getLotes);
  *       500:
  *         description: Erro interno do servidor
  */
+router.get(
+  '/:id/tickets-setor',
+  exigirAlgumaPermissao([
+    'EDITAR_TELA_GESTAO_ORDENS',
+    'EDITAR_TELA_NOVA_ORDEM_TESTE',
+    'EDITAR_TELA_BIPAGEM',
+  ]),
+  lotesController.getTicketsSetor,
+);
 router.get('/:id', lotesController.getLoteById);
 
 /**
