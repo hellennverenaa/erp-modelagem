@@ -78,3 +78,8 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - TASK-027: 1791980800000.
 - TASK-028: 1791981000000.
 - TASK-030: 1791981100000 e 1791981200000.
+
+### TASK-031 — Renovação da sessão DASS para telas de acompanhamento contínuo
+**Estado: implementada nesta branch; builds do backend e frontend passaram. Validação funcional/manual pendente.** O ERP repassa somente os cookies `token` e `refreshToken` emitidos pelo DASS, renova a sessão expirada via `POST /auth/me`, retorna o access token renovado e encaminha a rotação/limpeza dos cookies. O frontend compartilha uma renovação entre chamadas simultâneas, repete uma vez a requisição que recebeu `AUTH_TOKEN_EXPIRED` e atualiza/reconecta o WebSocket da TV. Falhas transitórias do DASS mantêm a sessão local e são tentadas novamente; logout revoga a sessão remota e limpa os dados locais. O refresh token não é exposto ao JavaScript. Sem mudanças no Gateway, DASS ou banco.
+
+**Validação pendente:** confirmar o comportamento de cookies no navegador e HTTPS; testar renovação após expiração, retry HTTP único, reconexão do WebSocket após interrupção de rede e logout. Não foram executados testes de integração com o DASS.

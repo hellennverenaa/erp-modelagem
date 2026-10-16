@@ -9,6 +9,7 @@ import { Planta } from '../entities/Planta';
 
 export interface SsoLoginResult {
   token: string;
+  setCookies: string[];
   usuario: {
     id: string;
     nomeCompleto: string;
@@ -48,6 +49,8 @@ export class AuthError extends Error {
 }
 
 export class AuthService {
+  private static readonly sessionCookieNames = new Set(['token', 'refreshToken']);
+
   /**
    * Obtém a URL do serviço de autenticação legado (Zero Hardcode).
    */
@@ -63,6 +66,40 @@ export class AuthService {
     return authServiceUrl;
   }
 
+  private static filtrarCookiesSessao(cookies: unknown): string[] {
+    const values = Array.isArray(cookies)
+      ? cookies
+      : typeof cookies === 'string'
+        ? [cookies]
+        : [];
+
+    return values.filter((cookie): cookie is string => {
+      if (typeof cookie !== 'string') return false;
+      const separator = cookie.indexOf('=');
+      if (separator < 1) return false;
+      return this.sessionCookieNames.has(cookie.slice(0, separator).trim());
+    });
+  }
+
+  private static filtrarCookieHeader(cookieHeader?: string): string | undefined {
+    if (!cookieHeader) return undefined;
+
+    const cookies = cookieHeader.split(';').flatMap((part) => {
+      const separator = part.indexOf('=');
+      if (separator < 1) return [];
+
+      const name = part.slice(0, separator).trim();
+      const value = part.slice(separator + 1).trim();
+      return this.sessionCookieNames.has(name) ? [`${name}=${value}`] : [];
+    });
+
+    return cookies.length ? cookies.join('; ') : undefined;
+  }
+
+  private static extrairCookiesSessao(headers: any): string[] {
+    return this.filtrarCookiesSessao(headers?.['set-cookie']);
+  }
+
   /**
    * Realiza a chamada HTTP Axios para o serviço de autenticação legado dass_auth_service.
    * Aplica diretrizes de api-security-best-practices (não logar credenciais em texto claro)
@@ -71,7 +108,10 @@ export class AuthService {
    * Repassa as credenciais ao serviço legado e falha de forma explícita quando ele
    * estiver indisponível. Não emite sessões locais de fallback.
    */
-  public static async autenticarLegado(usuario: string, senha: string): Promise<any> {
+  public static async autenticarLegado(
+    usuario: string,
+    senha: string,
+  ): Promise<{ data: any; setCookies: string[] }> {
     const authServiceUrl = this.getAuthServiceUrl();
 
     try {
@@ -82,7 +122,10 @@ export class AuthService {
       );
 
       console.log('[AuthService] Autenticação concluída pelo serviço legado.');
-      return response.data;
+      return {
+        data: response.data,
+        setCookies: this.extrairCookiesSessao(response.headers),
+      };
     } catch (error: any) {
       const axiosError = error as AxiosError;
       const status = axiosError.response?.status;
@@ -117,6 +160,98 @@ export class AuthService {
     }
   }
 
+  public static async renovarSessaoLegada(
+    cookieHeader?: string,
+  ): Promise<{ token: string; setCookies: string[] }> {
+    const cookies = this.filtrarCookieHeader(cookieHeader);
+    if (!cookies?.split(';').some((cookie) => cookie.trim().startsWith('refreshToken='))) {
+      throw new AuthError('Sessão expirada ou inválida. Entre novamente.', 401, 'AUTH_REFRESH_REJECTED');
+    }
+
+    try {
+      const response = await axios.post(
+        `${this.getAuthServiceUrl()}/auth/me`,
+        {},
+        { headers: { Cookie: cookies }, timeout: 5000 },
+      );
+      const token = response.data?.data?.token || response.data?.token;
+      if (typeof token !== 'string' || !token) {
+        throw new AuthError(
+          'O serviço de autenticação não retornou um novo token.',
+          502,
+          'AUTH_REFRESH_TOKEN_MISSING',
+        );
+      }
+
+      return { token, setCookies: this.extrairCookiesSessao(response.headers) };
+    } catch (error: any) {
+      if (error instanceof AuthError) throw error;
+
+      const axiosError = error as AxiosError;
+      const status = axiosError.response?.status;
+      const setCookies = this.extrairCookiesSessao(axiosError.response?.headers);
+      const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout');
+
+      if (status === 401) {
+        throw new AuthError(
+          'Sessão expirada ou inválida. Entre novamente.',
+          401,
+          'AUTH_REFRESH_REJECTED',
+          { setCookies },
+        );
+      }
+
+      if (isTimeout || !axiosError.response) {
+        throw new AuthError(
+          'Serviço de autenticação temporariamente indisponível.',
+          503,
+          'AUTH_SERVICE_UNAVAILABLE',
+          { setCookies },
+        );
+      }
+
+      throw new AuthError(
+        'Erro de comunicação com o serviço de autenticação.',
+        502,
+        'AUTH_REFRESH_COMMUNICATION_ERROR',
+        { setCookies },
+      );
+    }
+  }
+
+  public static async encerrarSessaoLegada(
+    cookieHeader?: string,
+  ): Promise<{ status: number; setCookies: string[] }> {
+    try {
+      const cookie = this.filtrarCookieHeader(cookieHeader);
+      const response = await axios.post(
+        `${this.getAuthServiceUrl()}/auth/logout`,
+        {},
+        {
+          headers: cookie ? { Cookie: cookie } : undefined,
+          timeout: 5000,
+          validateStatus: () => true,
+        },
+      );
+
+      return {
+        status: response.status,
+        setCookies: this.extrairCookiesSessao(response.headers),
+      };
+    } catch (error: any) {
+      const axiosError = error as AxiosError;
+      const isTimeout = axiosError.code === 'ECONNABORTED' || axiosError.message?.includes('timeout');
+      throw new AuthError(
+        isTimeout || !axiosError.response
+          ? 'Serviço de autenticação temporariamente indisponível.'
+          : 'Erro de comunicação com o serviço de autenticação.',
+        isTimeout || !axiosError.response ? 503 : 502,
+        'AUTH_LOGOUT_UNAVAILABLE',
+        { setCookies: this.extrairCookiesSessao(axiosError.response?.headers) },
+      );
+    }
+  }
+
   /**
    * Busca o e-mail do usuário no serviço legado a partir da matrícula.
    */
@@ -147,7 +282,7 @@ export class AuthService {
     }
 
     // 1. Autentica no serviço legado
-    const legacyResponse = await this.autenticarLegado(usuario, senha);
+    const { data: legacyResponse, setCookies } = await this.autenticarLegado(usuario, senha);
 
     const usuarioRepository = AppDataSource.getRepository(Usuario);
     const perfilRepository = AppDataSource.getRepository(Perfil);
@@ -330,6 +465,7 @@ export class AuthService {
 
     return {
       token,
+      setCookies,
       usuario: {
         id: userLocal.id,
         nomeCompleto: userLocal.nomeCompleto,

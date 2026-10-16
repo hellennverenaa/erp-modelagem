@@ -50,21 +50,9 @@ router.get('/me', verificaToken, authController.me);
  * /api/auth/refresh:
  *   post:
  *     summary: Renovação de sessão
- *     description: A renovação depende de suporte do serviço legado e ainda não está disponível.
+ *     description: Usa o cookie HttpOnly da sessão DASS para renovar um access token expirado. O refresh token não é enviado no corpo.
  *     tags:
  *       - auth
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - refreshToken
- *             properties:
- *               refreshToken:
- *                 type: string
- *                 example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
  *     responses:
  *       200:
  *         description: Token renovado com sucesso
@@ -76,10 +64,12 @@ router.get('/me', verificaToken, authController.me);
  *                 token:
  *                   type: string
  *                   example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.newAccess..."
- *       501:
- *         description: Renovação não configurada no serviço legado
- *       500:
- *         description: Erro interno do servidor
+ *       401:
+ *         description: Sessão DASS inválida, expirada ou revogada
+ *       502:
+ *         description: Falha de comunicação com o serviço DASS
+ *       503:
+ *         description: Serviço DASS indisponível
  */
 router.post('/refresh', authController.refresh);
 
@@ -102,8 +92,8 @@ router.post('/refresh', authController.refresh);
  *                 message:
  *                   type: string
  *                   example: "Logout efetuado com sucesso"
- *       500:
- *         description: Erro interno do servidor
+ *       502:
+ *         description: Não foi possível revogar a sessão no serviço DASS
  */
 router.post('/logout', authController.logout);
 

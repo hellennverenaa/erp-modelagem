@@ -2,7 +2,12 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { io, Socket } from 'socket.io-client'
-import api, { getApiOrigin, getApiSocketPath } from '../api/axios'
+import api, {
+  expireAuthSession,
+  getApiOrigin,
+  getApiSocketPath,
+  refreshAccessToken,
+} from '../api/axios'
 import { gsap } from 'gsap'
 import {
   ArrowLeft,
@@ -112,6 +117,8 @@ const selectedAuditNode = ref<{
 
 let socket: Socket | null = null
 let timerInterval: any = null
+let socketRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let socketRefreshInProgress = false
 
 const nodeRefs = ref<Record<string, HTMLElement>>({})
 const svgLineRefs = ref<Record<string, SVGPathElement>>({})
@@ -520,6 +527,37 @@ function animateSvgPathsAndCards() {
 // --------------------------------------------------
 // WebSockets & Listeners
 // --------------------------------------------------
+function scheduleSocketRefreshRetry() {
+  if (socketRefreshTimer) return
+
+  socketRefreshTimer = setTimeout(() => {
+    socketRefreshTimer = null
+    void refreshSocketSession()
+  }, 15000)
+}
+
+async function refreshSocketSession() {
+  if (socketRefreshInProgress || !socket) return
+
+  socketRefreshInProgress = true
+  socket.disconnect()
+
+  try {
+    const token = await refreshAccessToken()
+    if (!socket) return
+    socket.auth = { token }
+    socket.connect()
+  } catch (error: any) {
+    if (error?.response?.status === 401) {
+      expireAuthSession()
+      return
+    }
+    scheduleSocketRefreshRetry()
+  } finally {
+    socketRefreshInProgress = false
+  }
+}
+
 function initWebSocket() {
   const socketUrl = getApiOrigin()
   const token = localStorage.getItem('erp_token') || localStorage.getItem('token') || ''
@@ -539,8 +577,13 @@ function initWebSocket() {
   })
 
   socket.on('connect_error', (err: any) => {
+    if (err?.message === 'TOKEN_EXPIRED') {
+      liveStatus.value = 'DISCONNECTED'
+      void refreshSocketSession()
+      return
+    }
+
     if (
-      err?.message === 'TOKEN_EXPIRED' ||
       err?.message?.includes('Authentication error') ||
       err?.message?.includes('token')
     ) {
@@ -583,6 +626,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (socketRefreshTimer) {
+    clearTimeout(socketRefreshTimer)
+    socketRefreshTimer = null
+  }
   if (socket) {
     socket.disconnect()
     socket = null

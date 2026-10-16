@@ -1,4 +1,4 @@
-import api from './axios'
+import api, { clearStoredAuth, revokeRemoteSession, storeAccessToken } from './axios'
 import axios from 'axios'
 import { ref, computed } from 'vue'
 
@@ -19,6 +19,17 @@ const token = ref<string | null>(localStorage.getItem('erp_token'))
 const userRaw = localStorage.getItem('erp_user')
 const user = ref<UsuarioLogado | null>(userRaw ? JSON.parse(userRaw) : null)
 let retrySessionEndpointAfter = 0
+
+window.addEventListener('erp:auth-token-refreshed', (event) => {
+  const refreshedToken = (event as CustomEvent<string>).detail
+  if (refreshedToken) token.value = refreshedToken
+})
+
+window.addEventListener('erp:auth-session-ended', () => {
+  retrySessionEndpointAfter = 0
+  token.value = null
+  user.value = null
+})
 
 const contasAdminAutomacao = new Set([
   'hellen.magalhaes',
@@ -67,16 +78,14 @@ function login(newToken: string, userData: UsuarioLogado) {
   retrySessionEndpointAfter = 0
   token.value = newToken
   user.value = userData
-  localStorage.setItem('erp_token', newToken)
+  storeAccessToken(newToken)
   localStorage.setItem('erp_user', JSON.stringify(userData))
 }
 
 function logout() {
   retrySessionEndpointAfter = 0
-  token.value = null
-  user.value = null
-  localStorage.removeItem('erp_token')
-  localStorage.removeItem('erp_user')
+  void revokeRemoteSession().catch(() => undefined)
+  clearStoredAuth()
 }
 
 export const authStore = {
