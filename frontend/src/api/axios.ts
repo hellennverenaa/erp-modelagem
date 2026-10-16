@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type InternalAxiosRequestConfig } from 'axios'
 
 // O gateway publica o ERP sob este prefixo e remove-o antes do encaminhamento.
 const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/erp-modelagem'
@@ -6,6 +6,7 @@ const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/erp-modelagem'
 const api = axios.create({
   baseURL: apiBaseUrl,
   timeout: 15000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -45,6 +46,60 @@ function getStoredToken(): string | null {
   )
 }
 
+type RetryableRequestConfig = InternalAxiosRequestConfig & { _authRetried?: boolean }
+
+let refreshRequest: Promise<string> | null = null
+let authSessionVersion = 0
+
+export function storeAccessToken(token: string): void {
+  localStorage.setItem('erp_token', token)
+  localStorage.removeItem('token')
+  localStorage.removeItem('jwt_token')
+  window.dispatchEvent(new CustomEvent('erp:auth-token-refreshed', { detail: token }))
+}
+
+export function clearStoredAuth(): void {
+  authSessionVersion += 1
+  localStorage.removeItem('erp_token')
+  localStorage.removeItem('token')
+  localStorage.removeItem('jwt_token')
+  localStorage.removeItem('erp_user')
+  window.dispatchEvent(new Event('erp:auth-session-ended'))
+}
+
+export function expireAuthSession(): void {
+  clearStoredAuth()
+  if (window.location.pathname !== '/') window.location.href = '/'
+}
+
+export function refreshAccessToken(): Promise<string> {
+  if (!refreshRequest) {
+    const requestSessionVersion = authSessionVersion
+    refreshRequest = api
+      .post<{ token?: string }>('/auth/refresh')
+      .then(({ data }) => {
+        if (typeof data.token !== 'string' || !data.token) {
+          throw new Error('O serviço de autenticação não retornou um novo token.')
+        }
+        if (requestSessionVersion !== authSessionVersion) {
+          throw new Error('A sessão foi encerrada durante a renovação.')
+        }
+        storeAccessToken(data.token)
+        return data.token
+      })
+      .finally(() => {
+        refreshRequest = null
+      })
+  }
+
+  return refreshRequest
+}
+
+export async function revokeRemoteSession(): Promise<void> {
+  if (refreshRequest) await refreshRequest.catch(() => undefined)
+  await api.post('/auth/logout')
+}
+
 api.interceptors.request.use((config) => {
   const token = getStoredToken()
   if (token) {
@@ -56,17 +111,29 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   async (err) => {
-    const originalRequest = err.config
-    const isAuthenticationRequest = /\/auth\/(login|refresh)(?:\/|$)/.test(originalRequest?.url || '')
+    const originalRequest = err.config as RetryableRequestConfig | undefined
+    const isAuthenticationRequest = /\/auth\/(login|refresh|logout)(?:\/|$)/.test(originalRequest?.url || '')
 
     if (err.response?.status === 401 && !isAuthenticationRequest) {
-      localStorage.removeItem('erp_token')
-      localStorage.removeItem('token')
-      localStorage.removeItem('jwt_token')
-      localStorage.removeItem('erp_user')
-      if (window.location.pathname !== '/') {
-        window.location.href = '/'
+      if (
+        err.response.data?.code === 'AUTH_TOKEN_EXPIRED' &&
+        originalRequest &&
+        !originalRequest._authRetried
+      ) {
+        originalRequest._authRetried = true
+        try {
+          const token = await refreshAccessToken()
+          originalRequest.headers.Authorization = `Bearer ${token}`
+          return api(originalRequest)
+        } catch (refreshError) {
+          if (axios.isAxiosError(refreshError) && refreshError.response?.status === 401) {
+            expireAuthSession()
+          }
+          return Promise.reject(refreshError)
+        }
       }
+
+      expireAuthSession()
     }
     return Promise.reject(err)
   }

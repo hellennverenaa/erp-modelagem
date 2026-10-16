@@ -3,6 +3,18 @@ import { AuthService, AuthError } from '../services/auth.service';
 import { obterPermissoesGlobais, usuarioPodeInterromperSla } from '../services/rbac.service';
 
 export class AuthController {
+  private forwardSessionCookies(res: Response, cookies?: string[]): void {
+    if (cookies?.length) res.setHeader('Set-Cookie', cookies);
+  }
+
+  private clearSessionCookies(res: Response, forwardedCookies: string[] = []): void {
+    const forwardedNames = new Set(
+      forwardedCookies.map((cookie) => cookie.slice(0, cookie.indexOf('=')).trim()),
+    );
+    if (!forwardedNames.has('token')) res.clearCookie('token', { path: '/' });
+    if (!forwardedNames.has('refreshToken')) res.clearCookie('refreshToken', { path: '/' });
+  }
+
   public me = async (req: Request, res: Response): Promise<Response> => {
     if (!req.user) {
       return res.status(401).json({ error: 'Usuário não autenticado.', code: 'RBAC_UNAUTHENTICATED' });
@@ -74,7 +86,9 @@ export class AuthController {
       }
 
       const result = await AuthService.processarLogin(usuario, senha);
-      return res.json(result);
+      const { setCookies, ...response } = result;
+      this.forwardSessionCookies(res, setCookies);
+      return res.json(response);
     } catch (error: any) {
       if (error instanceof AuthError) {
         return res.status(error.statusCode).json({
@@ -91,18 +105,48 @@ export class AuthController {
     }
   };
 
-  public refresh = async (_req: Request, res: Response): Promise<Response> => {
-    return res.status(501).json({
-      error: 'Renovação de sessão não está configurada no serviço legado.',
-      code: 'AUTH_REFRESH_UNAVAILABLE'
-    });
+  public refresh = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const session = await AuthService.renovarSessaoLegada(req.headers.cookie);
+      this.forwardSessionCookies(res, session.setCookies);
+      return res.json({ token: session.token });
+    } catch (error: any) {
+      if (error instanceof AuthError) {
+        this.forwardSessionCookies(res, error.details?.setCookies);
+        if (error.statusCode === 401) this.clearSessionCookies(res, error.details?.setCookies);
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+
+      console.error('[AuthController.refresh] Erro inesperado ao renovar a sessão.');
+      return res.status(500).json({
+        error: 'Erro interno durante a renovação da sessão.',
+        code: 'AUTH_REFRESH_INTERNAL_ERROR'
+      });
+    }
   };
 
-  public logout = async (_req: Request, res: Response): Promise<Response> => {
+  public logout = async (req: Request, res: Response): Promise<Response> => {
     try {
+      const result = await AuthService.encerrarSessaoLegada(req.headers.cookie);
+      this.forwardSessionCookies(res, result.setCookies);
+      this.clearSessionCookies(res, result.setCookies);
+      if (result.status >= 500) {
+        return res.status(502).json({
+          error: 'Não foi possível revogar a sessão no serviço de autenticação.',
+          code: 'AUTH_LOGOUT_FAILED'
+        });
+      }
       return res.json({ message: 'Logout efetuado com sucesso' });
-    } catch (error) {
-      return res.status(500).json({ error: 'Erro no logout' });
+    } catch (error: any) {
+      if (error instanceof AuthError) {
+        this.forwardSessionCookies(res, error.details?.setCookies);
+        this.clearSessionCookies(res, error.details?.setCookies);
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+
+      this.clearSessionCookies(res);
+      console.error('[AuthController.logout] Erro inesperado ao encerrar a sessão.');
+      return res.status(500).json({ error: 'Erro no logout', code: 'AUTH_LOGOUT_INTERNAL_ERROR' });
     }
   };
 
