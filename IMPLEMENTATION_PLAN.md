@@ -22,6 +22,20 @@
 
 **Dependências:** preservar a rota congelada em todos os caminhos de criação e integrar a fundação com a gestão, a impressão, a Bipagem e a TV nas etapas seguintes. Ordens antigas sem snapshot permanecem sem rota/tickets inferidos.
 
+### Indicador de Lead Time por modelo com tênis (TASK-032)
+**Estado: pendente nesta branch.** A implementação visual já existe no commit `a93a780` da branch `feat/grafico-lead-time-por-modelo`, mas essa branch não está integrada à branch atual (`feat/ajuste-visual-tv-rastreamento`). Por isso a tela atual ainda exibe os lotes conectados por uma linha.
+
+**Escopo do indicador:** comparar modelos, não representar uma sequência temporal. O protótipo usa colunas verticais, com um ícone genérico de tênis acima de cada coluna, valor em horas, modelo e marca; colore Nike em vermelho, Fila em azul e outras marcas em cinza. Permite selecionar um modelo e consultar os dados do lote associado. O endpoint também foi alterado no protótipo para usar o Lote Principal mais recente de cada modelo, ordenar pelo maior Lead Time e limitar a exibição a dez modelos.
+
+**Execução em etapas:**
+
+- **Revisão e integração:** revisar o commit existente e trazer somente as mudanças relacionadas ao indicador para a branch de trabalho, preservando os demais módulos e o comportamento atual dos outros KPIs.
+- **Regra dos dados:** confirmar com dados reais que usar o Lote Principal mais recente por modelo e ordenar pelos maiores tempos representa a comparação desejada; conferir modelos sem identificador, sem marca ou sem Lead Time positivo.
+- **Apresentação e interação:** validar tênis acima das colunas, cores por marca, rótulos, seleção e painel de detalhes, navegação por teclado e rolagem horizontal em telas estreitas.
+- **Validação final:** compilar frontend e backend após integrar o endpoint e conferir manualmente a Torre de Controle com modelos de marcas diferentes e com poucos ou muitos resultados.
+
+**Dependência:** o protótipo está em uma branch separada e altera tanto `DashboardGerencialMetrics.vue` quanto a agregação de `dashboard.controller.ts`; não é apenas uma mudança de CSS.
+
 ### Execução da rota da ordem no backend (TASK-014)
 Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.
 
