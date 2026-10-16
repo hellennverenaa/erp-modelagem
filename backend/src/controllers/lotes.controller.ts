@@ -17,6 +17,7 @@ import { getPersistedModelRoute, lockModelConfiguration, RouteIntegrityError, va
 import { finalizarNovoTesteSchema } from '../schemas/novo-teste.schema';
 import { ModelPieceInput, ModelPiecesError, saveModelPieces } from '../services/model-pieces.service';
 import { getSetorCorteOpcaoEfetiva, mapearSubsetoresParaTiposDeSetor } from '../services/ordem-pecas.service';
+import { garantirTicketsSetorDaOrdem } from '../services/ticket-setor.service';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -224,7 +225,9 @@ export class LotesController {
         atual.slasPorSetor = slasPorSetor;
         atual.status = OrdemTesteStatus.AGUARDANDO_MATERIAL;
         atual.liberadoProducao = true;
-        return repo.save(atual);
+        const ordemSalva = await repo.save(atual);
+        await garantirTicketsSetorDaOrdem(manager, ordemSalva);
+        return ordemSalva;
       });
       return res.json({ message: 'Modelagem concluída. A ordem foi liberada para produção.', ordem });
     } catch (error: any) {
@@ -436,46 +439,63 @@ export class LotesController {
         });
       }
 
-      const loteRepo = AppDataSource.getRepository(OrdemTeste);
+      const savedLote = await AppDataSource.transaction(async (manager) => {
+        await lockModelConfiguration(manager, modeloId);
+        const loteRepo = manager.getRepository(OrdemTeste);
+        const ordemExistente = await loteRepo.findOne({ where: { modeloId } });
+        if (ordemExistente) {
+          throw Object.assign(
+            new Error('Este modelo já possui um teste de produção ativo. A relação Modelo → Ordem de Teste é 1:1.'),
+            { status: 400, code: 'MODELO_TESTE_DUPLICADO', ordemId: ordemExistente.id, codigoBarras: ordemExistente.codigoBarras },
+          );
+        }
 
-      const ordemExistente = await loteRepo.findOne({ where: { modeloId } });
-      if (ordemExistente) {
-        return res.status(400).json({
-          error: 'Este modelo já possui um teste de produção ativo. A relação Modelo → Ordem de Teste é 1:1.',
-          code: 'MODELO_TESTE_DUPLICADO',
-          ordemId: ordemExistente.id,
-          codigoBarras: ordemExistente.codigoBarras,
+        const rotaRepo = manager.getRepository(RotaModelo);
+        const countRotas = await rotaRepo.count({ where: { modeloId, plantaId } });
+        if (countRotas === 0) {
+          throw Object.assign(
+            new Error('Falha: O modelo não possui uma rota de produção definida. Acesse o Construtor de Rota para mapear o fluxo do modelo antes de gerar a Ordem.'),
+            { status: 400, code: 'ROTA_NOT_FOUND' },
+          );
+        }
+        await validatePersistedModelRoute(manager, modeloId, plantaId);
+        const { versao, etapas } = await getPersistedModelRoute(manager, modeloId, plantaId);
+        const slasDaRota = Object.fromEntries(etapas.map((etapa) => [etapa.setorId, etapa.slaAlvoMin]));
+        const slasDaOrdem = { ...slasDaRota, ...(slasPorSetor || {}) };
+        const rotaSnapshot = {
+          versao,
+          plantaId,
+          etapas: etapas.map((etapa) => ({
+            setorId: etapa.setorId,
+            nome: etapa.setor?.nome || 'Setor',
+            ordem: etapa.ordem,
+            obrigatorio: etapa.obrigatorio,
+            tipoExecucao: etapa.tipoExecucao,
+            bipagemApenasSaida: etapa.bipagemApenasSaida,
+          })),
+          slasPorSetor: slasDaOrdem,
+        };
+
+        const lote = loteRepo.create({
+          modeloId,
+          plantaId: acessoTodasPlantas ? plantaId : req.user!.plantaId,
+          criadoPorId: req.user!.userId,
+          codigoBarras: `OT-${Date.now()}`,
+          dataInicio: new Date(),
+          prioridadePcp,
+          status: OrdemTesteStatus.AGUARDANDO_MATERIAL,
+          liberadoProducao: false,
+          possuiCaixaTeste,
+          observacoes: observacoes || null,
+          slasPorSetor: slasDaOrdem,
+          rotaVersao: versao,
+          rotaSnapshot,
         });
-      }
 
-      const rotaRepo = AppDataSource.getRepository(RotaModelo);
-      const countRotas = await rotaRepo.count({ where: { modeloId, plantaId } });
-      if (countRotas === 0) {
-        return res.status(400).json({
-          error: 'Falha: O modelo não possui uma rota de produção definida. Acesse o Construtor de Rota para mapear o fluxo do modelo antes de gerar a Ordem.',
-          code: 'ROTA_NOT_FOUND'
-        });
-      }
-      await validatePersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
-      const { etapas } = await getPersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
-      const slasDaRota = Object.fromEntries(etapas.map((etapa) => [etapa.setorId, etapa.slaAlvoMin]));
-      const slasDaOrdem = { ...slasDaRota, ...(slasPorSetor || {}) };
-
-      const lote = loteRepo.create({
-        modeloId,
-        plantaId: acessoTodasPlantas ? plantaId : req.user.plantaId,
-        criadoPorId: req.user!.userId,
-        codigoBarras: `OT-${Date.now()}`,
-        dataInicio: new Date(),
-        prioridadePcp,
-        status: OrdemTesteStatus.AGUARDANDO_MATERIAL,
-        liberadoProducao: false,
-        possuiCaixaTeste,
-        observacoes: observacoes || null,
-        slasPorSetor: slasDaOrdem,
+        const ordemSalva = await loteRepo.save(lote);
+        await garantirTicketsSetorDaOrdem(manager, ordemSalva);
+        return ordemSalva;
       });
-
-      const savedLote = await loteRepo.save(lote);
 
       return res.status(201).json({
         message: 'Ordem de teste criada com sucesso.',
@@ -483,6 +503,13 @@ export class LotesController {
       });
 
     } catch (error: any) {
+      if (error?.status && error?.code) {
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          ...(error.ordemId ? { ordemId: error.ordemId, codigoBarras: error.codigoBarras } : {}),
+        });
+      }
       if (error instanceof RouteIntegrityError) {
         return res.status(400).json({ error: error.message, code: error.code });
       }
