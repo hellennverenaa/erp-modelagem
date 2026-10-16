@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { imprimirEtiquetas, gerarEtiquetas, gerarTicketsSetor } from '../controllers/etiqueta.controller';
+import {
+  imprimirEtiquetas,
+  gerarEtiquetas,
+  gerarTicketsSetor,
+  gerarTicketsCorte,
+  gerarTicketsCompletosDaOrdem,
+} from '../controllers/etiqueta.controller';
 import { exigirAlgumaPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
@@ -107,6 +113,22 @@ router.post(
     'EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE', 'EDITAR_TELA_BIPAGEM',
   ]),
   gerarTicketsSetor,
+);
+
+router.post(
+  '/tickets-corte',
+  exigirAlgumaPermissao([
+    'EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE', 'EDITAR_TELA_BIPAGEM',
+  ]),
+  gerarTicketsCorte,
+);
+
+router.post(
+  '/tickets-ordem',
+  exigirAlgumaPermissao([
+    'EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE', 'EDITAR_TELA_BIPAGEM',
+  ]),
+  gerarTicketsCompletosDaOrdem,
 );
 
 export default router;

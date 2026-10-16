@@ -8,6 +8,7 @@ import { OcorrenciaProducao } from '../entities/OcorrenciaProducao';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
 import { OrdemTeste } from '../entities/OrdemTeste';
+import { TicketSetor } from '../entities/TicketSetor';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Usuario } from '../entities/Usuario';
 import { PerfilPermissao } from '../entities/PerfilPermissao';
@@ -61,6 +62,7 @@ const biparEntradaSchema = z.object({
   codigoCrachao: z.string().optional().nullable(),
   pecaId:       z.string().uuid().optional().nullable(),
   estacaoId:    z.string().uuid().optional().nullable(),
+  codigoTicket: z.string().trim().min(1).max(64).optional(),
 });
 
 const biparSaidaSchema = z.object({
@@ -71,7 +73,33 @@ const biparSaidaSchema = z.object({
   operadorSaidaId: z.string().uuid({ message: 'operadorSaidaId deve ser um UUID válido.' }).optional().nullable(),
   codigoCrachao:  z.string().optional().nullable(),
   pecaId:         z.string().uuid().optional().nullable(),
+  codigoTicket:   z.string().trim().min(1).max(64).optional(),
 });
+
+async function validarCodigoTicket(
+  codigoTicket: string | undefined,
+  ordemTesteId: string,
+  setorId: string,
+  tipoLote: TipoLote,
+): Promise<{ status: number; error: string; code: string } | null> {
+  if (!codigoTicket) return null;
+
+  try {
+    const ticket = await AppDataSource.getRepository(TicketSetor).findOne({
+      where: { codigoBarras: codigoTicket.trim().toUpperCase() },
+    });
+    if (!ticket) {
+      return { status: 404, error: 'Ticket de setor não encontrado.', code: 'TICKET_SETOR_NOT_FOUND' };
+    }
+    if (ticket.ordemTesteId !== ordemTesteId || ticket.setorId !== setorId || ticket.tipoLote !== tipoLote) {
+      return { status: 400, error: 'O ticket não corresponde à ordem, setor e fluxo informados.', code: 'TICKET_CONTEXTO_INVALIDO' };
+    }
+    return null;
+  } catch (error) {
+    console.error('[RastreamentosController] Erro ao validar ticket de setor:', error);
+    return { status: 500, error: 'Erro interno ao validar ticket de setor.', code: 'TICKET_VALIDATION_ERROR' };
+  }
+}
 
 // ═══ Valor dos tipos de setor no config_opcoes (dinâmico, sem hardcode) ═══
 // Esses são os `valor` armazenados na tabela config_opcoes, categoria 'setor_tipo'.
@@ -101,7 +129,10 @@ export class RastreamentosController {
       });
     }
 
-    const { ordemTesteId, setorId, tipoLote, pecaId, estacaoId, codigoCrachao } = parseResult.data;
+    const { ordemTesteId, setorId, tipoLote, pecaId, estacaoId, codigoCrachao, codigoTicket } = parseResult.data;
+    const erroTicket = await validarCodigoTicket(codigoTicket, ordemTesteId, setorId, tipoLote);
+    if (erroTicket) return res.status(erroTicket.status).json(erroTicket);
+
     let operadorId = req.user?.userId;
 
     if (!operadorId) {
@@ -171,33 +202,7 @@ export class RastreamentosController {
       }
 
       const setorRepo = AppDataSource.getRepository(Setor);
-      const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
       const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
-      let tipoOpcaoValor: string | null = null;
-
-      if (setorInfo?.tipoOpcaoId) {
-        const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
-        if (tipoOpcao) tipoOpcaoValor = tipoOpcao.valor;
-      }
-
-      if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
-        // Trava Monolítica do Corte Expandida
-        if (tipoOpcaoValor) {
-          const setoresMonoliticos = [
-            'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
-            'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
-            'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
-            'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
-          ];
-          
-          if (setoresMonoliticos.includes(tipoOpcaoValor)) {
-             return res.status(400).json({
-                error: 'Neste setor, a bipagem é monolítica e deve ser realizada exclusivamente como Lote Principal. A Caixa Teste só corre de forma independente a partir das etapas pós-corte (ex: Serigrafia).',
-                code: 'FASE_MONOLITICA_CAIXA_TESTE_BLOQUEADA'
-             });
-          }
-        }
-      }
 
       // 1.1. Busca a Ordem de Teste correspondente para obter o modeloId
       const ordemRepo = AppDataSource.getRepository(OrdemTeste);
@@ -214,6 +219,9 @@ export class RastreamentosController {
 
       if (ordem.status === 'AGUARDANDO_MODELAGEM') {
         return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
+      }
+      if (tipoLote === TipoLote.CAIXA_TESTE && !ordem.possuiCaixaTeste) {
+        return res.status(409).json({ error: 'Esta ordem não possui Caixa Teste ativa.', code: 'CAIXA_TESTE_INATIVA' });
       }
 
       let versaoRota: number;
@@ -285,50 +293,35 @@ export class RastreamentosController {
 
       // 1.2.1. Trava Estrita de Sequência (Anti-Teletransporte)
       if (ordemSetorAtual > 1) {
-        const isCaixaTeste = tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE';
-        let isInicioCorteOuEtapa5 = ordemSetorAtual === 5;
-        
-        // Verifica se é um dos subsetores iniciais do corte para garantir o bypass
-        const allowedInitialSectors = ['CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM'];
-        if (tipoOpcaoValor && allowedInitialSectors.includes(tipoOpcaoValor)) {
-          isInicioCorteOuEtapa5 = true;
-        }
+        // Encontra a etapa imediatamente anterior na rota desse mesmo fluxo.
+        const rotaAnterior = await rotaRepo.findOne({
+          where: {
+            modeloId: ordem.modeloId,
+            plantaId: ordem.plantaId,
+            versao: versaoRota,
+            ordem: ordemSetorAtual - 1,
+          },
+        });
 
-        // Bypass da Trava de Sequência para nascimento da Caixa Teste nas máquinas de corte e subsetores iniciais
-        if (isCaixaTeste && isInicioCorteOuEtapa5) {
-          // Bypass de sequência permitido para Caixa Teste no início do Corte Automático ou subsetores permitidos
-        } else {
-          // Encontra a etapa imediatamente anterior na rota desse mesmo modelo
-          const rotaAnterior = await rotaRepo.findOne({
+        if (rotaAnterior) {
+          const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
+
+          const rastreamentoAnterior = await checkRastreamentoRepo.findOne({
             where: {
-              modeloId: ordem.modeloId,
-              plantaId: ordem.plantaId,
-              versao: versaoRota,
-              ordem: ordemSetorAtual - 1,
+              ordemTesteId,
+              setorId: rotaAnterior.setorId,
+              status: RastreamentoStatus.CONCLUIDO,
+              tipoLote,
+              ...(pecaId ? { pecaId } : { pecaId: IsNull() })
             },
+            order: { id: 'DESC' }
           });
 
-          if (rotaAnterior) {
-            const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
-            
-            // Verifica se a saída do setor anterior foi concluída
-            const rastreamentoAnterior = await checkRastreamentoRepo.findOne({
-              where: {
-                ordemTesteId,
-                setorId: rotaAnterior.setorId,
-                status: RastreamentoStatus.CONCLUIDO,
-                tipoLote,
-                ...(pecaId ? { pecaId } : { pecaId: IsNull() })
-              },
-              order: { id: 'DESC' } // GARANTIA DE ESTADO MAIS RECENTE
+          if (!rastreamentoAnterior || !rastreamentoAnterior.dataSaida) {
+            return res.status(403).json({
+              error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
+              code: 'SEQUENCIA_INVALIDA',
             });
-
-            if (!rastreamentoAnterior || !rastreamentoAnterior.dataSaida) {
-              return res.status(403).json({
-                error: 'Falha de Sequência: A peça não pode entrar neste setor pois não teve a saída registrada no setor anterior da rota.',
-                code: 'SEQUENCIA_INVALIDA',
-              });
-            }
           }
         }
       }
@@ -433,7 +426,10 @@ export class RastreamentosController {
       });
     }
 
-    const { ordemTesteId, setorId, tipoLote, pecaId, operadorId: bodyOperadorId, operadorSaidaId } = parseResult.data;
+    const { ordemTesteId, setorId, tipoLote, pecaId, operadorId: bodyOperadorId, operadorSaidaId, codigoTicket } = parseResult.data;
+    const erroTicket = await validarCodigoTicket(codigoTicket, ordemTesteId, setorId, tipoLote);
+    if (erroTicket) return res.status(erroTicket.status).json(erroTicket);
+
     let operadorId = bodyOperadorId || operadorSaidaId || req.user?.userId;
 
     if (!operadorId) {
@@ -501,29 +497,6 @@ export class RastreamentosController {
           });
         }
       }
-      if (tipoLote === TipoLote.CAIXA_TESTE || (tipoLote as any) === 'CAIXA_TESTE') {
-        const setorRepo = AppDataSource.getRepository(Setor);
-        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
-        const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
-        if (setorInfo?.tipoOpcaoId) {
-          const tipoOpcao = await configOpcaoRepo.findOne({ where: { id: setorInfo.tipoOpcaoId } });
-          if (tipoOpcao) {
-            const setoresMonoliticos = [
-              'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
-              'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
-              'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
-              'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
-            ];
-            if (setoresMonoliticos.includes(tipoOpcao.valor)) {
-               return res.status(400).json({
-                  error: 'Neste setor, a bipagem é monolítica e deve ser realizada exclusivamente como Lote Principal. A Caixa Teste só corre de forma independente a partir das etapas pós-corte (ex: Serigrafia).',
-                  code: 'FASE_MONOLITICA_CAIXA_TESTE_BLOQUEADA'
-               });
-            }
-          }
-        }
-      }
-
       const rastreamentoRepo  = AppDataSource.getRepository(Rastreamento);
       const inspecaoRepo      = AppDataSource.getRepository(Inspecao);
       const ocorrenciaRepo    = AppDataSource.getRepository(OcorrenciaProducao);
@@ -548,6 +521,9 @@ export class RastreamentosController {
           error: 'Ordem de teste não encontrada.',
           code: 'ORDEM_NOT_FOUND',
         });
+      }
+      if (tipoLote === TipoLote.CAIXA_TESTE && !ordem.possuiCaixaTeste) {
+        return res.status(409).json({ error: 'Esta ordem não possui Caixa Teste ativa.', code: 'CAIXA_TESTE_INATIVA' });
       }
 
       if (ordem.status === 'AGUARDANDO_MODELAGEM') {

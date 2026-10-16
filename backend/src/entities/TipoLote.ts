@@ -1,0 +1,4 @@
+export enum TipoLote {
+  LOTE_PRINCIPAL = 'LOTE_PRINCIPAL',
+  CAIXA_TESTE = 'CAIXA_TESTE',
+}

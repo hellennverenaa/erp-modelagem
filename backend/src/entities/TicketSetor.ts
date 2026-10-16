@@ -11,10 +11,11 @@ import {
 } from 'typeorm';
 import { uuidv7 } from 'uuidv7';
 import { OrdemTeste } from './OrdemTeste';
+import { TipoLote } from './TipoLote';
 import { Setor } from './Setor';
 
 @Entity({ name: 'tickets_setor' })
-@Unique('uq_tickets_setor_ordem_setor', ['ordemTesteId', 'setorId'])
+@Unique('uq_tickets_setor_ordem_setor_tipo_lote', ['ordemTesteId', 'setorId', 'tipoLote'])
 @Unique('uq_tickets_setor_codigo_barras', ['codigoBarras'])
 @Index('idx_tickets_setor_ordem_etapa', ['ordemTesteId', 'ordemEtapa'])
 export class TicketSetor {
@@ -38,6 +39,9 @@ export class TicketSetor {
   @Column({ name: 'setor_id', type: 'uuid' })
   setorId: string;
 
+  @Column({ name: 'tipo_lote', type: 'enum', enum: TipoLote, default: TipoLote.LOTE_PRINCIPAL })
+  tipoLote: TipoLote;
+
   @Column({ name: 'rota_versao', type: 'integer' })
   rotaVersao: number;
 
@@ -53,7 +57,8 @@ export class TicketSetor {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
-  static criarCodigoBarras(id = uuidv7()): { id: string; codigoBarras: string } {
-    return { id, codigoBarras: `TKT-${id.toUpperCase()}` };
+  static criarCodigoBarras(id = uuidv7(), tipoLote: TipoLote = TipoLote.LOTE_PRINCIPAL): { id: string; codigoBarras: string } {
+    const fluxo = tipoLote === TipoLote.CAIXA_TESTE ? 'CX' : 'LP';
+    return { id, codigoBarras: `TKT-${fluxo}-${id.toUpperCase()}` };
   }
 }

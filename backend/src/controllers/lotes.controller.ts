@@ -388,6 +388,7 @@ export class LotesController {
         tickets: tickets.map((ticket) => ({
           id: ticket.id,
           codigoBarras: ticket.codigoBarras,
+          tipoLote: ticket.tipoLote,
           ordemEtapa: ticket.ordemEtapa,
           rotaVersao: ticket.rotaVersao,
           setorNomeSnapshot: ticket.setorNomeSnapshot,
@@ -396,6 +397,50 @@ export class LotesController {
     } catch (error) {
       console.error('[LotesController] Erro ao buscar tickets por setor:', error);
       return res.status(500).json({ error: 'Erro ao buscar tickets por setor.' });
+    }
+  };
+
+  /** Resolve o código de barras de um ticket e retorna seu fluxo e setor. */
+  public getTicketSetorPorCodigo = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const codigoBarras = String(req.params.codigoBarras || '').trim().toUpperCase();
+      if (!codigoBarras || codigoBarras.length > 64) {
+        return res.status(400).json({ error: 'Código do ticket inválido.', code: 'TICKET_CODIGO_INVALIDO' });
+      }
+
+      const ticket = await AppDataSource.getRepository(TicketSetor).findOne({
+        where: { codigoBarras },
+        relations: { ordemTeste: true },
+      });
+      if (!ticket) {
+        return res.status(404).json({ error: 'Ticket de setor não encontrado.', code: 'TICKET_SETOR_NOT_FOUND' });
+      }
+
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && ticket.ordemTeste.plantaId !== req.user?.plantaId) {
+        return res.status(404).json({ error: 'Ticket de setor não encontrado.', code: 'TICKET_SETOR_NOT_FOUND' });
+      }
+
+      if (ticket.tipoLote === 'CAIXA_TESTE' && !ticket.ordemTeste.possuiCaixaTeste) {
+        return res.status(409).json({ error: 'A ordem não possui Caixa Teste ativa.', code: 'CAIXA_TESTE_INATIVA' });
+      }
+
+      return res.json({
+        ticket: {
+          id: ticket.id,
+          codigoBarras: ticket.codigoBarras,
+          ordemTesteId: ticket.ordemTesteId,
+          ordemCodigoBarras: ticket.ordemTeste.codigoBarras,
+          ordemStatus: ticket.ordemTeste.status,
+          possuiCaixaTeste: Boolean(ticket.ordemTeste.possuiCaixaTeste),
+          setorId: ticket.setorId,
+          setorNome: ticket.setorNomeSnapshot,
+          tipoLote: ticket.tipoLote,
+        },
+      });
+    } catch (error) {
+      console.error('[LotesController] Erro ao resolver ticket por código:', error);
+      return res.status(500).json({ error: 'Erro ao localizar o ticket de setor.' });
     }
   };
 

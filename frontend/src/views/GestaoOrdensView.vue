@@ -143,6 +143,7 @@ interface HistoricoResponse {
 interface TicketSetorInfo {
   id: string
   codigoBarras: string
+  tipoLote: 'LOTE_PRINCIPAL' | 'CAIXA_TESTE'
   ordemEtapa: number
   rotaVersao: number
   setorNomeSnapshot: string
@@ -186,7 +187,6 @@ const showTimeline = ref(false)
 const timelineOrdem = ref<OrdemTeste | null>(null)
 const timelineData = ref<RastreamentoHistorico[]>([])
 const loadingTimeline = ref(false)
-const loadingPdfId = ref<string | null>(null)
 const showAcompanharModal = ref(false)
 const acompanharOrdem = ref<OrdemTeste | null>(null)
 const showTicketsSetorModal = ref(false)
@@ -198,447 +198,63 @@ const loadingTicketsSetor = ref(false)
 const loadingTicketsSetorId = ref<string | null>(null)
 const loadingTicketPrintId = ref<string | null>(null)
 const erroTicketsSetor = ref('')
-const user = computed(() => authStore.user.value)
 
-async function imprimirOrdem(ordem: OrdemTeste, tipoLote: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL' = 'LOTE_PRINCIPAL') {
-  if (loadingPdfId.value) return
+type GrupoImpressaoTickets = 'LOTE_PRINCIPAL' | 'CAIXA_TESTE' | 'CORTE' | 'TODOS'
+
+async function imprimirTickets(ordem: OrdemTeste, grupo: GrupoImpressaoTickets) {
+  if (loadingTicketPrintId.value) return
 
   const printWindow = window.open('about:blank', '_blank')
   if (!printWindow) {
-    addToast('error', 'O navegador bloqueou a janela da etiqueta.')
+    addToast('error', 'O navegador bloqueou a janela de impressão dos tickets.')
     return
   }
 
-  printWindow.document.write('<!doctype html><title>Gerando etiqueta...</title><p style="font:16px sans-serif;padding:24px">Gerando etiqueta da ordem...</p>')
-  loadingPdfId.value = `${ordem.id}-${tipoLote}`
+  const endpoint = grupo === 'CORTE'
+    ? '/etiquetas/tickets-corte'
+    : grupo === 'TODOS'
+      ? '/etiquetas/tickets-ordem'
+      : '/etiquetas/tickets-setor'
+  const payload = {
+    ordemTesteId: ordem.id,
+    ...(grupo === 'LOTE_PRINCIPAL' || grupo === 'CAIXA_TESTE' ? { tipoLote: grupo } : {}),
+  }
+
+  loadingTicketPrintId.value = grupo
+  printWindow.document.write('<!doctype html><title>Gerando tickets...</title><p style="font:16px sans-serif;padding:24px">Gerando PDF dos tickets...</p>')
   try {
-    const response = await api.post('/etiquetas/gerar', {
-      ordemTesteIds: [ordem.id],
-      setorId: user.value?.setorId || 'ecb2d21d-51db-41a7-8261-17e8a5f03fed',
-      tipoLote
-    }, {
-      responseType: 'blob'
-    })
-    
-    const blob = new Blob([response.data], { type: 'application/pdf' })
-    const pdfUrl = window.URL.createObjectURL(blob)
+    const { data } = await api.post(endpoint, payload, { responseType: 'blob' })
+    const pdfUrl = window.URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
     printWindow.location.replace(pdfUrl)
-    
-    setTimeout(() => {
-      window.URL.revokeObjectURL(pdfUrl)
-    }, 60000)
-  } catch (err) {
+    setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60000)
+  } catch (err: any) {
     printWindow.close()
-    console.error('[Imprimir] Erro ao gerar etiquetas em PDF:', err)
-    addToast('error', 'Erro ao gerar etiqueta em PDF.')
-  } finally {
-    loadingPdfId.value = null
-  }
-}
-
-// ─── Gerador de Código de Barras SVG Code 128 (Zero Dependências) ────────────
-function escapeHtml(value: string | number | null | undefined): string {
-  return String(value ?? '').replace(/[&<>"']/g, char => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[char] ?? char)
-}
-
-function generateCode128Svg(text: string): string {
-  const code128patterns: string[] = [
-    '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
-    '221312', '231212', '112232', '122132', '122231', '113222', '123122', '123221', '223211', '221132',
-    '221231', '213212', '223112', '312131', '311222', '321122', '321221', '312212', '322112', '322211',
-    '212123', '212321', '232121', '111323', '131123', '131321', '112313', '132113', '132311', '211313',
-    '231113', '231311', '112133', '112331', '132131', '113123', '113321', '133121', '313121', '211331',
-    '231131', '213113', '213311', '213131', '311123', '311321', '331121', '312113', '312311', '332111',
-    '314111', '221411', '431111', '111224', '111422', '121124', '121421', '141122', '141221', '112214',
-    '112412', '122114', '122411', '142112', '142411', '241211', '221114', '413111', '241112', '134111',
-    '111242', '121142', '121241', '114212', '124112', '124211', '411212', '421112', '421211', '212141',
-    '214121', '412121', '111143', '111341', '131141', '114113', '114311', '411113', '411311', '113141',
-    '114131', '311141', '411131', '611111', '123311', '123131', '116111'
-  ]
-  
-  let checksum = 104
-  let patternStr = code128patterns[104]
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i) - 32
-    if (code >= 0 && code <= 95) {
-      checksum += code * (i + 1)
-      patternStr += code128patterns[code]
-    }
-  }
-  checksum %= 103
-  patternStr += code128patterns[checksum]
-  patternStr += code128patterns[106]
-  
-  let x = 10
-  let rects = ''
-  for (let i = 0; i < patternStr.length; i++) {
-    const width = parseInt(patternStr[i], 10) * 2
-    if (i % 2 === 0) {
-      rects += `<rect x="${x}" y="4" width="${width}" height="42" fill="#000000" />`
-    }
-    x += width
-  }
-  
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x + 10}" height="62" viewBox="0 0 ${x + 10} 62" style="display: block; margin: 0 auto;"><rect width="100%" height="100%" fill="#ffffff"/>${rects}<text x="${(x + 10) / 2}" y="57" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle" fill="#000000">${escapeHtml(text)}</text></svg>`
-}
-
-// ─── Lógica de Impressão de Tickets Físicos de Corte (Agrupados por Máquina) ──
-const loadingTicketsId = ref<string | null>(null)
-const corteOpcoesMap = ref<Record<string, string>>({})
-
-async function fetchCorteOpcoesMap() {
-  if (Object.keys(corteOpcoesMap.value).length > 0) return
-  try {
-    let opcoes = []
-    try {
-      const res = await api.get('/config/opcoes/subsetor_corte')
-      opcoes = res.data || []
-    } catch {
-      const resFallback = await api.get('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
-      opcoes = resFallback.data || []
-    }
-    const map: Record<string, string> = {}
-    for (const opt of opcoes) {
-      map[opt.id] = opt.label || opt.valor
-    }
-    corteOpcoesMap.value = map
-  } catch (err) {
-    console.warn('[GestaoOrdensView] Não foi possível carregar opções de subsetor_corte:', err)
-  }
-}
-
-async function imprimirTicketsCorte(ordem: OrdemTeste) {
-  if (loadingTicketsId.value) return
-  loadingTicketsId.value = ordem.id
-
-  try {
-    await fetchCorteOpcoesMap()
-
-    const { data: ordemCompleta } = await api.get(`/lotes/${ordem.id}`)
-    
-    let pecas: PecaInfo[] = ordemCompleta.modelo?.pecas || ordem.modelo?.pecas || []
-    
-    if (pecas.length === 0 && (ordemCompleta.modeloId || ordem.modeloId)) {
+    console.error(`[TicketsSetor] Erro ao gerar PDF do grupo ${grupo}:`, err)
+    const responseData = err?.response?.data
+    let message = 'Não foi possível gerar o PDF dos tickets.'
+    if (responseData instanceof Blob) {
+      const responseText = await responseData.text()
       try {
-        const targetModeloId = ordemCompleta.modeloId || ordem.modeloId
-        const { data: pecasRes } = await api.get(`/pecas/modelo/${targetModeloId}`)
-        pecas = pecasRes || []
-      } catch (errPecas) {
-        console.warn('[GestaoOrdensView] Falha ao carregar peças do modelo:', errPecas)
-      }
-    }
-
-    const pecasRemanejadas = ordemCompleta.pecasRemanejadas || ordem.pecasRemanejadas || {}
-    pecas = pecas.map(peca => ({
-      ...peca,
-      setorCorteOpcaoId: pecasRemanejadas[peca.id] || peca.setorCorteOpcaoId,
-    }))
-
-    if (pecas.length === 0) {
-      addToast('error', 'Nenhuma peça cadastrada para este modelo.')
-      return
-    }
-
-    // 1. Agrupa peças por setorCorteOpcaoId (Máquina de Corte)
-    const agrupamento: Record<string, { machineName: string; pecas: PecaInfo[] }> = {}
-
-    for (const peca of pecas) {
-      const machineId = peca.setorCorteOpcaoId || 'OUTROS'
-      let machineName = corteOpcoesMap.value[machineId] || 'Corte — Geral'
-      
-      if (machineName.toLowerCase().startsWith('corte ')) {
-        machineName = machineName.replace(/^corte\s+/i, 'Corte — ')
-      } else if (!machineName.toLowerCase().includes('corte')) {
-        machineName = `Corte — ${machineName}`
-      }
-
-      if (!agrupamento[machineId]) {
-        agrupamento[machineId] = { machineName, pecas: [] }
-      }
-      agrupamento[machineId].pecas.push(peca)
-    }
-
-    const modeloNome = ordemCompleta.modelo?.nome || getModeloNome(ordem.modeloId)
-    const modeloRef = ordemCompleta.modelo?.codigoProduto || getModeloReferencia(ordem.modeloId)
-    const plantaNome = ordemCompleta.planta?.nome || 'Planta Padrão'
-    const codigoBarrasOP = ordemCompleta.codigoBarras || ordem.codigoBarras
-    const dataHoje = new Date().toLocaleDateString('pt-BR')
-
-    // 2. Fatiamento (Chunking) das peças por máquina para paginação física de etiquetas
-    const MAX_PECAS_POR_TICKET = 6
-
-    interface TicketCardData {
-      machineBadgeText: string
-      pecasChunk: PecaInfo[]
-    }
-
-    const ticketCardsData: TicketCardData[] = []
-
-    for (const grupo of Object.values(agrupamento)) {
-      const totalPecas = grupo.pecas.length
-      
-      if (totalPecas <= MAX_PECAS_POR_TICKET) {
-        ticketCardsData.push({
-          machineBadgeText: grupo.machineName,
-          pecasChunk: grupo.pecas
-        })
-      } else {
-        const totalPaginas = Math.ceil(totalPecas / MAX_PECAS_POR_TICKET)
-        for (let page = 0; page < totalPaginas; page++) {
-          const start = page * MAX_PECAS_POR_TICKET
-          const end = start + MAX_PECAS_POR_TICKET
-          const chunk = grupo.pecas.slice(start, end)
-
-          ticketCardsData.push({
-            machineBadgeText: `${grupo.machineName} (${page + 1}/${totalPaginas})`,
-            pecasChunk: chunk
-          })
+        message = JSON.parse(responseText)?.error || message
+      } catch {
+        if (err?.response?.status === 404 && /text\/html/i.test(responseData.type)) {
+          message = 'A API em execução não reconheceu a rota de impressão. Reinicie o backend e confirme o destino do gateway.'
         }
       }
     }
-
-    // 3. Monta o HTML de cada Ticket Card a partir das etiquetas fatiadas
-    const ticketCardsHtml = ticketCardsData.map((card) => {
-      const barcodeSvg = generateCode128Svg(codigoBarrasOP)
-      const pecasListText = card.pecasChunk.map(p => p.nome).join(' • ')
-
-      return `
-        <div class="ticket-card">
-          <!-- LINHA DE CABEÇALHO DO CARD (NOME DO MODELO + BADGE DE MÁQUINA) -->
-          <div class="ticket-header-row">
-            <span class="model-title">${modeloNome}</span>
-            <span class="machine-badge">${card.machineBadgeText}</span>
-          </div>
-
-          <!-- SUB-CABEÇALHO COM CAIXA DE BORDA -->
-          <div class="sub-header-box">
-            <span>TESTE DE PRODUÇÃO</span>
-          </div>
-
-          <!-- CÓDIGO DE BARRAS CENTRALIZADO -->
-          <div class="barcode-container">
-            ${barcodeSvg}
-            <div class="barcode-text">${codigoBarrasOP}</div>
-          </div>
-
-          <!-- PEÇAS ATRIBUÍDAS EM LINHA COMPACTA -->
-          <div class="pieces-inline-section">
-            <span class="pieces-label">PEÇAS (${card.pecasChunk.length}):</span>
-            <span class="pieces-list">${pecasListText}</span>
-          </div>
-
-          <!-- RODAPÉ COMPACTO EM 3 COLUNAS -->
-          <div class="ticket-footer-row">
-            <span class="footer-left">${plantaNome}</span>
-            <span class="footer-center">REF: ${modeloRef} ${modeloNome}</span>
-            <span class="footer-right">${dataHoje}</span>
-          </div>
-        </div>
-      `
-    }).join('')
-
-    const fullPrintHtml = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <title>TICKETS CORTE — ${codigoBarrasOP}</title>
-  <style>
-    @page {
-      size: A4 portrait;
-      margin: 5mm 6mm;
-    }
-    * {
-      box-sizing: border-box;
-    }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      color: #000000;
-      background: #ffffff;
-      margin: 0;
-      padding: 0;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-    }
-    .tickets-grid {
-      display: grid;
-      grid-template-columns: 98mm 98mm;
-      grid-auto-rows: 53mm;
-      gap: 2mm 2mm;
-      width: 198mm;
-      margin: 0 auto;
-    }
-    .ticket-card {
-      width: 98mm;
-      max-width: 98mm;
-      height: 53mm;
-      max-height: 53mm;
-      box-sizing: border-box;
-      overflow: hidden;
-      border: 1px dashed #b0b0b0;
-      padding: 6px 10px;
-      background: #ffffff;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      page-break-inside: avoid;
-      break-inside: avoid;
-    }
-    .ticket-header-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 2px;
-      width: 100%;
-    }
-    .model-title {
-      font-size: 11px;
-      font-weight: 900;
-      text-transform: uppercase;
-      color: #000000;
-      letter-spacing: 0.2px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 60%;
-    }
-    .machine-badge {
-      background: #000000;
-      color: #ffffff;
-      font-size: 8.5px;
-      font-weight: 900;
-      text-transform: uppercase;
-      padding: 2px 6px;
-      border-radius: 3px;
-      letter-spacing: 0.5px;
-      white-space: nowrap;
-    }
-    .sub-header-box {
-      border: 1.5px solid #000000;
-      text-align: center;
-      padding: 1.5px 0;
-      margin-bottom: 3px;
-      width: 100%;
-    }
-    .sub-header-box span {
-      font-size: 9px;
-      font-weight: 900;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: #000000;
-    }
-    .barcode-container {
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      max-width: 100%;
-      overflow: hidden;
-      margin: 2px 0;
-    }
-    .barcode-container svg {
-      max-width: 95%;
-      max-height: 34px;
-      height: auto;
-    }
-    .barcode-text {
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 9.5px;
-      font-weight: 900;
-      letter-spacing: 1.2px;
-      margin-top: 2px;
-      color: #000000;
-    }
-    .pieces-inline-section {
-      font-size: 8px;
-      color: #333333;
-      margin: 1px 0;
-      line-height: 1.2;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      width: 100%;
-    }
-    .pieces-label {
-      font-weight: 900;
-      color: #000000;
-      margin-right: 4px;
-    }
-    .pieces-list {
-      font-weight: 600;
-      color: #222222;
-      text-transform: uppercase;
-    }
-    .ticket-footer-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 7.5px;
-      color: #666666;
-      border-top: 1px solid #f0f0f0;
-      padding-top: 2px;
-      width: 100%;
-    }
-    .footer-left {
-      color: #666666;
-      white-space: nowrap;
-    }
-    .footer-center {
-      font-weight: 700;
-      color: #222222;
-      text-transform: uppercase;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 50%;
-    }
-    .footer-right {
-      color: #666666;
-      white-space: nowrap;
-    }
-    @media print {
-      body {
-        padding: 0;
-        background: #ffffff;
-      }
-      .tickets-grid {
-        width: 198mm;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="tickets-grid">
-    ${ticketCardsHtml}
-  </div>
-</body>
-</html>`
-
-    const printWindow = window.open('', '_blank')
-    if (printWindow) {
-      printWindow.document.open()
-      printWindow.document.write(fullPrintHtml)
-      printWindow.document.close()
-      printWindow.focus()
-      setTimeout(() => {
-        printWindow.print()
-      }, 400)
-    } else {
-      addToast('error', 'Bloqueador de pop-ups impediu a janela de impressão.')
-    }
-  } catch (err) {
-    console.error('[imprimirTicketsCorte] Erro ao gerar tickets de corte:', err)
-    addToast('error', 'Falha ao gerar tickets de corte.')
+    addToast('error', message)
   } finally {
-    loadingTicketsId.value = null
+    loadingTicketPrintId.value = null
   }
+}
+
+function imprimirTicketsCorte(ordem: OrdemTeste) {
+  return imprimirTickets(ordem, 'CORTE')
+}
+
+function imprimirTodosTicketsSetor() {
+  if (!ticketsSetorOrdem.value) return
+  return imprimirTickets(ticketsSetorOrdem.value, 'TODOS')
 }
 
 async function abrirTicketsSetor(ordem: OrdemTeste) {
@@ -676,54 +292,6 @@ async function abrirTicketsSetor(ordem: OrdemTeste) {
 
 function fecharTicketsSetor() {
   showTicketsSetorModal.value = false
-}
-
-function imprimirTodosTicketsSetor() {
-  const ticketIds = [...new Set(ticketsSetorItems.value.map(ticket => ticket.id))]
-  imprimirTicketsSetor(ticketIds)
-}
-
-async function imprimirTicketsSetor(ticketIds: string[]) {
-  const ordem = ticketsSetorOrdem.value
-  if (!ordem || ticketIds.length === 0 || loadingTicketPrintId.value) return
-
-  const printWindow = window.open('', '_blank')
-  if (!printWindow) {
-    addToast('error', 'O navegador bloqueou a janela de impressão dos tickets.')
-    return
-  }
-
-  loadingTicketPrintId.value = 'todos'
-  printWindow.document.write('<!doctype html><title>Gerando tickets...</title><p style="font:16px sans-serif;padding:24px">Gerando PDF dos tickets de setor...</p>')
-  try {
-    const { data } = await api.post('/etiquetas/tickets-setor', {
-      ordemTesteId: ordem.id,
-      ticketIds,
-    }, { responseType: 'blob' })
-    const pdfUrl = window.URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
-    printWindow.location.replace(pdfUrl)
-    setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60000)
-  } catch (err: any) {
-    printWindow.close()
-    console.error('[TicketsSetor] Erro ao gerar PDF dos tickets:', err)
-    const responseData = err?.response?.data
-    let message = 'Não foi possível gerar o PDF dos tickets de setor.'
-    if (responseData instanceof Blob) {
-      const responseText = await responseData.text()
-      if (err?.response?.status === 404 && /text\/html/i.test(responseData.type)) {
-        message = 'A API em execução não reconheceu a rota de impressão. Reinicie o backend e confirme o destino do gateway.'
-      } else {
-        try {
-          message = JSON.parse(responseText)?.error || message
-        } catch {
-          // Mantém a mensagem genérica quando a API não retorna um erro JSON.
-        }
-      }
-    }
-    addToast('error', message)
-  } finally {
-    loadingTicketPrintId.value = null
-  }
 }
 
 function abrirAcompanhamento(ordem: OrdemTeste) {
@@ -1702,7 +1270,7 @@ onMounted(async () => {
 
             <div class="modal-body modal-body--tickets-setor p-5">
               <p class="mb-3 text-sm text-slate-600">
-                Imprima aqui as etiquetas do lote, de Corte e todos os tickets únicos dos setores desta ordem.
+                Imprima os tickets da rota do Lote Principal, da Caixa Teste e dos subsetores de Corte.
               </p>
 
               <section v-if="canPrintOrdens && ticketsSetorOrdem" class="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4" aria-label="Impressões da ordem">
@@ -1711,39 +1279,39 @@ onMounted(async () => {
                   <button
                     type="button"
                     class="btn-outline inline-flex items-center gap-2"
-                    :disabled="loadingPdfId !== null || loadingTicketPrintId !== null || loadingTicketsId === ticketsSetorOrdem.id"
-                    @click="imprimirOrdem(ticketsSetorOrdem, 'LOTE_PRINCIPAL')"
+                    :disabled="loadingTicketPrintId !== null"
+                    @click="imprimirTickets(ticketsSetorOrdem, 'LOTE_PRINCIPAL')"
                   >
-                    <Loader2 v-if="loadingPdfId === `${ticketsSetorOrdem.id}-LOTE_PRINCIPAL`" :size="14" class="animate-spin" aria-hidden="true" />
+                    <Loader2 v-if="loadingTicketPrintId === 'LOTE_PRINCIPAL'" :size="14" class="animate-spin" aria-hidden="true" />
                     <Printer v-else :size="14" aria-hidden="true" />
-                    {{ loadingPdfId === `${ticketsSetorOrdem.id}-LOTE_PRINCIPAL` ? 'Gerando...' : 'Lote principal' }}
+                    {{ loadingTicketPrintId === 'LOTE_PRINCIPAL' ? 'Gerando...' : 'Lote principal' }}
                   </button>
                   <button
                     v-if="ticketsSetorOrdem.possuiCaixaTeste"
                     type="button"
                     class="btn-outline inline-flex items-center gap-2"
-                    :disabled="loadingPdfId !== null || loadingTicketPrintId !== null || loadingTicketsId === ticketsSetorOrdem.id"
-                    @click="imprimirOrdem(ticketsSetorOrdem, 'CAIXA_TESTE')"
+                    :disabled="loadingTicketPrintId !== null"
+                    @click="imprimirTickets(ticketsSetorOrdem, 'CAIXA_TESTE')"
                   >
-                    <Loader2 v-if="loadingPdfId === `${ticketsSetorOrdem.id}-CAIXA_TESTE`" :size="14" class="animate-spin" aria-hidden="true" />
+                    <Loader2 v-if="loadingTicketPrintId === 'CAIXA_TESTE'" :size="14" class="animate-spin" aria-hidden="true" />
                     <Printer v-else :size="14" aria-hidden="true" />
-                    {{ loadingPdfId === `${ticketsSetorOrdem.id}-CAIXA_TESTE` ? 'Gerando...' : 'Caixa Teste' }}
+                    {{ loadingTicketPrintId === 'CAIXA_TESTE' ? 'Gerando...' : 'Caixa Teste' }}
                   </button>
                   <button
                     type="button"
                     class="btn-outline inline-flex items-center gap-2"
-                    :disabled="loadingTicketsId !== null || loadingPdfId !== null || loadingTicketPrintId !== null"
+                    :disabled="loadingTicketPrintId !== null"
                     @click="imprimirTicketsCorte(ticketsSetorOrdem)"
                   >
-                    <Loader2 v-if="loadingTicketsId === ticketsSetorOrdem.id" :size="14" class="animate-spin" aria-hidden="true" />
+                    <Loader2 v-if="loadingTicketPrintId === 'CORTE'" :size="14" class="animate-spin" aria-hidden="true" />
                     <Printer v-else :size="14" aria-hidden="true" />
-                    {{ loadingTicketsId === ticketsSetorOrdem.id ? 'Gerando...' : 'Tickets de Corte' }}
+                    {{ loadingTicketPrintId === 'CORTE' ? 'Gerando...' : 'Tickets de Corte' }}
                   </button>
                 </div>
               </section>
 
               <div class="mb-4 rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-                Use o botão abaixo para imprimir todos os tickets distintos em um único envio. O gabarito organiza até 10 por folha A4, em 2 colunas por 5 linhas, com início a 13 mm do topo.
+                A impressão completa reúne Lote Principal, Caixa Teste quando ativada e Corte em um PDF. O gabarito comporta 10 etiquetas por folha A4, em 2 colunas por 5 linhas, com início a 13 mm do topo.
               </div>
 
               <div v-if="loadingTicketsSetor" class="flex min-h-32 items-center justify-center gap-2 text-sm text-slate-500" role="status">
@@ -1776,7 +1344,7 @@ onMounted(async () => {
                 >
                   <div class="min-w-0">
                     <p class="text-[10px] font-semibold uppercase tracking-wide text-indigo-600">
-                      Etapa {{ ticket.ordemEtapa }} · Rota v{{ ticket.rotaVersao }}
+                      {{ ticket.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste' : 'Lote Principal' }} · Etapa {{ ticket.ordemEtapa }} · Rota v{{ ticket.rotaVersao }}
                     </p>
                     <h3 class="mt-0.5 truncate text-sm font-semibold text-slate-900">{{ ticket.setorNomeSnapshot }}</h3>
                     <p class="mt-1 break-all font-mono text-xs text-slate-600">{{ ticket.codigoBarras }}</p>
@@ -1790,12 +1358,12 @@ onMounted(async () => {
               <button
                 type="button"
                 class="btn-primary"
-                :disabled="loadingTicketsSetor || ticketsSetorItems.length === 0 || loadingTicketPrintId !== null || loadingPdfId !== null || loadingTicketsId !== null"
+                :disabled="loadingTicketsSetor || ticketsSetorItems.length === 0 || loadingTicketPrintId !== null"
                 @click="imprimirTodosTicketsSetor"
               >
-                <Loader2 v-if="loadingTicketPrintId === 'todos'" :size="15" class="animate-spin" aria-hidden="true" />
+                <Loader2 v-if="loadingTicketPrintId === 'TODOS'" :size="15" class="animate-spin" aria-hidden="true" />
                 <Printer v-else :size="15" aria-hidden="true" />
-                {{ loadingTicketPrintId === 'todos' ? 'Gerando PDF...' : 'Imprimir todos os setores' }}
+                {{ loadingTicketPrintId === 'TODOS' ? 'Gerando PDF...' : 'Imprimir todos os setores' }}
               </button>
             </div>
           </div>

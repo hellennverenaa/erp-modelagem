@@ -134,6 +134,11 @@ router.get('/', lotesController.getLotes);
  *         description: Erro interno do servidor
  */
 router.get(
+  '/tickets-setor/codigo/:codigoBarras',
+  exigirPermissao('EDITAR_TELA_BIPAGEM'),
+  lotesController.getTicketSetorPorCodigo,
+);
+router.get(
   '/:id/tickets-setor',
   exigirAlgumaPermissao([
     'EDITAR_TELA_GESTAO_ORDENS',

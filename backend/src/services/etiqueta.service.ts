@@ -20,8 +20,9 @@ export interface EtiquetaDTO {
   possuiCaixaTeste?: boolean;
   plantaNome?: string;
   tipoLote?: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL';
-  tipoEtiqueta?: 'SETOR';
+  tipoEtiqueta?: 'SETOR' | 'CORTE';
   setorNome?: string;
+  detalhe?: string;
   ordemEtapa?: number;
   rotaVersao?: number;
   copias?: number;
@@ -74,20 +75,26 @@ export class EtiquetaService {
       let pageContent = '';
       for (const etq of pagina) {
         const ticketSetor = etq.tipoEtiqueta === 'SETOR';
+        const ticketCorte = etq.tipoEtiqueta === 'CORTE';
         const sufixo = etq.tipoLote === 'CAIXA_TESTE' ? '-CX' : '-LP';
         let codigoBarras = etq.codigoBarras;
-        if (!ticketSetor && !codigoBarras.endsWith('-CX') && !codigoBarras.endsWith('-LP')) {
+        if (!ticketSetor && !ticketCorte && !codigoBarras.endsWith('-CX') && !codigoBarras.endsWith('-LP')) {
           codigoBarras += sufixo;
         }
 
         const barcodeData = await this.gerarBarcodeBase64(codigoBarras);
-        const badgeText = ticketSetor
-          ? `ETAPA ${etq.ordemEtapa ?? ''} · ROTA V${etq.rotaVersao ?? ''}`
-          : etq.tipoLote === 'CAIXA_TESTE' ? 'CAIXA TESTE' : 'LOTE PRINCIPAL';
-        const tituloEtiqueta = ticketSetor
-          ? `TICKET DE SETOR · ${etq.setorNome || 'SETOR'}`
-          : 'TESTE DE PRODUÇÃO';
-        const textoReferencia = ticketSetor
+        const tipoFluxo = etq.tipoLote === 'CAIXA_TESTE' ? 'CAIXA TESTE' : 'LOTE PRINCIPAL';
+        const badgeText = ticketCorte
+          ? 'CORTE AUTOMÁTICO'
+          : ticketSetor
+            ? `${tipoFluxo} · ETAPA ${etq.ordemEtapa ?? ''} · ROTA V${etq.rotaVersao ?? ''}`
+            : tipoFluxo;
+        const tituloEtiqueta = ticketCorte
+          ? `SUBSETOR DE CORTE · ${etq.setorNome || 'GERAL'}`
+          : ticketSetor
+            ? `TICKET DE SETOR · ${etq.setorNome || 'SETOR'}`
+            : 'TESTE DE PRODUÇÃO';
+        const textoReferencia = ticketSetor || ticketCorte
           ? `OP: ${etq.ordemTeste}`
           : `REF: ${etq.produtoDescricao}`;
         
@@ -97,11 +104,12 @@ export class EtiquetaService {
               <span class="modelo-nome">${escapeHtml(etq.modelo)}</span>
               <span class="badge-teste">${escapeHtml(badgeText)}</span>
             </div>
-            <div class="alerta-producao${ticketSetor ? ' alerta-producao--ticket' : ''}">${escapeHtml(tituloEtiqueta)}</div>
+            <div class="alerta-producao${ticketSetor || ticketCorte ? ' alerta-producao--ticket' : ''}">${escapeHtml(tituloEtiqueta)}</div>
             <div class="barcode-container">
               <img class="barcode-img" src="${barcodeData}" alt="Codigo de barras" />
-              <div class="barcode-number${ticketSetor ? ' barcode-number--ticket' : ''}">${escapeHtml(codigoBarras)}</div>
+              <div class="barcode-number${ticketSetor || ticketCorte ? ' barcode-number--ticket' : ''}">${escapeHtml(codigoBarras)}</div>
             </div>
+            ${ticketCorte && etq.detalhe ? `<div class="etiqueta-detalhe">${escapeHtml(etq.detalhe)}</div>` : ''}
             <div class="etiqueta-footer">
               <span>${escapeHtml(etq.plantaNome || 'PLANTA DASS')}</span>
               <span class="ref-mono">${escapeHtml(textoReferencia)}</span>
@@ -242,6 +250,17 @@ export class EtiquetaService {
           .barcode-number--ticket {
             font-size: 7px;
             letter-spacing: 0.35px;
+          }
+          .etiqueta-detalhe {
+            font-family: 'Inter', sans-serif;
+            font-size: 7px;
+            line-height: 1.15;
+            text-transform: uppercase;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #334155;
+            margin: 0 0 1mm;
           }
           .etiqueta-footer {
             display: flex;
