@@ -135,11 +135,17 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       plantaId: input.ordem.plantaId,
       setorId: etapa.setorId,
       ordem: etapa.ordem,
+      slaAlvoMin: input.ordem.slasPorSetor?.[etapa.setorId] ?? 120,
       obrigatorio: etapa.obrigatorio,
       tipoExecucao: etapa.tipoExecucao,
       bipagemApenasSaida: etapa.bipagemApenasSaida,
     }));
-    await rotaRepo.save(rota);
+    const rotasSalvas = await rotaRepo.save(rota);
+
+    const slasPorSetor = { ...(input.ordem.slasPorSetor || {}) };
+    for (const etapa of rotasSalvas) {
+      slasPorSetor[etapa.setorId] = etapa.slaAlvoMin;
+    }
 
     const ordemRepo = manager.getRepository(OrdemTeste);
     const ordem = await ordemRepo.save(ordemRepo.create({
@@ -153,7 +159,7 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       liberadoProducao: false,
       possuiCaixaTeste: input.ordem.possuiCaixaTeste,
       observacoes: input.ordem.observacoes || null,
-      slasPorSetor: input.ordem.slasPorSetor || null,
+      slasPorSetor,
     }));
 
     return { modelo, ordem, totalPecas: pecas.length, totalEtapasRota: rota.length };

@@ -186,7 +186,7 @@ const fixedStart: RouteBlock = {
   tipo: 'fixo',
   icon: CheckCheck,
   color: '#1e40af',
-  description: 'Almoxarifado · Navalha · Telas',
+  description: 'Almoxarifado · Navalha',
 }
 
 const fixedMiddle: RouteBlock[] = [
@@ -224,6 +224,9 @@ const zonePosMontagem = ref<RouteBlock[]>([])
 // ─── Conditional toggles ─────────────────────────────────────────────────
 const toggleSerigrafia   = ref(false)
 const toggleVulcanizado  = ref(false)
+const fixedStartDescription = computed(() =>
+  toggleSerigrafia.value ? 'Almoxarifado · Navalha · Telas' : fixedStart.description,
+)
 
 // Toggles para as máquinas extras de corte
 const toggleCorteCN      = ref(false)
@@ -502,7 +505,9 @@ async function salvarRota() {
     ...zonePosMontagem.value,
   ]
   const nomesEsperados = [
-    'Almoxarifado da Modelagem', 'Navalha', 'Telas', 'Corte Recebimento',
+    'Almoxarifado da Modelagem', 'Navalha',
+    ...(toggleSerigrafia.value ? ['Telas'] : []),
+    'Corte Recebimento',
     'Corte Separação', 'Corte Dublagem', 'Corte Ponte', 'Corte Lectra',
     ...(maquinas.atom ? ['Corte Atom'] : []),
     ...(maquinas.cn ? ['Corte CN'] : []),
@@ -521,11 +526,13 @@ async function salvarRota() {
   const rotaSalvar: any[] = []
   let currentOrdem = 1
 
-  // 1. Conferência Inicial (Almoxarifado, Navalha, Telas) em paralelo
+  // 1. Conferência Inicial (Telas acompanha Serigrafia quando ativada)
   const confOrdem = currentOrdem
   rotaSalvar.push({ setorId: getId('Almoxarifado da Modelagem'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
   rotaSalvar.push({ setorId: getId('Navalha'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
-  rotaSalvar.push({ setorId: getId('Telas'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  if (toggleSerigrafia.value) {
+    rotaSalvar.push({ setorId: getId('Telas'), ordem: confOrdem, obrigatorio: true, tipoExecucao: 'PARALELO', bipagemApenasSaida: false })
+  }
   currentOrdem++
 
   // 2. Corte Automático (Corte Recebimento, Corte Separação, Corte Dublagem)
@@ -655,7 +662,7 @@ async function carregarModelos() {
   if (props.isWizardMode || props.modeloId) return
   loadingModelos.value = true
   try {
-    const response = await api.get('/admin/modelos')
+    const response = await api.get('/rotas/modelos')
     modelos.value = response.data || []
   } catch (err) {
     console.error('[RouteBuilder] Falha ao carregar modelos:', err)
@@ -693,6 +700,8 @@ async function carregarRotaDoModelo(modeloId: string) {
   if (!modeloId || !plantaEfetivaId.value) return
 
   // Reset temporário antes de carregar
+  sectorSlaMap.value = {}
+  sectorSlaConfigMap.value = {}
   zoneAntesApoio.value = []
   zoneJuntoApoio.value = []
   zoneEntreApoioCostura.value = []
@@ -718,6 +727,13 @@ async function carregarRotaDoModelo(modeloId: string) {
     await carregarMaquinasDoModelo(modeloId)
     const response = await api.get(`/rotas/${modeloId}`, { params: { plantaId: plantaEfetivaId.value } })
     const rotaData = response.data?.rota || []
+
+    for (const etapa of rotaData) {
+      const slaAlvoMin = Number(etapa.slaAlvoMin)
+      if (etapa.setorId && etapa.slaAlvoMin != null && Number.isFinite(slaAlvoMin)) {
+        sectorSlaMap.value[etapa.setorId] = slaAlvoMin
+      }
+    }
 
     if (rotaData.length === 0) return // Não tem rota, usa inicial
 
@@ -1122,7 +1138,7 @@ defineExpose({
                 </div>
                 <div class="tl-block-text">
                   <span class="tl-block-name">{{ fixedStart.label }}</span>
-                  <span class="tl-block-sub">{{ fixedStart.description }}</span>
+                  <span class="tl-block-sub">{{ fixedStartDescription }}</span>
                 </div>
               </div>
               <div class="tl-block-right flex-row-layout">

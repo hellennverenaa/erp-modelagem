@@ -6,6 +6,8 @@ import { Checklist } from '../entities/Checklist';
 import { OcorrenciaProducao, TipoOcorrencia } from '../entities/OcorrenciaProducao';
 import { Inspecao } from '../entities/Inspecao';
 import { DossieModelo, DossieStatus } from '../entities/DossieModelo';
+import { AuditLog } from '../entities/AuditLog';
+import { In } from 'typeorm';
 import puppeteer, { Browser } from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
@@ -15,6 +17,23 @@ const tiposOcorrenciaLegiveis: Partial<Record<TipoOcorrencia, string>> = {
   [TipoOcorrencia.AGUARDANDO_RESPOSTA_SUL]: 'Aguardando resposta do Sul',
 };
 
+function escaparHtml(valor: unknown): string {
+  return String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatarSla(minutos: unknown): string {
+  const valor = Number(minutos);
+  if (!Number.isFinite(valor)) return '—';
+  if (valor >= 1440 && valor % 1440 === 0) return `${valor / 1440} dia(s)`;
+  if (valor >= 60 && valor % 60 === 0) return `${valor / 60} h`;
+  return `${valor} min`;
+}
+
 /**
  * Monta o HTML com os dados consolidados do teste para renderização no PDF
  */
@@ -23,7 +42,8 @@ function generateDossieHtml(
   rastreamentos: Rastreamento[],
   checklists: Checklist[],
   ocorrencias: OcorrenciaProducao[],
-  inspecoes: Inspecao[]
+  inspecoes: Inspecao[],
+  auditoriaConfiguracao: AuditLog[],
 ): string {
   // Capa e identificação
   const capHtml = `
@@ -194,6 +214,62 @@ function generateDossieHtml(
     </div>
   `;
 
+  const nomesSetores = new Map<string, string>(
+    (testOrder.modelo?.rotas || []).map((rota) => [rota.setorId, rota.setor?.nome || rota.setorId] as const),
+  );
+  const auditoriaRows = auditoriaConfiguracao.map((log) => {
+    const anteriores = log.dadosAnteriores || {};
+    const novos = log.dadosNovos || {};
+    let detalhes = 'Alteração de configuração';
+
+    if (log.acao === 'PECA_REMANEJADA') {
+      const nomePeca = novos.pecaNome || anteriores.pecaNome || 'Peça';
+      const maquinaAnterior = anteriores.maquinaNome || 'Sem máquina';
+      const maquinaNova = novos.maquinaNome || 'Sem máquina';
+      detalhes = `Peça <strong>${escaparHtml(nomePeca)}</strong>: ${escaparHtml(maquinaAnterior)} → ${escaparHtml(maquinaNova)}`;
+    } else if (log.acao === 'SLA_ALTERADO') {
+      const chaves = [...new Set([...Object.keys(anteriores), ...Object.keys(novos)])].filter((chave) => chave !== 'default');
+      detalhes = chaves.length
+        ? `<ul>${chaves.map((chave) => {
+            const nomeSetor = nomesSetores.get(chave) || chave;
+            const slaAnterior = formatarSla(anteriores[chave] ?? 0);
+            const slaNovo = formatarSla(novos[chave] ?? 0);
+            return `<li><strong>${escaparHtml(nomeSetor)}</strong>: ${escaparHtml(slaAnterior)} → ${escaparHtml(slaNovo)}</li>`;
+          }).join('')}</ul>`
+        : 'Alteração de SLA';
+    }
+
+    const tipo = log.acao === 'PECA_REMANEJADA' ? 'Remanejamento' : 'SLA alterado';
+    const operador = log.usuario?.nomeCompleto || log.usuario?.usuario || 'Sistema';
+    return `
+      <tr>
+        <td>${new Date(log.createdAt).toLocaleString('pt-BR')}</td>
+        <td>${escaparHtml(operador)}</td>
+        <td>${tipo}</td>
+        <td>${detalhes}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const auditoriaConfiguracaoHtml = `
+    <div class="section">
+      <h3>5. Histórico de Configurações e Remanejamentos</h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Operador</th>
+            <th>Evento</th>
+            <th>Detalhes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${auditoriaRows || '<tr><td colspan="4" style="text-align:center;">Nenhuma alteração de SLA ou remanejamento registrado.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+
   return `
     <!DOCTYPE html>
     <html>
@@ -313,6 +389,7 @@ function generateDossieHtml(
       ${checklistsHtml}
       ${ocorrenciasHtml}
       ${inspecoesHtml}
+      ${auditoriaConfiguracaoHtml}
       <div class="footer-note">
         ERP Dass de Modelagem de Calçados — Relatório de Dossiê Técnico do Modelo.
       </div>
@@ -330,6 +407,7 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
   const occurrenceRepo = AppDataSource.getRepository(OcorrenciaProducao);
   const inspecaoRepo = AppDataSource.getRepository(Inspecao);
   const trackingRepo = AppDataSource.getRepository(Rastreamento);
+  const auditRepo = AppDataSource.getRepository(AuditLog);
 
   let browser: Browser | null = null;
   const startTime = Date.now();
@@ -339,7 +417,7 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
     const dossie = await dossieRepo.findOne({
       where: { id: dossieId },
       relations: {
-        ordemTeste: { modelo: { marca: true } }
+        ordemTeste: { modelo: { marca: true, rotas: { setor: true } } }
       }
     });
 
@@ -386,6 +464,16 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
       order: { dataInspecao: 'ASC' }
     });
 
+    const auditoriaConfiguracao = await auditRepo.find({
+      where: {
+        entidadeTipo: 'ordens_teste',
+        entidadeId: ordemTesteId,
+        acao: In(['SLA_ALTERADO', 'PECA_REMANEJADA']),
+      },
+      relations: { usuario: true },
+      order: { createdAt: 'ASC' },
+    });
+
     // 3. Usa o mesmo diretório das imagens e dos arquivos estáticos.
 
     if (!fs.existsSync(uploadDir)) {
@@ -396,7 +484,7 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
     const fullPath = path.join(uploadDir, fileName);
 
     // 4. Cria HTML com Template Literals
-    const htmlContent = generateDossieHtml(testOrder, rastreamentos, checklists, ocorrencias, inspecoes);
+    const htmlContent = generateDossieHtml(testOrder, rastreamentos, checklists, ocorrencias, inspecoes, auditoriaConfiguracao);
 
     // 5. Executa Puppeteer para converter HTML -> PDF
     browser = await puppeteer.launch({

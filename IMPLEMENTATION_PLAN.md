@@ -3,7 +3,9 @@
 ## Pontos pendentes
 
 ### 02 — TASK-002: Definir as regras de Bordado, Apoio e bifurcação
-**Estado: pendente.** Definir com o processo como Bordado e Apoio se relacionam na rota e na produção: substituição, paralelo ou subprocesso. Esclarecer como Serigrafia determina a bifurcação e a Conferência Inicial, preservando Navalha e Almoxarifado de Modelagem e mostrando Telas somente quando houver Serigrafia. A regra deve vir da rota, sem configuração duplicada na ordem.
+**Estado: em andamento.** Definir com o processo como Bordado e Apoio se relacionam na rota e na produção: substituição, paralelo ou subprocesso. Esclarecer como Serigrafia determina a bifurcação e a Conferência Inicial, preservando Navalha e Almoxarifado de Modelagem. A regra deve vir da rota, sem configuração duplicada na ordem.
+
+**Escopo concluído nesta entrega:** Incluir o setor Telas na Conferência Inicial somente quando Serigrafia estiver ativa em Setores Condicionais, tanto no Passo 4 do fluxo de criação quanto no Construtor de Rota individual. A migration normaliza novas versões de rotas existentes e preserva versões anteriores e snapshots. O restante da tarefa continua em andamento para definir as regras de Bordado, Apoio e bifurcação.
 
 ### 14 — TASK-014: Fazer o backend operacional executar a rota da ordem
 **Estado: pendente.** Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.
@@ -66,3 +68,29 @@ O estado acima foi confirmado somente no PostgreSQL local apontado pela configur
 ## Migration relacionada à TASK-027
 
 - `1791980800000-AdicionaTiposOcorrenciaProducao`: aplicada somente no banco local; adiciona `LIBERACAO_PARCIAL` e `AGUARDANDO_RESPOSTA_SUL` ao enum PostgreSQL antes de `OUTRO`. O rollback recusa remover os valores quando já houver ocorrências usando-os.
+
+### 28 — TASK-028: Persistir SLA da rota e iniciar o tempo na entrada do setor
+**Estado: implementação entregue — validação funcional/manual pendente. Relação: entrega parcial relacionada à TASK-016.** Persistir o prazo em minutos em cada etapa/versionamento da rota, carregar o valor salvo no Construtor de Rota e disponibilizá-lo para a TV por meio do mapa congelado na ordem/snapshot ou da rota vinculada. O tempo exibido usa `dataEntrada` do rastreamento; etapas sintéticas sem uma entrada registrada permanecem aguardando, sem contador nem atraso.
+
+**Entrega:** `RotaModelo.slaAlvoMin` guarda o prazo da etapa e a migration backfill lê mapas de ordens/snapshots para a versão correspondente, usando 120 minutos quando não há valor histórico. O controller de rotas salva o mapa recebido; o Construtor de Rota hidrata os valores ao reabrir o modelo. Os fluxos de finalização/criação da ordem copiam os SLAs da rota para o mapa por ordem, e o fluxo de manutenção preserva os overrides existentes. A TV prioriza mapa da ordem, depois snapshot e por fim o SLA da rota; não inicia o contador para a Conferência Inicial sintética. `dataEntrada` real continua vindo do rastreamento persistido.
+
+**Evidências:** `cd backend && npm run build` e `cd frontend && npm run build` concluídos; `git diff --check` sem erros. Não há teste automatizado dedicado a SLA/TV e o `npm test` do backend é placeholder; não foi executado. A migration foi aplicada ao PostgreSQL local configurado em 2026-10-15, e `migration:show` confirmou 22 migrations aplicadas. **Pendências:** validar salvar/reabrir uma rota, finalizar uma ordem e conferir na TV a contagem antes/depois de refresh, atraso e espera por entrada. Outros ambientes não foram acessados nem migrados.
+
+## Migration relacionada à TASK-028
+
+- `1791981000000-PersisteSlaNaRotaModelo`: adiciona `rota_modelo.sla_alvo_min` com padrão de 120 minutos e migra valores de SLA do snapshot/mapa de cada ordem para a versão correspondente da rota. Aplicada somente no PostgreSQL local configurado em 2026-10-15; outros ambientes ainda precisam ser verificados e migrados.
+
+### 29 — TASK-029: Listar modelos sem rota no Construtor de Rota
+**Estado: implementação entregue — validação funcional/manual pendente.** Separada a listagem do Construtor da listagem usada na criação de ordens. O novo `GET /rotas/modelos`, protegido pela permissão `TELA_CONSTRUTOR_ROTA`, retorna somente os campos necessários de todos os modelos ativos, sem filtrar ordens ou rotas. A tela individual usa esse endpoint; o carregamento da rota continua escopado à planta selecionada. O endpoint `/admin/modelos` mantém o filtro 1:1 para criação de ordens.
+
+**Evidências:** `cd backend && npm run build`, `cd frontend && npm run build` e `git diff --check` concluídos. Após identificar o backend antigo em execução, a migration pendente foi aplicada no banco local e a API reiniciada em 2026-10-15; startup confirmou ausência de migrations pendentes e conexão ao PostgreSQL. Gateway e backend responderam HTTP 401 à consulta sem autenticação, conforme esperado pelas rotas protegidas. Não há teste automatizado dedicado a essa listagem. **Pendências:** validar manualmente no navegador um modelo ativo sem rota, um modelo com ordem mas sem rota, um modelo com rota em outra planta, modelo inativo e acesso à listagem por usuário com e sem a permissão do Construtor. O endpoint de criação de ordens deve continuar omitindo modelos já vinculados a uma ordem.
+
+### 30 — TASK-030: Controlar configuração, histórico de remanejamentos e dossiê da ordem
+**Estado: implementação entregue — validação funcional/manual pendente.** O botão e o modal usam “Configuração”. A aba Histórico consolida rastreamentos por setor, alterações de SLA e remanejamentos. A ação global `CONFIGURAR_ORDEM_TESTE` aparece na Matriz RBAC, protege o botão e o endpoint, e recebeu grants iniciais para perfis que já tinham `EDITAR_TELA_GESTAO_ORDENS`; a edição de SLA continua exigindo `EDITAR_ROTA`. O remanejamento é persistido em `ordens_teste.pecas_remanejadas` e consumido pela distribuição e autorização de bipagem do corte, sem alterar a peça-base do modelo. A API valida o vínculo da peça, a opção ativa de subsetor e a existência do setor correspondente na planta. Atualizações e auditorias são transacionais. O PDF existente inclui uma seção parcial de histórico de SLA/remanejamentos, data e operador. A tela e o relatório completo de ciclo de vida foram adiados para um próximo ponto.
+
+**Evidências:** `cd backend && npm run build`, `cd frontend && npm run build` e `git diff --check` concluídos. A migration `1791981200000-PersisteRemanejamentoPecaPorOrdem` foi aplicada no PostgreSQL local em 2026-10-15 após as 23 migrations anteriores. Ela preservou os destinos atuais nos registros das ordens e restaurou o destino-base compartilhado quando a auditoria permitia identificar uma única ordem por modelo. **Pendências:** validar na interface o acesso de perfis com/sem `CONFIGURAR_ORDEM_TESTE`, as restrições de SLA por `EDITAR_ROTA`, o remanejamento restrito à ordem, a distribuição/bipagem no novo setor e o conteúdo parcial do PDF com eventos reais. Não há testes automatizados dedicados a esse fluxo. Outros ambientes não foram acessados nem migrados. A tela do relatório completo fica para o próximo ponto, conforme definido pelo usuário.
+
+## Migration relacionada à TASK-030
+
+- `1791981100000-ControlaConfiguracaoOrdemRbac`: cadastra `CONFIGURAR_ORDEM_TESTE` no catálogo RBAC e concede a ação aos perfis que já podiam editar Gestão de Ordens. Aplicada somente no PostgreSQL local configurado em 2026-10-15; outros ambientes ainda precisam ser verificados e migrados.
+- `1791981200000-PersisteRemanejamentoPecaPorOrdem`: adiciona o mapa JSONB de peças remanejadas em `ordens_teste`, migra os remanejamentos já auditados para suas ordens e restaura o destino-base do modelo quando há uma única ordem associada.

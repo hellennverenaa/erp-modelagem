@@ -21,10 +21,28 @@ const salvarRotaSchema = z.object({
   plantaId: z.string().uuid(),
   // Uma rota vazia apagaria a configuração existente na transação abaixo.
   rota: z.array(itemRotaSchema).min(1, { message: 'A rota deve conter ao menos um setor.' }),
-  slasPorSetor: z.record(z.string(), z.number().nonnegative()).optional().nullable(),
+  slasPorSetor: z.record(z.string(), z.number().int().nonnegative()).optional().nullable(),
 });
 
 export class RotasController {
+  /** Lista modelos ativos para configuração de rotas, mesmo que já tenham ordem. */
+  public listarModelos = async (_req: Request, res: Response): Promise<Response> => {
+    try {
+      const modelos = await AppDataSource.getRepository(Modelo).find({
+        select: { id: true, nome: true, codigoProduto: true },
+        where: { ativo: true },
+        order: { nome: 'ASC' },
+      });
+      return res.json(modelos);
+    } catch (error) {
+      console.error('[RotasController.listarModelos] Erro ao listar modelos:', error);
+      return res.status(500).json({
+        error: 'Erro ao listar modelos para construção de rotas.',
+        code: 'MODEL_ROUTE_LIST_FAILED',
+      });
+    }
+  };
+
   /**
    * PUT /api/rotas/:modeloId
    * Salva (sobrescreve) a rota de produção de um modelo.
@@ -45,7 +63,7 @@ export class RotasController {
       });
     }
 
-      const { rota, plantaId } = parseResult.data;
+      const { rota, plantaId, slasPorSetor } = parseResult.data;
 
     try {
       if (!req.user) return res.status(401).json({ error: 'Usuário não autenticado.', code: 'AUTH_UNAUTHENTICATED' });
@@ -93,6 +111,7 @@ export class RotasController {
             plantaId,
             setorId: item.setorId,
             ordem: item.ordem,
+            slaAlvoMin: slasPorSetor?.[item.setorId] ?? 120,
             obrigatorio: item.obrigatorio,
             tipoExecucao: item.tipoExecucao,
             bipagemApenasSaida: item.bipagemApenasSaida,

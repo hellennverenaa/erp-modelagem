@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
@@ -8,13 +9,14 @@ import { Peca } from '../entities/Peca';
 import { Modelo } from '../entities/Modelo';
 import { Planta } from '../entities/Planta';
 import { AuditLog } from '../entities/AuditLog';
-import { Usuario } from '../entities/Usuario';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
+import { Setor } from '../entities/Setor';
 import { perfilPossuiPermissao } from '../services/rbac.service';
 import { finalizarNovoTeste, NovoTesteServiceError } from '../services/novo-teste.service';
 import { getPersistedModelRoute, lockModelConfiguration, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 import { finalizarNovoTesteSchema } from '../schemas/novo-teste.schema';
 import { ModelPieceInput, ModelPiecesError, saveModelPieces } from '../services/model-pieces.service';
+import { getSetorCorteOpcaoEfetiva, mapearSubsetoresParaTiposDeSetor } from '../services/ordem-pecas.service';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -66,10 +68,10 @@ function possuiAcessoTodasPlantas(req: Request): Promise<boolean> {
 }
 
 const updateManutencaoSchema = z.object({
-  slasPorSetor: z.record(z.string(), z.number()).optional().nullable(),
+  slasPorSetor: z.record(z.string(), z.number().nonnegative()).optional().nullable(),
   pecas: z.array(z.object({
-    id: z.string(),
-    setorCorteOpcaoId: z.string()
+    id: z.string().uuid(),
+    setorCorteOpcaoId: z.string().uuid()
   })).optional()
 });
 
@@ -200,7 +202,10 @@ export class LotesController {
 
         await validatePersistedModelRoute(manager, atual.modeloId, atual.plantaId);
         const { versao, etapas } = await getPersistedModelRoute(manager, atual.modeloId, atual.plantaId);
-        const slasPorSetor = parsed.data.slasPorSetor || {};
+        const slasPorSetor = { ...(parsed.data.slasPorSetor || {}) };
+        for (const etapa of etapas) {
+          slasPorSetor[etapa.setorId] = etapa.slaAlvoMin;
+        }
 
         atual.rotaVersao = versao;
         atual.rotaSnapshot = {
@@ -452,6 +457,9 @@ export class LotesController {
         });
       }
       await validatePersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
+      const { etapas } = await getPersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
+      const slasDaRota = Object.fromEntries(etapas.map((etapa) => [etapa.setorId, etapa.slaAlvoMin]));
+      const slasDaOrdem = { ...slasDaRota, ...(slasPorSetor || {}) };
 
       const lote = loteRepo.create({
         modeloId,
@@ -464,7 +472,7 @@ export class LotesController {
         liberadoProducao: false,
         possuiCaixaTeste,
         observacoes: observacoes || null,
-        slasPorSetor: slasPorSetor || null,
+        slasPorSetor: slasDaOrdem,
       });
 
       const savedLote = await loteRepo.save(lote);
@@ -583,234 +591,280 @@ export class LotesController {
   public updateManutencao = async (req: Request, res: Response): Promise<Response> => {
     try {
       const id = req.params.id as string;
-      const parseResult = updateManutencaoSchema.safeParse(req.body);
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const slasInput = body.slasPorSetor !== undefined ? body.slasPorSetor : body.slas_por_setor;
+      const parseResult = updateManutencaoSchema.safeParse({ ...body, slasPorSetor: slasInput });
       if (!parseResult.success) {
         return res.status(400).json({
-          error: 'Dados de manutenção inválidos.',
+          error: 'Dados de configuração inválidos.',
           code: 'VALIDATION_ERROR',
           details: parseResult.error.flatten().fieldErrors
         });
       }
 
-      const loteRepo = AppDataSource.getRepository(OrdemTeste);
-      const pecaRepo = AppDataSource.getRepository(Peca);
       const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
       if (!acessoTodasPlantas && !req.user?.plantaId) {
         return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
       }
 
-      let lote = await loteRepo.findOne({
-        where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId },
-        relations: { modelo: { pecas: true, rotas: { setor: true } }, planta: true }
-      });
-
-      if (!lote) {
-        return res.status(404).json({
-          error: 'Ordem de teste não encontrada.',
-          code: 'LOTE_NOT_FOUND'
+      const { loteAtualizado, auditLogs } = await AppDataSource.transaction(async (manager) => {
+        const loteRepo = manager.getRepository(OrdemTeste);
+        const pecaRepo = manager.getRepository(Peca);
+        const auditRepo = manager.getRepository(AuditLog);
+        const configOpcaoRepo = manager.getRepository(ConfigOpcao);
+        const { pecas, slasPorSetor: novosSlas } = parseResult.data;
+        const lote = await loteRepo.findOne({
+          where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId },
+          relations: { modelo: { pecas: true, rotas: { setor: true } }, planta: true },
         });
-      }
 
-      const { pecas } = parseResult.data;
+        if (!lote) {
+          throw Object.assign(new Error('Ordem de teste não encontrada.'), {
+            statusCode: 404,
+            code: 'LOTE_NOT_FOUND',
+          });
+        }
 
-      const reqUser = (req as any).user || (req as any).usuario || {};
+        if (pecas && new Set(pecas.map(({ id: pecaId }) => pecaId)).size !== pecas.length) {
+          throw Object.assign(new Error('A mesma peça foi informada mais de uma vez.'), {
+            statusCode: 400,
+            code: 'PECA_DUPLICADA',
+          });
+        }
 
-      // Lookup do Usuário Autenticado por Username (SSO Unix)
-      let auditUsuarioId: string | null = null;
-      try {
-        const userRepo = AppDataSource.getRepository(Usuario);
-        const usernameToken = reqUser.usuario || reqUser.username || reqUser.nome || reqUser.preferred_username;
+        const auditUsuarioId = req.user?.userId && isUuid(req.user.userId) ? req.user.userId : null;
+        const ipAddress = req.ip || req.socket.remoteAddress || null;
+        const logsParaSalvar: AuditLog[] = [];
 
-        let localUsuario: Usuario | null = null;
-        if (usernameToken) {
-          const cleanUserStr = String(usernameToken).trim();
-          // 1. Busca exata por usuario
-          localUsuario = await userRepo.findOne({ where: { usuario: cleanUserStr } });
-          if (!localUsuario) {
-            // 2. Busca case-insensitive
-            localUsuario = await userRepo.createQueryBuilder('u')
-              .where('LOWER(u.usuario) = LOWER(:usr)', { usr: cleanUserStr })
-              .getOne();
+        // SLA efetivo antes da alteração: ordem, snapshot, configuração do modelo e rota.
+        const slasAnterioresEfetivos: Record<string, number> = {};
+        if (lote.slasPorSetor != null) {
+          Object.assign(slasAnterioresEfetivos, lote.slasPorSetor);
+        } else if (lote.rotaSnapshot?.slasPorSetor != null) {
+          Object.assign(slasAnterioresEfetivos, lote.rotaSnapshot.slasPorSetor);
+        } else {
+          const modeloSlaMap = (lote.modelo as any)?.slasPorSetor;
+          if (modeloSlaMap && typeof modeloSlaMap === 'object') {
+            Object.assign(slasAnterioresEfetivos, modeloSlaMap);
+          }
+          const rotasDaPlanta = (lote.modelo?.rotas || []).filter((rota) => rota.plantaId === lote.plantaId);
+          const versaoRota = lote.rotaVersao ?? rotasDaPlanta.reduce((maior, rota) => Math.max(maior, rota.versao || 1), 0);
+          for (const rota of rotasDaPlanta.filter((item) => (item.versao || 1) === versaoRota)) {
+            const chave = rota.setor?.id || rota.setorId || rota.setor?.nome;
+            const valor = Number((rota as any).slaAlvoMin ?? (rota as any).tempoSla ?? (rota as any).tempo_sla ?? 0);
+            if (chave && Number.isFinite(valor)) slasAnterioresEfetivos[chave] = valor;
           }
         }
-        if (!localUsuario && reqUser.id && isUuid(reqUser.id)) {
-          localUsuario = await userRepo.findOne({ where: { id: String(reqUser.id) } });
-        }
-        if (localUsuario) {
-          auditUsuarioId = localUsuario.id;
-        }
-      } catch (err) {
-        console.warn('[updateManutencao] Erro ao realizar lookup de usuário:', err);
-      }
 
-      // SLA Efetivo Anterior
-      const slasAnterioresEfetivos: Record<string, number> = {};
-      if (lote.slasPorSetor && Object.keys(lote.slasPorSetor).length > 0) {
-        Object.assign(slasAnterioresEfetivos, lote.slasPorSetor);
-      } else {
-        const modeloSlaMap = (lote.modelo as any)?.slasPorSetor;
-        if (modeloSlaMap && typeof modeloSlaMap === 'object') {
-          Object.assign(slasAnterioresEfetivos, modeloSlaMap);
-        } else if (Array.isArray(lote.modelo?.rotas)) {
-          for (const r of lote.modelo!.rotas!.filter((rota) => rota.plantaId === lote!.plantaId)) {
-            const key = r.setor?.id || r.setorId || r.setor?.nome;
-            if (key) {
-              slasAnterioresEfetivos[key] = (r as any).tempoSla || (r as any).tempo_sla || 0;
+        const diffAnterior: Record<string, number> = {};
+        const diffNovo: Record<string, number> = {};
+        if (novosSlas !== undefined && novosSlas !== null) {
+          const podeEditarRota = await perfilPossuiPermissao(req.user!.perfilId, 'EDITAR_ROTA');
+          const todasChaves = Array.from(new Set([...Object.keys(slasAnterioresEfetivos), ...Object.keys(novosSlas)]));
+          for (const chave of todasChaves) {
+            if (chave === 'default') continue;
+            const valorAnterior = slasAnterioresEfetivos[chave] !== undefined ? Number(slasAnterioresEfetivos[chave]) : 0;
+            const valorNovo = novosSlas[chave] !== undefined ? Number(novosSlas[chave]) : 0;
+            if (valorAnterior !== valorNovo) {
+              diffAnterior[chave] = valorAnterior;
+              diffNovo[chave] = valorNovo;
             }
           }
-        }
-      }
 
-      const novosSlas = req.body.slasPorSetor !== undefined ? req.body.slasPorSetor : req.body.slas_por_setor;
-      const diffAnterior: Record<string, number> = {};
-      const diffNovo: Record<string, number> = {};
-
-      if (novosSlas !== undefined && typeof novosSlas === 'object' && novosSlas !== null) {
-        const podeEditarRota = await perfilPossuiPermissao(req.user!.perfilId, 'EDITAR_ROTA');
-
-        const allKeys = Array.from(new Set([...Object.keys(slasAnterioresEfetivos), ...Object.keys(novosSlas)]));
-        for (const key of allKeys) {
-          if (key === 'default') continue;
-          const vAnt = slasAnterioresEfetivos[key] !== undefined ? Number(slasAnterioresEfetivos[key]) : 0;
-          const vNov = novosSlas[key] !== undefined ? Number(novosSlas[key]) : 0;
-
-          if (vAnt !== vNov) {
-            diffAnterior[key] = vAnt;
-            diffNovo[key] = vNov;
-          }
-        }
-
-        const mudouSlaReal = Object.keys(diffNovo).length > 0;
-
-        if (mudouSlaReal && !podeEditarRota) {
-          return res.status(403).json({
-            error: 'Acesso Negado: Apenas Modelistas e Administradores podem alterar os prazos (SLA) de produção.',
-            code: 'FORBIDDEN_SLA_EDIT'
-          });
-        }
-
-        if (mudouSlaReal) {
-          lote.slasPorSetor = novosSlas;
-        }
-      }
-
-      await loteRepo.save(lote);
-
-      // Trava Antispam: Auditoria ISO de Alteração de SLA — Grava apenas se houver diff real
-      if (Object.keys(diffNovo).length > 0) {
-        try {
-          const auditLogRepository = AppDataSource.getRepository(AuditLog);
-          const logSla = auditLogRepository.create({
-            usuarioId: auditUsuarioId,
-            acao: 'SLA_ALTERADO',
-            entidadeTipo: 'ordens_teste',
-            entidadeId: lote.id,
-            dadosAnteriores: diffAnterior as any,
-            dadosNovos: diffNovo as any,
-            ipAddress: req.ip || req.socket.remoteAddress || null
-          });
-          await auditLogRepository.save(logSla);
-        } catch (auditError: any) {
-          console.error('[Auditoria ISO] Erro ao salvar log de alteração de SLA:', auditError);
-        }
-      }
-
-      // Remanejamento de Peças de Corte com Rastreabilidade ISO
-      if (pecas && pecas.length > 0) {
-        const auditLogRepository = AppDataSource.getRepository(AuditLog);
-        const configOpcaoRepo = AppDataSource.getRepository(ConfigOpcao);
-
-        for (const p of pecas) {
-          if (p.id && isUuid(p.id) && p.setorCorteOpcaoId && isUuid(p.setorCorteOpcaoId)) {
-            const pecaExistente = await pecaRepo.findOne({
-              where: { id: p.id },
-              relations: { setorCorteOpcao: true }
+          if (Object.keys(diffNovo).length > 0 && !podeEditarRota) {
+            throw Object.assign(new Error('Apenas perfis com permissão para editar rotas podem alterar os prazos de produção.'), {
+              statusCode: 403,
+              code: 'FORBIDDEN_SLA_EDIT',
             });
+          }
 
-            if (pecaExistente && pecaExistente.setorCorteOpcaoId !== p.setorCorteOpcaoId) {
-              const antigoId = pecaExistente.setorCorteOpcaoId;
-              const antigaMaquina = pecaExistente.setorCorteOpcao?.valor || pecaExistente.setorCorteOpcao?.label || 'Sem máquina';
-
-              const novaOpcao = await configOpcaoRepo.findOne({ where: { id: p.setorCorteOpcaoId } });
-              const novaMaquina = novaOpcao?.valor || novaOpcao?.label || p.setorCorteOpcaoId;
-
-              pecaExistente.setorCorteOpcaoId = p.setorCorteOpcaoId;
-              await pecaRepo.save(pecaExistente);
-
-              try {
-                const log = auditLogRepository.create({
-                  usuarioId: auditUsuarioId,
-                  acao: 'PECA_REMANEJADA',
-                  entidadeTipo: 'ordens_teste',
-                  entidadeId: lote.id,
-                  dadosAnteriores: {
-                    pecaId: pecaExistente.id,
-                    pecaNome: pecaExistente.nome,
-                    maquinaId: antigoId,
-                    maquinaNome: antigaMaquina
-                  },
-                  dadosNovos: {
-                    pecaId: pecaExistente.id,
-                    pecaNome: pecaExistente.nome,
-                    maquinaId: p.setorCorteOpcaoId,
-                    maquinaNome: novaMaquina
-                  },
-                  ipAddress: req.ip || req.socket.remoteAddress || null
-                });
-                await auditLogRepository.save(log);
-              } catch (auditError: any) {
-                console.error('[Auditoria ISO] Erro ao salvar log de remanejamento:', auditError);
-              }
-            }
+          if (Object.keys(diffNovo).length > 0) {
+            lote.slasPorSetor = novosSlas;
+            logsParaSalvar.push(auditRepo.create({
+              usuarioId: auditUsuarioId,
+              acao: 'SLA_ALTERADO',
+              entidadeTipo: 'ordens_teste',
+              entidadeId: lote.id,
+              dadosAnteriores: diffAnterior,
+              dadosNovos: diffNovo,
+              ipAddress,
+            }));
           }
         }
-      }
 
-      const loteAtualizado = await loteRepo.findOne({
-        where: { id },
-        relations: { modelo: { pecas: true, marca: true, rotas: { setor: true } }, planta: true, criadoPor: true }
-      });
-      if (loteAtualizado?.modelo?.rotas) {
-        loteAtualizado.modelo.rotas = loteAtualizado.modelo.rotas.filter((rota) => rota.plantaId === loteAtualizado.plantaId);
-      }
+        if (pecas?.length) {
+          const pecasExistentes = await pecaRepo.find({
+            where: { id: In(pecas.map(({ id: pecaId }) => pecaId)), modeloId: lote.modeloId },
+            relations: { setorCorteOpcao: true },
+          });
+          const pecasPorId = new Map(pecasExistentes.map((peca) => [peca.id, peca]));
+          if (pecasExistentes.length !== pecas.length) {
+            throw Object.assign(new Error('Uma das peças informadas não pertence ao modelo desta ordem.'), {
+              statusCode: 400,
+              code: 'PECA_FORA_DO_MODELO',
+            });
+          }
 
-      const auditRepo = AppDataSource.getRepository(AuditLog);
-      const auditLogs = await auditRepo.find({
-        where: { entidadeId: id },
-        relations: { usuario: true },
-        order: { createdAt: 'DESC' }
+          const pecasAlteradas: Array<{ item: typeof pecas[number]; peca: Peca; setorCorteOpcaoAnteriorId: string }> = [];
+          for (const item of pecas) {
+            const pecaExistente = pecasPorId.get(item.id);
+            if (!pecaExistente) {
+              throw Object.assign(new Error('Uma das peças informadas não pertence ao modelo desta ordem.'), {
+                statusCode: 400,
+                code: 'PECA_FORA_DO_MODELO',
+              });
+            }
+            const setorCorteOpcaoAnteriorId = getSetorCorteOpcaoEfetiva(lote, pecaExistente);
+            if (setorCorteOpcaoAnteriorId !== item.setorCorteOpcaoId) {
+              pecasAlteradas.push({ item, peca: pecaExistente, setorCorteOpcaoAnteriorId });
+            }
+          }
+
+          const opcaoIds = [...new Set(pecasAlteradas.map(({ item }) => item.setorCorteOpcaoId))];
+          const opcoes = opcaoIds.length > 0
+            ? await configOpcaoRepo.createQueryBuilder('opcao')
+                .innerJoinAndSelect('opcao.categoria', 'categoria')
+                .where('opcao.id IN (:...opcaoIds)', { opcaoIds })
+                .andWhere('opcao.ativo = TRUE')
+                .andWhere('categoria.slug = :slug', { slug: 'subsetor_corte' })
+                .andWhere('categoria.ativo = TRUE')
+                .getMany()
+            : [];
+          const opcoesPorId = new Map(opcoes.map((opcao) => [opcao.id, opcao]));
+          if (opcoes.length !== opcaoIds.length) {
+            throw Object.assign(new Error('Uma das máquinas informadas não é uma opção ativa de subsetor de corte.'), {
+              statusCode: 400,
+              code: 'OPCAO_CORTE_INVALIDA',
+            });
+          }
+
+          const tiposSetorPorOpcao = await mapearSubsetoresParaTiposDeSetor(manager, opcaoIds);
+          if (tiposSetorPorOpcao.size !== opcaoIds.length) {
+            throw Object.assign(new Error('Uma das máquinas informadas não possui setor correspondente configurado.'), {
+              statusCode: 400,
+              code: 'SETOR_CORTE_NAO_CONFIGURADO',
+            });
+          }
+          const tiposSetorIds = [...new Set(tiposSetorPorOpcao.values())];
+          const setoresDisponiveis = await manager.getRepository(Setor).find({
+            where: { plantaId: lote.plantaId, tipoOpcaoId: In(tiposSetorIds), ativo: true },
+          });
+          const tiposDisponiveis = new Set(setoresDisponiveis.map((setor) => setor.tipoOpcaoId));
+          if (tiposSetorIds.some((tipoId) => !tiposDisponiveis.has(tipoId))) {
+            throw Object.assign(new Error('Uma das máquinas informadas não está disponível na planta desta ordem.'), {
+              statusCode: 400,
+              code: 'SETOR_CORTE_NAO_DISPONIVEL',
+            });
+          }
+
+          const idsOpcaoAnterior = [...new Set(pecasAlteradas.map(({ setorCorteOpcaoAnteriorId }) => setorCorteOpcaoAnteriorId))];
+          const opcoesAnteriores = idsOpcaoAnterior.length > 0
+            ? await configOpcaoRepo.findBy({ id: In(idsOpcaoAnterior) })
+            : [];
+          const todasOpcoesPorId = new Map([...opcoesAnteriores, ...opcoes].map((opcao) => [opcao.id, opcao]));
+
+          for (const { item, peca: pecaExistente, setorCorteOpcaoAnteriorId } of pecasAlteradas) {
+            const novaOpcao = opcoesPorId.get(item.setorCorteOpcaoId);
+            if (!novaOpcao) {
+              throw Object.assign(new Error('Uma das máquinas informadas não é uma opção ativa de subsetor de corte.'), {
+                statusCode: 400,
+                code: 'OPCAO_CORTE_INVALIDA',
+              });
+            }
+
+            const maquinaAnteriorId = setorCorteOpcaoAnteriorId;
+            const opcaoAnterior = todasOpcoesPorId.get(maquinaAnteriorId);
+            const maquinaAnterior = opcaoAnterior?.valor || opcaoAnterior?.label || 'Sem máquina';
+            const maquinaNova = novaOpcao.valor || novaOpcao.label;
+
+            const pecasRemanejadas = { ...(lote.pecasRemanejadas || {}) };
+            if (item.setorCorteOpcaoId === pecaExistente.setorCorteOpcaoId) {
+              delete pecasRemanejadas[pecaExistente.id];
+            } else {
+              pecasRemanejadas[pecaExistente.id] = item.setorCorteOpcaoId;
+            }
+            lote.pecasRemanejadas = Object.keys(pecasRemanejadas).length > 0 ? pecasRemanejadas : null;
+
+            logsParaSalvar.push(auditRepo.create({
+              usuarioId: auditUsuarioId,
+              acao: 'PECA_REMANEJADA',
+              entidadeTipo: 'ordens_teste',
+              entidadeId: lote.id,
+              dadosAnteriores: {
+                pecaId: pecaExistente.id,
+                pecaNome: pecaExistente.nome,
+                maquinaId: maquinaAnteriorId,
+                maquinaNome: maquinaAnterior,
+              },
+              dadosNovos: {
+                pecaId: pecaExistente.id,
+                pecaNome: pecaExistente.nome,
+                maquinaId: item.setorCorteOpcaoId,
+                maquinaNome: maquinaNova,
+              },
+              ipAddress,
+            }));
+          }
+        }
+
+        await loteRepo.save(lote);
+        if (logsParaSalvar.length > 0) {
+          await auditRepo.save(logsParaSalvar);
+        }
+
+        const loteAtualizado = await loteRepo.findOne({
+          where: { id },
+          relations: {
+            modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
+            planta: true,
+            criadoPor: true,
+          },
+        });
+        if (loteAtualizado?.modelo?.rotas) {
+          loteAtualizado.modelo.rotas = loteAtualizado.modelo.rotas.filter((rota) => rota.plantaId === loteAtualizado.plantaId);
+        }
+
+        const auditLogs = await auditRepo.find({
+          where: { entidadeId: id, entidadeTipo: 'ordens_teste' },
+          relations: { usuario: true },
+          order: { createdAt: 'DESC' },
+        });
+        return { loteAtualizado, auditLogs };
       });
 
       return res.json({
-        message: 'Manutenção da Ordem realizada com sucesso.',
+        message: 'Configuração da ordem salva com sucesso.',
         lote: loteAtualizado ? {
           ...loteAtualizado,
           slasPorSetor: loteAtualizado.slasPorSetor || null,
-          auditLogs: auditLogs.map(l => ({
-            id: l.id,
-            acao: l.acao,
-            entidadeTipo: l.entidadeTipo,
-            dadosAnteriores: l.dadosAnteriores,
-            dadosNovos: l.dadosNovos,
-            ipAddress: l.ipAddress,
-            criadoEm: l.createdAt,
-            usuario: l.usuario
+          auditLogs: auditLogs.map((log) => ({
+            id: log.id,
+            acao: log.acao,
+            entidadeTipo: log.entidadeTipo,
+            dadosAnteriores: log.dadosAnteriores,
+            dadosNovos: log.dadosNovos,
+            ipAddress: log.ipAddress,
+            criadoEm: log.createdAt,
+            usuario: log.usuario
               ? {
-                  id: l.usuario.id,
-                  nome: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario || 'Sistema',
-                  nomeCompleto: (l.usuario as any).nomeCompleto || (l.usuario as any).nome || (l.usuario as any).usuario,
-                  usuario: (l.usuario as any).usuario
+                  id: log.usuario.id,
+                  nome: (log.usuario as any).nomeCompleto || (log.usuario as any).nome || (log.usuario as any).usuario || 'Sistema',
+                  nomeCompleto: (log.usuario as any).nomeCompleto || (log.usuario as any).nome || (log.usuario as any).usuario,
+                  usuario: (log.usuario as any).usuario,
                 }
-              : null
-          }))
-        } : null
+              : null,
+          })),
+        } : null,
       });
 
     } catch (error: any) {
+      if (error?.statusCode) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
       console.error('[LotesController.updateManutencao] Erro:', error);
       return res.status(500).json({
-        error: error.message || 'Erro ao realizar manutenção da ordem.',
-        code: 'MANUTENCAO_FAILED'
+        error: 'Erro ao salvar a configuração da ordem.',
+        code: 'CONFIGURACAO_ORDEM_FAILED',
       });
     }
   };
@@ -838,7 +892,7 @@ export class LotesController {
 
       const auditRepo = AppDataSource.getRepository(AuditLog);
       const logs = await auditRepo.find({
-        where: { entidadeId: String(id) },
+        where: { entidadeId: String(id), entidadeTipo: 'ordens_teste' },
         relations: { usuario: true },
         order: { createdAt: 'DESC' },
       });

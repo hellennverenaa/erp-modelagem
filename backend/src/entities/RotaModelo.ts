@@ -47,6 +47,9 @@ export class RotaModelo {
   @Column({ type: 'int' })
   ordem: number;
 
+  @Column({ name: 'sla_alvo_min', type: 'int', default: 120 })
+  slaAlvoMin: number;
+
   @Column({ type: 'int', default: 1 })
   versao: number;
 
