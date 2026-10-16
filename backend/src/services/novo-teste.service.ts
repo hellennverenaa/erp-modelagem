@@ -9,6 +9,7 @@ import { Peca } from '../entities/Peca';
 import { Planta } from '../entities/Planta';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Setor } from '../entities/Setor';
+import { garantirTicketsSetorDaOrdem } from './ticket-setor.service';
 import { FinalizarNovoTesteInput } from '../schemas/novo-teste.schema';
 import { validateRouteIntegrity } from './route-integrity.service';
 
@@ -85,7 +86,7 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
     const setorIds = [...new Set(input.rota.map((etapa) => etapa.setorId))];
     const setores = await manager.getRepository(Setor).find({
       where: { id: In(setorIds), ativo: true },
-      select: { id: true },
+      select: { id: true, nome: true },
     });
     if (setores.length !== setorIds.length) {
       throw new NovoTesteServiceError(
@@ -147,6 +148,22 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       slasPorSetor[etapa.setorId] = etapa.slaAlvoMin;
     }
 
+    const rotaVersao = rotasSalvas.reduce((maior, etapa) => Math.max(maior, etapa.versao || 1), 0);
+    const nomeSetorPorId = new Map(setores.map((setor) => [setor.id, setor.nome]));
+    const rotaSnapshot = {
+      versao: rotaVersao,
+      plantaId: input.ordem.plantaId,
+      etapas: rotasSalvas.map((etapa) => ({
+        setorId: etapa.setorId,
+        nome: nomeSetorPorId.get(etapa.setorId) || 'Setor',
+        ordem: etapa.ordem,
+        obrigatorio: etapa.obrigatorio,
+        tipoExecucao: etapa.tipoExecucao,
+        bipagemApenasSaida: etapa.bipagemApenasSaida,
+      })),
+      slasPorSetor,
+    };
+
     const ordemRepo = manager.getRepository(OrdemTeste);
     const ordem = await ordemRepo.save(ordemRepo.create({
       modeloId: modelo.id,
@@ -160,7 +177,11 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       possuiCaixaTeste: input.ordem.possuiCaixaTeste,
       observacoes: input.ordem.observacoes || null,
       slasPorSetor,
+      rotaVersao,
+      rotaSnapshot,
     }));
+
+    await garantirTicketsSetorDaOrdem(manager, ordem);
 
     return { modelo, ordem, totalPecas: pecas.length, totalEtapasRota: rota.length };
   });

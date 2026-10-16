@@ -7,7 +7,7 @@ import {
   RotateCcw,
   ShieldCheck
 } from '@lucide/vue'
-import type { GargaloItem, KpiAData, KpiCData, KpiDData, LeadTimeItem } from '../types/dashboardGerencial'
+import type { GargaloItem, KpiAData, KpiCData, KpiDData } from '../types/dashboardGerencial'
 
 const props = defineProps<{
   kpiA: KpiAData
@@ -34,47 +34,15 @@ const activeLeadTime = computed(() => {
   return index === null ? null : props.kpiA.grafico[index] ?? null
 })
 
-const leadTimePoints = computed(() => {
-  const values = props.kpiA.grafico
-  const maxValue = Math.max(...values.map(item => item.leadTimeHoras), 1)
-  const xStart = 55
-  const xEnd = 485
-  const yTop = 18
-  const yBottom = 78
-  const firstDate = Date.parse(values[0]?.dataInicio ?? '')
-  const lastDate = Date.parse(values[values.length - 1]?.dataInicio ?? '')
-  const newestFirst = Number.isFinite(firstDate) && Number.isFinite(lastDate)
-    ? firstDate >= lastDate
-    : true
-
-  return values.map((item, index) => ({
-    item,
-    x: newestFirst
-      ? xEnd - (index / Math.max(1, values.length - 1)) * (xEnd - xStart)
-      : xStart + (index / Math.max(1, values.length - 1)) * (xEnd - xStart),
-    y: yBottom - (item.leadTimeHoras / maxValue) * (yBottom - yTop)
-  }))
-})
-
-const activeLeadTimePoint = computed(() => {
-  const index = activePointIndex.value
-  return index === null ? null : leadTimePoints.value[index] ?? null
-})
-
-const leadTimePath = computed(() => leadTimePoints.value
-  .map((point, index) => (index === 0 ? 'M ' : 'L ') + point.x.toFixed(1) + ' ' + point.y.toFixed(1))
-  .join(' '))
-
-const leadTimeAreaPath = computed(() => {
-  const points = leadTimePoints.value
-  if (points.length < 2) return ''
-
-  const first = points[0]
-  const last = points[points.length - 1]
-  return leadTimePath.value + ' L ' + last.x.toFixed(1) + ' 78 L ' + first.x.toFixed(1) + ' 78 Z'
-})
-
-const leadTimeMaxValue = computed(() => Math.max(...props.kpiA.grafico.map(item => item.leadTimeHoras), 1))
+const leadTimeMaxValue = computed(() => Math.max(...props.kpiA.grafico.map(item => item.leadTimeHoras), 0))
+const leadTimeChartItems = computed(() => props.kpiA.grafico.map((item, index) => ({
+  item,
+  index,
+  altura: leadTimeMaxValue.value > 0
+    ? Math.max(0, (item.leadTimeHoras / leadTimeMaxValue.value) * 100)
+    : 0,
+  cor: corMarca(item.marca)
+})))
 const fpySemDados = computed(() => props.kpiC.fpyGlobal === null && props.kpiC.totalInspecoes === 0)
 
 function larguraLeadTime(value: number) {
@@ -83,20 +51,15 @@ function larguraLeadTime(value: number) {
   return Math.min(100, Math.max(0, (value / maxValue) * 100))
 }
 
-function rotuloModelo(item: LeadTimeItem) {
-  const modelo = (item.modelo || '').trim().toLocaleUpperCase('pt-BR')
-  if (!modelo) return item.dataInicio ? props.formatDate(item.dataInicio) : item.codigoBarras || 'Ordem'
-  if (modelo.startsWith('AIR MAX')) return 'AIR MAX…'
-  if (modelo.startsWith('RACER CARBON')) {
-    const numeroModelo = modelo.match(/\d+$/)?.[0]
-    return numeroModelo ? 'RACER C. ' + numeroModelo : 'RACER C.'
-  }
-  if (modelo.startsWith('AIR WINFLO')) return 'AIR WINFLO'
-  return modelo.length > 12 ? modelo.slice(0, 11) + '…' : modelo
-}
-
 function rotuloLeadTime(value: number) {
   return leadTimeNumberFormatter.format(value) + 'h'
+}
+
+function corMarca(marca: string) {
+  const nome = (marca || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleUpperCase('pt-BR')
+  if (nome.includes('NIKE')) return '#DC2626'
+  if (nome.includes('FILA')) return '#2563EB'
+  return '#64748B'
 }
 
 function rotuloTipoLote(tipoLote: string) {
@@ -136,16 +99,6 @@ function classeGravidade(gravidade: string) {
   }
 }
 
-function tituloPonto(item: LeadTimeItem) {
-  return [
-    'Modelo: ' + (item.modelo || '—'),
-    'Marca: ' + (item.marca || '—'),
-    'Código de barras: ' + (item.codigoBarras || '—'),
-    'Tipo de lote: ' + (item.tipoLote || '—'),
-    'Lead Time: ' + props.formatHour(item.leadTimeHoras),
-    'Início: ' + (item.dataInicio || '—')
-  ].join('\n')
-}
 </script>
 
 <template>
@@ -217,89 +170,71 @@ function tituloPonto(item: LeadTimeItem) {
             <span class="text-[10px] font-semibold uppercase tracking-[0.14em]">Acompanhamento da produção</span>
           </div>
           <h2 class="mt-1 text-lg font-semibold tracking-tight text-slate-900">Variação do Lead Time</h2>
-          <p class="mt-1 max-w-2xl text-[11px] leading-snug text-slate-500">Compare quantas horas cada modelo levou para atravessar o processo produtivo</p>
+          <p class="mt-1 max-w-2xl text-[11px] leading-snug text-slate-500">Compare o tempo do Lote Principal mais recente de cada modelo em acompanhamento</p>
         </div>
-        <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-500">Últimos {{ kpiA.grafico.length }} lotes medidos</span>
+        <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-500">{{ kpiA.grafico.length }} {{ kpiA.grafico.length === 1 ? 'modelo' : 'modelos' }}</span>
       </div>
 
-      <div v-if="kpiA.grafico.length > 1" class="pt-5">
-        <div class="h-52 w-full">
-          <svg
-            viewBox="0 0 520 120"
-            class="h-full w-full overflow-visible"
-            role="img"
-            aria-label="Variação do tempo dos lotes acompanhados na produção"
+      <div v-if="kpiA.grafico.length > 0" class="pt-4">
+        <div class="overflow-x-auto pb-2">
+          <ul
+            class="grid min-w-[760px] gap-2 sm:gap-3"
+            :style="{ gridTemplateColumns: 'repeat(' + leadTimeChartItems.length + ', minmax(0, 1fr))' }"
+            aria-label="Lead time por modelo"
           >
-            <defs>
-              <linearGradient id="tc-lead-time-area" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#6366F1" stop-opacity="0.22" />
-                <stop offset="55%" stop-color="#6366F1" stop-opacity="0.06" />
-                <stop offset="100%" stop-color="#6366F1" stop-opacity="0" />
-              </linearGradient>
-            </defs>
-            <line x1="45" y1="18" x2="500" y2="18" stroke="#E2E8F0" stroke-dasharray="4 4" />
-            <line x1="45" y1="48" x2="500" y2="48" stroke="#E2E8F0" stroke-dasharray="4 4" />
-            <line x1="45" y1="78" x2="500" y2="78" stroke="#CBD5E1" />
-            <text x="2" y="21" fill="#94A3B8" font-size="9">{{ Math.round(leadTimeMaxValue) }}h</text>
-            <text x="2" y="51" fill="#94A3B8" font-size="9">{{ Math.round(leadTimeMaxValue / 2) }}h</text>
-            <text x="2" y="81" fill="#94A3B8" font-size="9">0h</text>
-            <path :d="leadTimeAreaPath" fill="url(#tc-lead-time-area)" />
-            <path :d="leadTimePath" fill="none" stroke="#4F46E5" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-            <line
-              v-if="activeLeadTimePoint"
-              :x1="activeLeadTimePoint.x"
-              :x2="activeLeadTimePoint.x"
-              :y1="activeLeadTimePoint.y"
-              y2="78"
-              stroke="#6366F1"
-              stroke-width="1.5"
-              stroke-dasharray="3 4"
-              pointer-events="none"
-            />
-            <g v-for="(point, index) in leadTimePoints" :key="point.item.codigoBarras + '-' + index">
-              <circle v-if="activePointIndex === index" :cx="point.x" :cy="point.y" r="12" fill="#4F46E5" fill-opacity="0.16" class="animate-pulse" pointer-events="none" />
-              <circle :cx="point.x" :cy="point.y" r="8" fill="#4F46E5" fill-opacity="0.12" pointer-events="none" />
-              <text :x="point.x" :y="Math.max(10, point.y - 8)" text-anchor="middle" fill="#4338CA" font-size="9" font-weight="600" class="tabular-nums">{{ rotuloLeadTime(point.item.leadTimeHoras) }}</text>
-              <circle :cx="point.x" :cy="point.y" r="3.5" fill="#FFFFFF" stroke="#4F46E5" stroke-width="2.5" tabindex="0">
-                <title>{{ tituloPonto(point.item) }}</title>
-              </circle>
-              <text :x="point.x" y="101" text-anchor="middle" fill="#64748B" font-size="8.5" font-weight="500" pointer-events="none">{{ rotuloModelo(point.item) }}</text>
-              <circle
-                :cx="point.x"
-                :cy="point.y"
-                r="18"
-                fill="transparent"
-                class="cursor-pointer"
-                role="button"
-                tabindex="0"
-                :aria-label="'Selecionar ciclo de ' + rotuloModelo(point.item) + ', ' + rotuloLeadTime(point.item.leadTimeHoras)"
-                @mouseenter="activePointIndex = index"
-                @focus="activePointIndex = index"
-                @click="activePointIndex = index"
-                @keydown.enter.prevent="activePointIndex = index"
-                @keydown.space.prevent="activePointIndex = index"
+            <li
+              v-for="point in leadTimeChartItems"
+              :key="point.item.codigoBarras + '-' + point.index"
+              class="min-w-0"
+            >
+              <button
+                type="button"
+                class="flex min-h-[270px] w-full min-w-0 flex-col items-center rounded-lg border px-1.5 pb-2 pt-1 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 sm:px-2"
+                :class="activePointIndex === point.index ? 'border-indigo-200 bg-indigo-50/60' : 'border-transparent bg-white hover:border-slate-200 hover:bg-slate-50'"
+                :aria-pressed="activePointIndex === point.index"
+                :aria-label="'Selecionar modelo ' + (point.item.modelo || 'não informado') + ', marca ' + (point.item.marca || 'não informada') + ', Lead Time ' + rotuloLeadTime(point.item.leadTimeHoras)"
+                @mouseenter="activePointIndex = point.index"
+                @focus="activePointIndex = point.index"
+                @click="activePointIndex = point.index"
               >
-                <title>{{ tituloPonto(point.item) }}</title>
-              </circle>
-            </g>
-          </svg>
-        </div>
-        <div class="mt-1 flex items-center justify-between text-[10px] font-medium text-slate-400">
-          <span>← Mais antigos</span>
-          <span>Mais recentes →</span>
+                <div class="relative h-48 w-full shrink-0" aria-hidden="true">
+                  <div class="absolute inset-x-0 bottom-0 top-[60px] flex items-end justify-center border-b border-slate-200">
+                    <span
+                      class="absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold text-slate-700 tabular-nums sm:text-[11px]"
+                      :style="{ bottom: 'calc(' + point.altura + '% + 31px)' }"
+                    >{{ rotuloLeadTime(point.item.leadTimeHoras) }}</span>
+                    <svg
+                      viewBox="0 0 48 36"
+                      class="absolute left-1/2 h-6 w-8 -translate-x-1/2"
+                      :style="{ bottom: 'calc(' + point.altura + '% + 3px)', color: point.cor }"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path d="m10.2 20.7 3.2-7.1a2.2 2.2 0 0 1 3.1-.9l5.1 3.2 5 4.1c1.3 1.1 3 1.7 4.7 1.7h7.1a4.2 4.2 0 0 1 4.2 4.2v1.4c0 1.4-1.1 2.5-2.5 2.5H9.3a5.2 5.2 0 0 1-3.7-8.9l4.6-4.6Z" fill="currentColor" />
+                      <path d="m17.4 14.3 4.6 2.9m-6.2.2 4.6 2.8m-6.2.2 4.6 2.8M8.4 27.8h32.7" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" />
+                    </svg>
+                    <div
+                      class="w-7 rounded-t-md transition-all duration-500 sm:w-9"
+                      :style="{ height: Math.max(point.item.leadTimeHoras > 0 ? 2 : 0, point.altura) + '%', backgroundColor: point.cor }"
+                    ></div>
+                  </div>
+                </div>
+                <p class="mt-2 w-full truncate text-[10px] font-semibold text-slate-800" :title="point.item.modelo || 'Modelo não informado'">{{ point.item.modelo || 'Modelo não informado' }}</p>
+                <p class="w-full truncate text-[9px] font-medium" :style="{ color: point.cor }" :title="point.item.marca || 'Marca não informada'">{{ point.item.marca || 'Marca não informada' }}</p>
+              </button>
+            </li>
+          </ul>
         </div>
       </div>
       <div v-else class="flex min-h-52 flex-col items-center justify-center gap-2 text-center">
         <Activity :size="20" class="text-slate-300" />
-        <p class="text-sm font-medium text-slate-500">
-          {{ kpiA.grafico.length === 1 ? 'Há um lote acompanhado, mas ainda não há outro para comparar.' : 'Ainda não há lotes medidos para exibir.' }}
-        </p>
+        <p class="text-sm font-medium text-slate-500">Ainda não há modelos com Lote Principal em acompanhamento.</p>
       </div>
 
-      <article v-if="activeLeadTime" class="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4" aria-live="polite" aria-label="Detalhes do lote selecionado">
+      <article v-if="activeLeadTime" class="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4" aria-live="polite" aria-label="Detalhes do modelo selecionado">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
-            <p class="text-[9px] font-semibold uppercase tracking-[0.12em] text-indigo-600">Lote selecionado</p>
+            <p class="text-[9px] font-semibold uppercase tracking-[0.12em] text-indigo-600">Modelo selecionado</p>
             <h3 class="mt-1 truncate text-sm font-semibold text-slate-900">
               {{ activeLeadTime.modelo || 'Modelo não informado' }}
               <span v-if="activeLeadTime.marca" class="font-medium text-slate-500">· {{ activeLeadTime.marca }}</span>

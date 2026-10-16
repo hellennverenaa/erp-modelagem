@@ -12,6 +12,7 @@ import { Modelo } from './Modelo';
 import { Planta } from './Planta';
 import { Usuario } from './Usuario';
 import { Rastreamento } from './Rastreamento';
+import { TicketSetor } from './TicketSetor';
 
 export enum OrdemTesteStatus {
   AGUARDANDO_MODELAGEM         = 'AGUARDANDO_MODELAGEM',
@@ -124,6 +125,9 @@ export class OrdemTeste {
   // Rastreamentos associados às bipagens desta ordem
   @OneToMany(() => Rastreamento, (rastreamento) => rastreamento.ordemTeste)
   rastreamentos: Rastreamento[];
+
+  @OneToMany(() => TicketSetor, (ticket) => ticket.ordemTeste)
+  ticketsSetor: TicketSetor[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

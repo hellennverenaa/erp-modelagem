@@ -1101,26 +1101,30 @@ onUnmounted(() => {
     </div>
 
     <!-- MODO PADRÃO (DASHBOARD LIGHT MODE) -->
-    <div v-else class="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
+    <div v-else class="mx-auto w-full max-w-[1780px] space-y-5 px-4 py-4 sm:px-6 sm:py-5">
       <!-- Header Claro -->
-      <header class="border-b border-zinc-200 pb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div class="text-left">
+      <header class="flex flex-col gap-5 border-b border-zinc-200 pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex min-w-0 items-center gap-3">
           <button
             @click="router.back()"
-            class="text-xs font-mono text-zinc-500 hover:text-zinc-900 flex items-center gap-1.5 mb-2 cursor-pointer uppercase font-bold"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-600 shadow-sm transition-colors hover:bg-zinc-50 hover:text-zinc-900 cursor-pointer"
             type="button"
+            aria-label="Voltar"
+            title="Voltar"
           >
-            <ArrowLeft :size="14" /> Voltar
+            <ArrowLeft :size="18" />
           </button>
-          <h1 class="text-2xl md:text-3xl font-extrabold tracking-tighter text-zinc-900 uppercase text-left">
-            RASTREAMENTO DE PRODUÇÃO
-          </h1>
-          <p class="text-xs font-mono text-zinc-500 uppercase mt-0.5">
-            Monitoramento Chão de Fábrica ISO 9001
-          </p>
+          <div class="min-w-0">
+            <h1 class="text-2xl font-bold tracking-tight text-zinc-900">
+              Rastreamento de Produção
+            </h1>
+            <p class="mt-0.5 text-sm text-zinc-500">
+              Monitoramento Chão de Fábrica ISO 9001
+            </p>
+          </div>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 self-end sm:self-auto">
           <button
             @click="isTvMode = true"
             class="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-mono font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-xs"
@@ -1159,7 +1163,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Raias das OPs -->
-        <div v-else class="space-y-8">
+        <div v-else class="space-y-6">
           <div
             v-for="ordem in sortedOrdens"
             :key="ordem.id"

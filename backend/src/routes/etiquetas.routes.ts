@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { imprimirEtiquetas, gerarEtiquetas } from '../controllers/etiqueta.controller';
+import {
+  imprimirEtiquetas,
+  gerarEtiquetas,
+  gerarTicketsSetor,
+  gerarTicketsCorte,
+  gerarTicketsCompletosDaOrdem,
+} from '../controllers/etiqueta.controller';
 import { exigirAlgumaPermissao, verificarPermissaoSetor } from '../middlewares/rbac.middleware';
 
 const router = Router();
@@ -61,6 +67,68 @@ router.post(
   '/gerar',
   exigirAlgumaPermissao(['EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE']),
   gerarEtiquetas
+);
+
+/**
+ * @swagger
+ * /api/etiquetas/tickets-setor:
+ *   post:
+ *     summary: Gera PDF com tickets únicos dos setores de uma ordem
+ *     description: Usa folha A4 com duas colunas, cinco linhas e início do gabarito a 13 mm do topo.
+ *     tags: [etiquetas]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [ordemTesteId]
+ *             properties:
+ *               ordemTesteId: { type: string, format: uuid }
+ *               ticketIds:
+ *                 type: array
+ *                 items: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: PDF de tickets únicos gerado
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       400:
+ *         description: Dados inválidos
+ *       403:
+ *         description: Planta não autorizada
+ *       404:
+ *         description: Ordem ou ticket não encontrado
+ *       500:
+ *         description: Falha ao gerar PDF
+ */
+router.post(
+  '/tickets-setor',
+  exigirAlgumaPermissao([
+    'EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE', 'EDITAR_TELA_BIPAGEM',
+  ]),
+  gerarTicketsSetor,
+);
+
+router.post(
+  '/tickets-corte',
+  exigirAlgumaPermissao([
+    'EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE', 'EDITAR_TELA_BIPAGEM',
+  ]),
+  gerarTicketsCorte,
+);
+
+router.post(
+  '/tickets-ordem',
+  exigirAlgumaPermissao([
+    'EDITAR_TELA_GESTAO_ORDENS', 'EDITAR_TELA_NOVA_ORDEM_TESTE', 'EDITAR_TELA_BIPAGEM',
+  ]),
+  gerarTicketsCompletosDaOrdem,
 );
 
 export default router;

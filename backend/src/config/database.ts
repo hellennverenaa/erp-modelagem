@@ -38,6 +38,7 @@ import { CatalogoPeca } from '../entities/CatalogoPeca';
 import { CatalogoItemChecklist } from '../entities/CatalogoItemChecklist';
 import { EtapaCortePeca } from '../entities/EtapaCortePeca';
 import { RbacCatalogItem } from '../entities/RbacCatalogItem';
+import { TicketSetor } from '../entities/TicketSetor';
 
 // Carrega as variáveis de ambiente do arquivo .env
 dotenv.config({
@@ -96,7 +97,8 @@ export const AppDataSource = new DataSource({
     DossieModelo,
     CatalogoPeca,
     CatalogoItemChecklist,
-    RbacCatalogItem
+    RbacCatalogItem,
+    TicketSetor
   ],
   migrations: [__dirname + '/../migrations/**/*.{js,ts}'],
   subscribers: [],

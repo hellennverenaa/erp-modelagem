@@ -380,7 +380,10 @@ onBeforeUnmount(() => {
 
       <main
         class="main-content"
-        :class="{ 'main-content--dashboard-gerencial': route.path === '/dashboard/gerencial' }"
+        :class="{
+          'main-content--dashboard-gerencial': route.path === '/dashboard/gerencial',
+          'main-content--rastreamento': route.name === 'rastreamento-ordem',
+        }"
         id="main-content"
       >
         <RouterView />
@@ -962,6 +965,10 @@ onBeforeUnmount(() => {
 .main-content.main-content--dashboard-gerencial {
   padding: 0;
   background: #f8fafc;
+}
+
+.main-content.main-content--rastreamento {
+  padding: 0;
 }
 
 .mobile-topbar {

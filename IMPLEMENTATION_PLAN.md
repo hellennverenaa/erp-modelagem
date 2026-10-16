@@ -1,96 +1,80 @@
 # Plano de implementação — ERP Modelagem
 
-## Pontos pendentes
+## Regras de negócio pendentes
 
-### 02 — TASK-002: Definir as regras de Bordado, Apoio e bifurcação
+### Bordado, Apoio e bifurcação (TASK-002)
 **Estado: em andamento.** Definir com o processo como Bordado e Apoio se relacionam na rota e na produção: substituição, paralelo ou subprocesso. Esclarecer como Serigrafia determina a bifurcação e a Conferência Inicial, preservando Navalha e Almoxarifado de Modelagem. A regra deve vir da rota, sem configuração duplicada na ordem.
 
-**Escopo concluído nesta entrega:** Incluir o setor Telas na Conferência Inicial somente quando Serigrafia estiver ativa em Setores Condicionais, tanto no Passo 4 do fluxo de criação quanto no Construtor de Rota individual. A migration normaliza novas versões de rotas existentes e preserva versões anteriores e snapshots. O restante da tarefa continua em andamento para definir as regras de Bordado, Apoio e bifurcação.
+## Implementação pendente
 
-### 14 — TASK-014: Fazer o backend operacional executar a rota da ordem
-**Estado: pendente.** Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.
+### Tickets por setor e possível transferência parcial
+**Regras confirmadas para tickets:** gerar um ticket identificável por setor e por fluxo da ordem (Lote Principal e, quando ativada, Caixa Teste), ambos vinculados à mesma rota congelada e com códigos de bipagem distintos. O fluxo permanece discriminado no rastreamento. A Caixa Teste percorre a rota separadamente, inclusive setores hoje bloqueados como monolíticos. Os tickets do Corte são uma categoria própria, agrupada pelos subsetores/máquinas configurados e impressa uma vez por ordem.
 
-### 15 — TASK-015: Adaptar a tela de bipagem à rota da ordem
-**Estado: pendente.** Remover sequências fixas de setores. Ao selecionar uma ordem, exibir apenas setores e processos da rota dela, com posição, estado e ações permitidas.
+**Transferências parciais — aguardando decisão da gerente:** ainda será definido se a operação terá saída parcial. Não iniciar análise de solução nem implementação desse fluxo até a definição. A proposta discutida anteriormente — sem controle de quantidade, motivo obrigatório, setor de origem permanecendo aberto e recebimento confirmado por crachá no setor seguinte — deve ser revisada caso a gerente aprove a funcionalidade.
 
-### 16 — TASK-016: Adaptar a TV de rastreamento à rota da ordem
-**Estado: pendente.** Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preservando o histórico quando o modelo for editado.
+**Fundação dos tickets — concluída e validada:** migration e entidade para tickets persistentes por ordem/setor; geração idempotente junto da ordem quando o snapshot da rota existe ou é congelado. O fluxo PCP cria os tickets ao finalizar a Modelagem. O fluxo do wizard grava o snapshot da rota antes de gerar os tickets.
 
-### 17 — TASK-017: Conectar os dados e indicadores da Torre de Controle
-**Estado: pendente.** Revisar endpoints, filtros, setores, tempos e agregações para consumir dados reais de ordens, rotas, bipagens, qualidade e ocorrências; identificar mocks e validar indicadores com registros de produção.
+**Gestão, impressão e leitura de tickets — implementada nesta branch, aguardando validação:** “Lote principal” imprime os tickets por setor do fluxo principal; “Caixa Teste” imprime a mesma rota com tickets e códigos próprios; “Tickets de Corte” imprime os subsetores de corte; “Imprimir todos os setores” reúne Lote Principal, Caixa Teste quando habilitada e Corte em um único PDF. Os tickets de Corte são incluídos uma vez por ordem. A bipagem reconhece o código do ticket e obtém ordem, setor e tipo de lote, mantendo compatibilidade com códigos antigos da ordem. O gabarito é A4, 2 colunas × 5 linhas, células destacáveis de 90 × 53 mm, início a 13 mm do topo e continuação em páginas adicionais após 10 etiquetas. A regra de impressão não controla quantidade.
 
-### 18 — TASK-018: Revisar a interface da Torre de Controle
-**Estado: implementação entregue — validação visual/manual pendente.** A view foi reorganizada em cards KPI independentes, gráfico e Saúde Operacional (8/4), e qualidade/retrabalho (5/7), com estados compactos, skeleton alinhado ao grid e erro de comunicação com retry. O grid visual está em `frontend/src/components/DashboardGerencialMetrics.vue`; tipos compartilhados ficam em `frontend/src/types/dashboardGerencial.ts`; API, sincronização e galeria permanecem em `frontend/src/views/DashboardGerencialView.vue`. Preservados o endpoint `/dashboard/kpis`, payloads, eventos/listeners WebSocket, helpers de formatação e funções da galeria. A referência `/home/hellen/Downloads/gemini-svg.svg` orientou a paleta clara, bordas slate e destaque índigo. Nenhuma mudança de backend ou migration.
+**Validação anterior:** a impressão pelo botão “Imprimir todos os setores” foi confirmada com os tickets distintos da rota; a captura mostra duas páginas para o teste. Builds do backend e frontend passaram. A lista do modal rola dentro da janela e não oferece impressão individual por setor. **Validação desta revisão:** builds de frontend e backend, `git diff --check` e carregamento do DataSource passaram; a usuária confirmou que `npm run dev` iniciou normalmente após a etapa de migrations. Permanecem a leitura física dos códigos, o PDF combinado com os três grupos e o alinhamento do gabarito na folha.
 
-**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros. A tela ainda precisa de revisão visual/funcional no navegador em desktop e mobile; não foi executada nesta entrega. Próximo passo: validar a aparência e os estados com dados reais e confirmar o fluxo de abertura/navegação da galeria.
+**Correção de inicialização — validada:** `TipoLote` foi extraído para um módulo independente e reexportado por `Rastreamento.ts` para evitar o ciclo de imports entre as entidades `Peca`, `Rastreamento`, `OrdemTeste` e `TicketSetor`. Build e carregamento do DataSource passaram, e a usuária confirmou que `npm run dev` iniciou normalmente.
 
-### 19 — TASK-019: Padronizar datas no backend e no banco
-**Estado: pendente.** Definir como instantes e prazos são recebidos, persistidos e serializados. Tratar valores históricos conforme sua interpretação atual, sem conversões em massa sem auditoria.
+**Estado operacional e transferências parciais:** em espera até decisão da gerente sobre a necessidade de saídas parciais.
 
-### 20 — TASK-020: Corrigir a apresentação e edição de datas no frontend
-**Estado: pendente.** Apresentar datas no horário local e enviar valores editados com timezone explícito, conforme o contrato da TASK-019. Remover conversões que tratem UTC como hora local ou usem offsets fixos.
+**Execução em etapas:**
 
-### 22 — TASK-022: Auditar os módulos de Corte, Apoio e dados simulados
-**Estado: pendente.** Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
+- **Fundação dos tickets:** criar e persistir tickets por setor e fluxo da rota congelada, com códigos de barras distintos e criação idempotente. Os registros existentes permanecem como Lote Principal. No fluxo PCP, gerar os tickets ao finalizar a configuração da Modelagem; nos fluxos que já criam a ordem com rota, gerar na criação. Usar o snapshot da ordem para preservar a rota original.
+- **Gestão, impressão e leitura de tickets (implementada nesta branch; validação pendente):** apresentar os tickets dos dois fluxos com etapa, versão da rota, tipo e código; recuperar registros ausentes idempotentemente do snapshot congelado; imprimir Lote Principal, Caixa Teste e Corte separadamente; reunir todos os grupos em um único PDF no gabarito A4 2×5, início a 13 mm, com páginas adicionais; manter o modal rolável; reconhecer na Bipagem o código e obter ordem, setor e tipo automaticamente, preservando códigos antigos. Remover a restrição que hoje impede Caixa Teste nos setores iniciais/monolíticos, em alinhamento com a regra de rota clonada. Confirmar códigos, nomes dos setores, impressão e alinhamento físico. Os tickets de Corte são impressos uma vez por ordem.
+- **Transferências (aguardando decisão gerencial):** se aprovadas, definir os requisitos finais antes de implementar os eventos de saída, motivo, recebimento por crachá e cálculo do tempo do destino.
+- **Bipagem e acompanhamento (dependente da decisão):** se a transferência parcial for aprovada, localizar eventos por ticket e exibir entregas e responsáveis na Bipagem, TV, SLAs e histórico, preservando compatibilidade com ordens antigas.
+- **Validação (condicional):** se aprovada a funcionalidade, cobrir rotas simples e ramificadas, Lote Principal e Caixa Teste, entregas, recebimentos por pessoas diferentes, permissões, duplicidade, qualidade e ordens legadas.
 
-### 23 — TASK-023: Validar a jornada integrada
-**Estado: pendente.** Validar o fluxo completo de modelo, peças, rota, ordem, bipagem e Torre, incluindo cadastros individuais, permissões, anexos, horários e integridade dos dados.
+**Dependências:** preservar a rota congelada em todos os caminhos de criação e integrar a fundação com a gestão, a impressão, a Bipagem e a TV nas etapas seguintes. Ordens antigas sem snapshot permanecem sem rota/tickets inferidos.
 
-### 24 — TASK-024: Refinar a integração visual da Torre de Controle
-**Estado: implementação concluída; validação visual pendente. Dependência: TASK-018.** `frontend/src/index.css` voltou a herdar a fonte global definida em `App.vue`; `DashboardView.vue` alinha a busca e remove o padding somente na rota gerencial; `DashboardGerencialView.vue` compacta o cabeçalho e o espaçamento do conteúdo; `DashboardGerencialMetrics.vue` aplica os cards com microinterações, melhora os KPIs, identifica pontos do gráfico e equilibra FPY/retrabalho. Contrato da API, WebSocket e galeria preservados. Sem alterações de backend ou migrations.
+### Indicador de Lead Time por modelo com tênis (TASK-032)
+**Estado: implementação integrada nesta branch; validação visual e dos dados pendente.** O protótipo veio do commit `a93a780` da branch `feat/grafico-lead-time-por-modelo`. As mudanças foram aplicadas à branch atual (`feat/ajuste-visual-tv-rastreamento`) e aguardam validação.
 
-**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros. Não foi possível iniciar o servidor Vite para inspeção visual: o sandbox bloqueou a abertura de `127.0.0.1:5173` (`EPERM`). A verificação visual responsiva em desktop/mobile permanece pendente; nenhum teste funcional foi executado.
+**Escopo do indicador:** comparar modelos, não representar uma sequência temporal. O protótipo usa colunas verticais, com um ícone genérico de tênis acima de cada coluna, valor em horas, modelo e marca; colore Nike em vermelho, Fila em azul e outras marcas em cinza. Permite selecionar um modelo e consultar os dados do lote associado. O endpoint também foi alterado no protótipo para usar o Lote Principal mais recente de cada modelo, ordenar pelo maior Lead Time e limitar a exibição a dez modelos.
 
-### 25 — TASK-025: Tornar o gráfico do Lead Time interativo e simplificar os rótulos
-**Estado: implementação entregue — validação visual/interativa pendente. Dependência: TASK-024.** `DashboardGerencialMetrics.vue` agora seleciona o ciclo mais recente inicialmente, oferece área de interação mouse/teclado nos pontos do SVG e mostra os detalhes do lote selecionado em cartão HTML. O eixo respeita a ordem cronológica real retornada pelo backend, com os lotes mais antigos à esquerda. Os rótulos técnicos foram substituídos por linguagem de chão de fábrica compatível com o escopo atual das consultas: WIP conta ordens não reprovadas, médias usam até cinco ciclos recentes em acompanhamento, downtime não é filtrado por gravidade e FPY considera inspeções de saída de setor. Endpoint, WebSocket, galeria e cálculos do backend permanecem preservados. Sem mudanças no backend ou migrations.
+**Execução em etapas:**
 
-**Evidências de validação:** `cd frontend && npm run build` concluído com `vue-tsc -b` e `vite build`; `git diff --check` sem erros; busca pelos rótulos técnicos substituídos sem ocorrências. A interação visual do hover, teclado e card de detalhes ainda precisa ser confirmada no navegador; nenhum teste funcional foi executado.
+- **Revisão e integração (concluída):** reaplicar somente as mudanças do indicador no controller e no componente, preservando os demais módulos e o comportamento atual dos outros KPIs.
+- **Regra dos dados:** confirmar com dados reais que usar o Lote Principal mais recente por modelo e ordenar pelos maiores tempos representa a comparação desejada; conferir modelos sem identificador, sem marca ou sem Lead Time positivo.
+- **Apresentação e interação:** validar tênis acima das colunas, cores por marca, rótulos, seleção e painel de detalhes, navegação por teclado e rolagem horizontal em telas estreitas.
+- **Validação final:** compilar frontend e backend após integrar o endpoint e conferir manualmente a Torre de Controle com modelos de marcas diferentes e com poucos ou muitos resultados.
 
-### 26 — TASK-026: Remover indicadores de pausa da Torre e restringir interrupção de SLA por usuário
-**Estado: implementação entregue — validação funcional/manual pendente. Dependência: TASK-025 (PR #11).** A Torre não expõe mais o KPI de downtime, motivos de parada nem parada por lote; o payload `/dashboard/kpis` e os tipos foram reduzidos e as consultas de pausa removidas. O Lead Time, gargalos, ocorrências e cálculo de SLA em rastreamentos permanecem. A coluna individual `pode_interromper_sla` é administrada na aba Usuários, com escrita somente para `ADMIN_AUTOMACAO`, auditoria RBAC e verificação server-side baseada na conta autenticada. A interface de Bipagem só mostra o controle para contas autorizadas.
+**Dependência:** o protótipo está em uma branch separada e altera tanto `DashboardGerencialMetrics.vue` quanto a agregação de `dashboard.controller.ts`; não é apenas uma mudança de CSS.
 
-**Evidências de validação:** `cd frontend && npm run build` e `cd backend && npm run build` concluídos; `git diff --check` sem erros; busca nos consumidores do dashboard sem referências aos campos e rótulos de pausa removidos. Em 2026-10-15, o estado inicial do banco PostgreSQL local configurado mostrou 18 de 19 migrations aplicadas; as migrations `1791980400000`, `1791980500000` e `1791980600000` já constavam no histórico do banco. A `1791980700000-AdicionaPermissaoIndividualPausarSla` foi executada com sucesso e commit transacional. A consulta final `migration:show` confirmou as 19 migrations aplicadas, sem pendências. O comando de preparação também concluiu a verificação/criação idempotente do schema `erp_modelagem` e da extensão `uuid-ossp`. **Pendências:** validação funcional da API/interface com usuários autorizados e não autorizados; revisão visual no navegador não executada. Próximo passo: validar o fluxo de concessão, revogação e tentativa de pausa.
+### Execução da rota da ordem no backend (TASK-014)
+Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.
 
-## Migrations relacionadas à TASK-026
+### Bipagem orientada à rota da ordem (TASK-015)
+Remover sequências fixas de setores. Ao selecionar uma ordem, exibir apenas setores e processos de sua rota, com posição, estado e ações permitidas.
 
-- `1791980400000-ConcedeConfiguracaoModeloAdminAutomacao`: aplicada no banco local; concede a ação de configuração do modelo ao perfil de automação.
-- `1791980500000-HabilitaMatrizRbacDelegada`: aplicada no banco local; habilita a permissão da Matriz no catálogo RBAC e para o perfil de automação.
-- `1791980600000-RemoveDataPrevistaProducao`: já aplicada no banco local antes desta execução; remove a coluna `data_prevista_producao` e os valores existentes.
-- `1791980700000-AdicionaPermissaoIndividualPausarSla`: aplicada nesta execução no banco local; adiciona `usuarios.pode_interromper_sla` como `boolean NOT NULL DEFAULT false`, deixando a pausa negada por padrão.
+### TV de rastreamento usando o snapshot da ordem (TASK-016)
+Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preservando o histórico quando o modelo for editado.
 
-O estado acima foi confirmado somente no PostgreSQL local apontado pela configuração desta sessão. Outros ambientes precisam de consulta e aplicação próprias; não foram acessados.
+### Dados reais da Torre de Controle (TASK-017)
+Revisar endpoints, filtros, setores, tempos e agregações para consumir dados reais de ordens, rotas, bipagens, qualidade e ocorrências; identificar mocks e validar indicadores com registros de produção.
 
-### 27 — TASK-027: Ampliar categorias de gargalo e detalhar ocorrências do tipo Outro
-**Estado: implementação entregue — validação funcional/manual pendente. Dependência: TASK-026.** O formulário de Bipagem oferece `Liberação parcial` e `Aguardando resposta do Sul`. `OUTRO` mostra o campo condicional `Qual ocorrência?`, armazenado no `titulo` existente (limite de 200 caracteres); a descrição detalhada continua separada. O enum TypeScript, enum PostgreSQL e contrato Swagger foram atualizados, e o Dossiê apresenta rótulos legíveis para as novas categorias. Upload de evidências, identificação por crachá e autorização individual para interromper SLA permanecem preservados.
+### Padronização de datas no backend e no banco (TASK-019)
+Definir como instantes e prazos são recebidos, persistidos e serializados. Tratar valores históricos conforme sua interpretação atual, sem conversões em massa sem auditoria.
 
-**Evidências de validação:** `cd backend && npm run build`, `cd frontend && npm run build` e `git diff --check` concluídos. A migration `1791980800000-AdicionaTiposOcorrenciaProducao` foi aplicada no PostgreSQL local configurado e `migration:show` confirmou 20 de 20 migrations aplicadas. **Pendências:** validar manualmente na interface a seleção das categorias e o campo de `OUTRO`, além da gravação e leitura no Dossiê; nenhum teste automatizado dedicado existe no projeto. Outros ambientes não foram acessados nem migrados.
+### Apresentação e edição de datas no frontend (TASK-020)
+Apresentar datas no horário local e enviar valores editados com timezone explícito, conforme o contrato da TASK-019. Remover conversões que tratem UTC como hora local ou usem offsets fixos.
 
-## Migration relacionada à TASK-027
+### Auditoria de Corte, Apoio e dados simulados (TASK-022)
+Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
 
-- `1791980800000-AdicionaTiposOcorrenciaProducao`: aplicada somente no banco local; adiciona `LIBERACAO_PARCIAL` e `AGUARDANDO_RESPOSTA_SUL` ao enum PostgreSQL antes de `OUTRO`. O rollback recusa remover os valores quando já houver ocorrências usando-os.
+### Jornada integrada (TASK-023)
+Validar o fluxo completo de modelo, peças, rota, ordem, bipagem e Torre, incluindo cadastros individuais, permissões, anexos, horários e integridade dos dados.
 
-### 28 — TASK-028: Persistir SLA da rota e iniciar o tempo na entrada do setor
-**Estado: implementação entregue — validação funcional/manual pendente. Relação: entrega parcial relacionada à TASK-016.** Persistir o prazo em minutos em cada etapa/versionamento da rota, carregar o valor salvo no Construtor de Rota e disponibilizá-lo para a TV por meio do mapa congelado na ordem/snapshot ou da rota vinculada. O tempo exibido usa `dataEntrada` do rastreamento; etapas sintéticas sem uma entrada registrada permanecem aguardando, sem contador nem atraso.
+## Verificação de migrations por ambiente
 
-**Entrega:** `RotaModelo.slaAlvoMin` guarda o prazo da etapa e a migration backfill lê mapas de ordens/snapshots para a versão correspondente, usando 120 minutos quando não há valor histórico. O controller de rotas salva o mapa recebido; o Construtor de Rota hidrata os valores ao reabrir o modelo. Os fluxos de finalização/criação da ordem copiam os SLAs da rota para o mapa por ordem, e o fluxo de manutenção preserva os overrides existentes. A TV prioriza mapa da ordem, depois snapshot e por fim o SLA da rota; não inicia o contador para a Conferência Inicial sintética. `dataEntrada` real continua vindo do rastreamento persistido.
+As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão. O estado em outros ambientes não foi consultado; confirmar antes de qualquer implantação:
 
-**Evidências:** `cd backend && npm run build` e `cd frontend && npm run build` concluídos; `git diff --check` sem erros. Não há teste automatizado dedicado a SLA/TV e o `npm test` do backend é placeholder; não foi executado. A migration foi aplicada ao PostgreSQL local configurado em 2026-10-15, e `migration:show` confirmou 22 migrations aplicadas. **Pendências:** validar salvar/reabrir uma rota, finalizar uma ordem e conferir na TV a contagem antes/depois de refresh, atraso e espera por entrada. Outros ambientes não foram acessados nem migrados.
-
-## Migration relacionada à TASK-028
-
-- `1791981000000-PersisteSlaNaRotaModelo`: adiciona `rota_modelo.sla_alvo_min` com padrão de 120 minutos e migra valores de SLA do snapshot/mapa de cada ordem para a versão correspondente da rota. Aplicada somente no PostgreSQL local configurado em 2026-10-15; outros ambientes ainda precisam ser verificados e migrados.
-
-### 29 — TASK-029: Listar modelos sem rota no Construtor de Rota
-**Estado: implementação entregue — validação funcional/manual pendente.** Separada a listagem do Construtor da listagem usada na criação de ordens. O novo `GET /rotas/modelos`, protegido pela permissão `TELA_CONSTRUTOR_ROTA`, retorna somente os campos necessários de todos os modelos ativos, sem filtrar ordens ou rotas. A tela individual usa esse endpoint; o carregamento da rota continua escopado à planta selecionada. O endpoint `/admin/modelos` mantém o filtro 1:1 para criação de ordens.
-
-**Evidências:** `cd backend && npm run build`, `cd frontend && npm run build` e `git diff --check` concluídos. Após identificar o backend antigo em execução, a migration pendente foi aplicada no banco local e a API reiniciada em 2026-10-15; startup confirmou ausência de migrations pendentes e conexão ao PostgreSQL. Gateway e backend responderam HTTP 401 à consulta sem autenticação, conforme esperado pelas rotas protegidas. Não há teste automatizado dedicado a essa listagem. **Pendências:** validar manualmente no navegador um modelo ativo sem rota, um modelo com ordem mas sem rota, um modelo com rota em outra planta, modelo inativo e acesso à listagem por usuário com e sem a permissão do Construtor. O endpoint de criação de ordens deve continuar omitindo modelos já vinculados a uma ordem.
-
-### 30 — TASK-030: Controlar configuração, histórico de remanejamentos e dossiê da ordem
-**Estado: implementação entregue — validação funcional/manual pendente.** O botão e o modal usam “Configuração”. A aba Histórico consolida rastreamentos por setor, alterações de SLA e remanejamentos. A ação global `CONFIGURAR_ORDEM_TESTE` aparece na Matriz RBAC, protege o botão e o endpoint, e recebeu grants iniciais para perfis que já tinham `EDITAR_TELA_GESTAO_ORDENS`; a edição de SLA continua exigindo `EDITAR_ROTA`. O remanejamento é persistido em `ordens_teste.pecas_remanejadas` e consumido pela distribuição e autorização de bipagem do corte, sem alterar a peça-base do modelo. A API valida o vínculo da peça, a opção ativa de subsetor e a existência do setor correspondente na planta. Atualizações e auditorias são transacionais. O PDF existente inclui uma seção parcial de histórico de SLA/remanejamentos, data e operador. A tela e o relatório completo de ciclo de vida foram adiados para um próximo ponto.
-
-**Evidências:** `cd backend && npm run build`, `cd frontend && npm run build` e `git diff --check` concluídos. A migration `1791981200000-PersisteRemanejamentoPecaPorOrdem` foi aplicada no PostgreSQL local em 2026-10-15 após as 23 migrations anteriores. Ela preservou os destinos atuais nos registros das ordens e restaurou o destino-base compartilhado quando a auditoria permitia identificar uma única ordem por modelo. **Pendências:** validar na interface o acesso de perfis com/sem `CONFIGURAR_ORDEM_TESTE`, as restrições de SLA por `EDITAR_ROTA`, o remanejamento restrito à ordem, a distribuição/bipagem no novo setor e o conteúdo parcial do PDF com eventos reais. Não há testes automatizados dedicados a esse fluxo. Outros ambientes não foram acessados nem migrados. A tela do relatório completo fica para o próximo ponto, conforme definido pelo usuário.
-
-## Migration relacionada à TASK-030
-
-- `1791981100000-ControlaConfiguracaoOrdemRbac`: cadastra `CONFIGURAR_ORDEM_TESTE` no catálogo RBAC e concede a ação aos perfis que já podiam editar Gestão de Ordens. Aplicada somente no PostgreSQL local configurado em 2026-10-15; outros ambientes ainda precisam ser verificados e migrados.
-- `1791981200000-PersisteRemanejamentoPecaPorOrdem`: adiciona o mapa JSONB de peças remanejadas em `ordens_teste`, migra os remanejamentos já auditados para suas ordens e restaura o destino-base do modelo quando há uma única ordem associada.
+- TASK-026: 1791980400000, 1791980500000, 1791980600000 e 1791980700000.
+- TASK-027: 1791980800000.
+- TASK-028: 1791981000000.
+- TASK-030: 1791981100000 e 1791981200000.

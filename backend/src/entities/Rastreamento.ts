@@ -13,12 +13,10 @@ import { Peca } from './Peca';
 import { Setor } from './Setor';
 import { EstacaoTrabalho } from './EstacaoTrabalho';
 import { Usuario } from './Usuario';
+import { TipoLote } from './TipoLote';
 import { uuidv7 } from 'uuidv7';
 
-export enum TipoLote {
-  LOTE_PRINCIPAL = 'LOTE_PRINCIPAL',
-  CAIXA_TESTE    = 'CAIXA_TESTE',
-}
+export { TipoLote };
 
 export enum RastreamentoStatus {
   EM_PROCESSO   = 'EM_PROCESSO',

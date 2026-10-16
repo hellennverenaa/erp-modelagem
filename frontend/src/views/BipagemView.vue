@@ -39,6 +39,17 @@ interface OrdemTeste {
   possuiCaixaTeste: boolean | null
 }
 
+interface TicketSetorLookup {
+  codigoBarras: string
+  ordemTesteId: string
+  ordemCodigoBarras: string
+  ordemStatus: string
+  possuiCaixaTeste: boolean
+  setorId: string
+  setorNome: string
+  tipoLote: 'LOTE_PRINCIPAL' | 'CAIXA_TESTE'
+}
+
 
 // ─── 1. Declaração do Estado Reativo (Refs e Reactives - APENAS NO TOPO) ──
 const setores = ref<Setor[]>([])
@@ -47,6 +58,7 @@ const tipoLote = ref<'LOTE_PRINCIPAL' | 'CAIXA_TESTE'>('LOTE_PRINCIPAL')
 const codigoLeitura = ref('')
 const lotesDisponiveis = ref<OrdemTeste[]>([])
 const ordemAtiva = ref<OrdemTeste | null>(null)
+const codigoTicketAtivo = ref<string | null>(null)
 
 const acaoPendente = ref<'entrada' | 'saida' | 'ocorrencia' | null>(null)
 
@@ -98,19 +110,6 @@ const podeEditarSetor = computed(() =>
 )
 const isAdmin = computed(() => authStore.hasPermission('ADMINISTRAR_BIPAGEM'))
 const ordemAguardandoModelagem = computed(() => ordemAtiva.value?.status === 'AGUARDANDO_MODELAGEM')
-
-const isFaseMonolitica = computed<boolean>(() => {
-  if (!selecionouSetorId.value) return false
-  const setor = setores.value.find(s => s.id === selecionouSetorId.value)
-  if (!setor?.tipoOpcaoValor) return false
-  const setoresMonoliticos = [
-    'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'TELAS', 
-    'CORTE_RECEBIMENTO', 'CORTE_DUBLAGEM', 
-    'CORTE_PONTE', 'CORTE_LECTRA', 'CORTE_ATOM', 
-    'CORTE_CN', 'CORTE_COURO', 'CORTE_LASER'
-  ];
-  return setoresMonoliticos.includes(setor.tipoOpcaoValor)
-})
 
 // ─── 3. Funções e Métodos Auxiliares ───────────────────────────────────────
 function triggerToast(msg: string, type: 'success' | 'error' | 'info' = 'success') {
@@ -307,6 +306,7 @@ async function processarLeituraRfid() {
 
       triggerToast('Ocorrência registrada com sucesso.', 'success')
       showOcorrenciaModal.value = false
+      codigoTicketAtivo.value = null
       fecharRfidModal()
       
       const resLotes = await api.get('/lotes')
@@ -321,7 +321,8 @@ async function processarLeituraRfid() {
         ordemTesteId,
         setorId,
         tipoLote: tipoLote.value,
-        codigoCrachao: cracha
+        codigoCrachao: cracha,
+        ...(codigoTicketAtivo.value ? { codigoTicket: codigoTicketAtivo.value } : {}),
       }
 
       await api.post(endpoint, payload)
@@ -336,6 +337,7 @@ async function processarLeituraRfid() {
 
       codigoLeitura.value = ''
       ordemAtiva.value = null
+      codigoTicketAtivo.value = null
       fecharRfidModal()
     }
   } catch (err: any) {
@@ -389,14 +391,37 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
     return
   }
 
-  const loteEncontrado = lotesDisponiveis.value.find(
+  let loteEncontrado = lotesDisponiveis.value.find(
     l => l.codigoBarras.toUpperCase() === codigo || l.id.toUpperCase() === codigo
   )
 
   if (!loteEncontrado) {
-    triggerToast(`Ordem de teste com codigo "${codigo}" nao foi localizada no sistema.`, 'error')
-    forcarFocoInput()
-    return
+    try {
+      const { data } = await api.get<{ ticket: TicketSetorLookup }>(
+        `/lotes/tickets-setor/codigo/${encodeURIComponent(codigo)}`
+      )
+      const ticket = data.ticket
+      if (ticket.setorId !== selecionouSetorId.value) {
+        triggerToast(`Este ticket pertence ao setor ${ticket.setorNome}. Selecione esse setor para bipar.`, 'error')
+        forcarFocoInput()
+        return
+      }
+
+      loteEncontrado = {
+        id: ticket.ordemTesteId,
+        codigoBarras: ticket.ordemCodigoBarras,
+        status: ticket.ordemStatus,
+        possuiCaixaTeste: ticket.possuiCaixaTeste,
+      }
+      tipoLote.value = ticket.tipoLote
+      codigoTicketAtivo.value = ticket.codigoBarras
+    } catch (err: any) {
+      triggerToast(err?.response?.data?.error || `Ticket ou ordem com código "${codigo}" não localizado.`, 'error')
+      forcarFocoInput()
+      return
+    }
+  } else {
+    codigoTicketAtivo.value = null
   }
 
   ordemAtiva.value = loteEncontrado
@@ -419,6 +444,7 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
 
 // ─── 4. Watchers & Lifecycle Hooks (DECLARADOS POR ÚLTIMO) ─────────────────
 watch(codigoLeitura, (novoCodigo) => {
+  codigoTicketAtivo.value = null
   const codigo = novoCodigo.trim().toUpperCase()
   if (!codigo) {
     ordemAtiva.value = null
@@ -430,12 +456,6 @@ watch(codigoLeitura, (novoCodigo) => {
   )
   ordemAtiva.value = loteEncontrado ?? null
 }, { immediate: true })
-
-watch(isFaseMonolitica, (monolitico) => {
-  if (monolitico && tipoLote.value === 'CAIXA_TESTE') {
-    tipoLote.value = 'LOTE_PRINCIPAL'
-  }
-})
 
 onMounted(async () => {
   loadingSetores.value = true
@@ -577,31 +597,30 @@ onMounted(async () => {
               class="tab-btn"
               :class="{ 'tab-btn--active': tipoLote === 'LOTE_PRINCIPAL' }"
               @click="tipoLote = 'LOTE_PRINCIPAL'"
-              :disabled="loadingBip"
+              :disabled="loadingBip || codigoTicketAtivo !== null"
             >
               <Layers :size="16" aria-hidden="true" />
               <span>Lote Principal</span>
             </button>
             <button
-              v-if="!isFaseMonolitica"
               type="button"
               class="tab-btn"
               :class="{ 'tab-btn--active': tipoLote === 'CAIXA_TESTE' }"
               @click="tipoLote = 'CAIXA_TESTE'"
-              :disabled="loadingBip"
+              :disabled="loadingBip || codigoTicketAtivo !== null"
             >
               <Box :size="16" aria-hidden="true" />
               <span>Caixa Teste</span>
             </button>
           </div>
-          <span v-if="isFaseMonolitica" class="field-hint text-amber-600 mt-2 block font-medium">
-            A bipagem neste setor é monolítica para todo o lote. Processe como Lote Principal. A Caixa Teste será liberada para bipagem independente a partir das etapas pós-corte (ex: Serigrafia/Apoio).
+          <span v-if="codigoTicketAtivo" class="field-hint text-indigo-700 mt-2 block font-medium">
+            O ticket identificou automaticamente o setor e o fluxo {{ tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste' : 'Lote Principal' }}.
           </span>
         </div>
 
         <!-- ── BARCODE INPUT & CAMERA ACTION ── -->
         <div class="field-group">
-          <label for="input-barcode" class="field-label">Código de Barras (Ordem de Teste)</label>
+          <label for="input-barcode" class="field-label">Código de Barras (Ticket ou Ordem de Teste)</label>
           <div class="input-action-row">
             <div class="barcode-input-wrapper">
               <Barcode :size="24" class="barcode-input-icon" aria-hidden="true" />

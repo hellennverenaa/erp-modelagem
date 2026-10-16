@@ -11,12 +11,14 @@ import { Planta } from '../entities/Planta';
 import { AuditLog } from '../entities/AuditLog';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
+import { TicketSetor } from '../entities/TicketSetor';
 import { perfilPossuiPermissao } from '../services/rbac.service';
 import { finalizarNovoTeste, NovoTesteServiceError } from '../services/novo-teste.service';
 import { getPersistedModelRoute, lockModelConfiguration, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 import { finalizarNovoTesteSchema } from '../schemas/novo-teste.schema';
 import { ModelPieceInput, ModelPiecesError, saveModelPieces } from '../services/model-pieces.service';
 import { getSetorCorteOpcaoEfetiva, mapearSubsetoresParaTiposDeSetor } from '../services/ordem-pecas.service';
+import { garantirTicketsSetorDaOrdem } from '../services/ticket-setor.service';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -224,7 +226,9 @@ export class LotesController {
         atual.slasPorSetor = slasPorSetor;
         atual.status = OrdemTesteStatus.AGUARDANDO_MATERIAL;
         atual.liberadoProducao = true;
-        return repo.save(atual);
+        const ordemSalva = await repo.save(atual);
+        await garantirTicketsSetorDaOrdem(manager, ordemSalva);
+        return ordemSalva;
       });
       return res.json({ message: 'Modelagem concluída. A ordem foi liberada para produção.', ordem });
     } catch (error: any) {
@@ -341,6 +345,106 @@ export class LotesController {
   };
 
   /**
+   * GET /api/lotes/:id/tickets-setor
+   * Lista os tickets gerados para a rota congelada de uma ordem.
+   */
+  public getTicketsSetor = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const id = req.params.id as string;
+      if (!isUuid(id)) {
+        return res.status(400).json({ error: 'ID da ordem inválido.', code: 'LOTE_ID_INVALIDO' });
+      }
+
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && !req.user?.plantaId) {
+        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      }
+
+      const ordem = await AppDataSource.getRepository(OrdemTeste).findOne({
+        where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId },
+        relations: { modelo: true },
+      });
+      if (!ordem) {
+        return res.status(404).json({ error: 'Ordem de teste não encontrada.', code: 'LOTE_NOT_FOUND' });
+      }
+
+      const rotaCongelada = Boolean(ordem.rotaSnapshot?.etapas?.length);
+      if (rotaCongelada) {
+        await AppDataSource.transaction(async (manager) => {
+          await garantirTicketsSetorDaOrdem(manager, ordem);
+        });
+      }
+
+      const tickets = await AppDataSource.getRepository(TicketSetor).find({
+        where: { ordemTesteId: id },
+        order: { ordemEtapa: 'ASC', createdAt: 'ASC' },
+      });
+
+      return res.json({
+        ordemTesteId: ordem.id,
+        codigoBarras: ordem.codigoBarras,
+        modeloNome: ordem.modelo?.nome ?? 'Modelo não informado',
+        rotaCongelada,
+        tickets: tickets.map((ticket) => ({
+          id: ticket.id,
+          codigoBarras: ticket.codigoBarras,
+          tipoLote: ticket.tipoLote,
+          ordemEtapa: ticket.ordemEtapa,
+          rotaVersao: ticket.rotaVersao,
+          setorNomeSnapshot: ticket.setorNomeSnapshot,
+        })),
+      });
+    } catch (error) {
+      console.error('[LotesController] Erro ao buscar tickets por setor:', error);
+      return res.status(500).json({ error: 'Erro ao buscar tickets por setor.' });
+    }
+  };
+
+  /** Resolve o código de barras de um ticket e retorna seu fluxo e setor. */
+  public getTicketSetorPorCodigo = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const codigoBarras = String(req.params.codigoBarras || '').trim().toUpperCase();
+      if (!codigoBarras || codigoBarras.length > 64) {
+        return res.status(400).json({ error: 'Código do ticket inválido.', code: 'TICKET_CODIGO_INVALIDO' });
+      }
+
+      const ticket = await AppDataSource.getRepository(TicketSetor).findOne({
+        where: { codigoBarras },
+        relations: { ordemTeste: true },
+      });
+      if (!ticket) {
+        return res.status(404).json({ error: 'Ticket de setor não encontrado.', code: 'TICKET_SETOR_NOT_FOUND' });
+      }
+
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      if (!acessoTodasPlantas && ticket.ordemTeste.plantaId !== req.user?.plantaId) {
+        return res.status(404).json({ error: 'Ticket de setor não encontrado.', code: 'TICKET_SETOR_NOT_FOUND' });
+      }
+
+      if (ticket.tipoLote === 'CAIXA_TESTE' && !ticket.ordemTeste.possuiCaixaTeste) {
+        return res.status(409).json({ error: 'A ordem não possui Caixa Teste ativa.', code: 'CAIXA_TESTE_INATIVA' });
+      }
+
+      return res.json({
+        ticket: {
+          id: ticket.id,
+          codigoBarras: ticket.codigoBarras,
+          ordemTesteId: ticket.ordemTesteId,
+          ordemCodigoBarras: ticket.ordemTeste.codigoBarras,
+          ordemStatus: ticket.ordemTeste.status,
+          possuiCaixaTeste: Boolean(ticket.ordemTeste.possuiCaixaTeste),
+          setorId: ticket.setorId,
+          setorNome: ticket.setorNomeSnapshot,
+          tipoLote: ticket.tipoLote,
+        },
+      });
+    } catch (error) {
+      console.error('[LotesController] Erro ao resolver ticket por código:', error);
+      return res.status(500).json({ error: 'Erro ao localizar o ticket de setor.' });
+    }
+  };
+
+  /**
    * POST /api/ordens-teste/wizard
    * Persiste o agregado do wizard em uma única transação.
    */
@@ -436,46 +540,63 @@ export class LotesController {
         });
       }
 
-      const loteRepo = AppDataSource.getRepository(OrdemTeste);
+      const savedLote = await AppDataSource.transaction(async (manager) => {
+        await lockModelConfiguration(manager, modeloId);
+        const loteRepo = manager.getRepository(OrdemTeste);
+        const ordemExistente = await loteRepo.findOne({ where: { modeloId } });
+        if (ordemExistente) {
+          throw Object.assign(
+            new Error('Este modelo já possui um teste de produção ativo. A relação Modelo → Ordem de Teste é 1:1.'),
+            { status: 400, code: 'MODELO_TESTE_DUPLICADO', ordemId: ordemExistente.id, codigoBarras: ordemExistente.codigoBarras },
+          );
+        }
 
-      const ordemExistente = await loteRepo.findOne({ where: { modeloId } });
-      if (ordemExistente) {
-        return res.status(400).json({
-          error: 'Este modelo já possui um teste de produção ativo. A relação Modelo → Ordem de Teste é 1:1.',
-          code: 'MODELO_TESTE_DUPLICADO',
-          ordemId: ordemExistente.id,
-          codigoBarras: ordemExistente.codigoBarras,
+        const rotaRepo = manager.getRepository(RotaModelo);
+        const countRotas = await rotaRepo.count({ where: { modeloId, plantaId } });
+        if (countRotas === 0) {
+          throw Object.assign(
+            new Error('Falha: O modelo não possui uma rota de produção definida. Acesse o Construtor de Rota para mapear o fluxo do modelo antes de gerar a Ordem.'),
+            { status: 400, code: 'ROTA_NOT_FOUND' },
+          );
+        }
+        await validatePersistedModelRoute(manager, modeloId, plantaId);
+        const { versao, etapas } = await getPersistedModelRoute(manager, modeloId, plantaId);
+        const slasDaRota = Object.fromEntries(etapas.map((etapa) => [etapa.setorId, etapa.slaAlvoMin]));
+        const slasDaOrdem = { ...slasDaRota, ...(slasPorSetor || {}) };
+        const rotaSnapshot = {
+          versao,
+          plantaId,
+          etapas: etapas.map((etapa) => ({
+            setorId: etapa.setorId,
+            nome: etapa.setor?.nome || 'Setor',
+            ordem: etapa.ordem,
+            obrigatorio: etapa.obrigatorio,
+            tipoExecucao: etapa.tipoExecucao,
+            bipagemApenasSaida: etapa.bipagemApenasSaida,
+          })),
+          slasPorSetor: slasDaOrdem,
+        };
+
+        const lote = loteRepo.create({
+          modeloId,
+          plantaId: acessoTodasPlantas ? plantaId : req.user!.plantaId,
+          criadoPorId: req.user!.userId,
+          codigoBarras: `OT-${Date.now()}`,
+          dataInicio: new Date(),
+          prioridadePcp,
+          status: OrdemTesteStatus.AGUARDANDO_MATERIAL,
+          liberadoProducao: false,
+          possuiCaixaTeste,
+          observacoes: observacoes || null,
+          slasPorSetor: slasDaOrdem,
+          rotaVersao: versao,
+          rotaSnapshot,
         });
-      }
 
-      const rotaRepo = AppDataSource.getRepository(RotaModelo);
-      const countRotas = await rotaRepo.count({ where: { modeloId, plantaId } });
-      if (countRotas === 0) {
-        return res.status(400).json({
-          error: 'Falha: O modelo não possui uma rota de produção definida. Acesse o Construtor de Rota para mapear o fluxo do modelo antes de gerar a Ordem.',
-          code: 'ROTA_NOT_FOUND'
-        });
-      }
-      await validatePersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
-      const { etapas } = await getPersistedModelRoute(AppDataSource.manager, modeloId, plantaId);
-      const slasDaRota = Object.fromEntries(etapas.map((etapa) => [etapa.setorId, etapa.slaAlvoMin]));
-      const slasDaOrdem = { ...slasDaRota, ...(slasPorSetor || {}) };
-
-      const lote = loteRepo.create({
-        modeloId,
-        plantaId: acessoTodasPlantas ? plantaId : req.user.plantaId,
-        criadoPorId: req.user!.userId,
-        codigoBarras: `OT-${Date.now()}`,
-        dataInicio: new Date(),
-        prioridadePcp,
-        status: OrdemTesteStatus.AGUARDANDO_MATERIAL,
-        liberadoProducao: false,
-        possuiCaixaTeste,
-        observacoes: observacoes || null,
-        slasPorSetor: slasDaOrdem,
+        const ordemSalva = await loteRepo.save(lote);
+        await garantirTicketsSetorDaOrdem(manager, ordemSalva);
+        return ordemSalva;
       });
-
-      const savedLote = await loteRepo.save(lote);
 
       return res.status(201).json({
         message: 'Ordem de teste criada com sucesso.',
@@ -483,6 +604,13 @@ export class LotesController {
       });
 
     } catch (error: any) {
+      if (error?.status && error?.code) {
+        return res.status(error.status).json({
+          error: error.message,
+          code: error.code,
+          ...(error.ordemId ? { ordemId: error.ordemId, codigoBarras: error.codigoBarras } : {}),
+        });
+      }
       if (error instanceof RouteIntegrityError) {
         return res.status(400).json({ error: error.message, code: error.code });
       }

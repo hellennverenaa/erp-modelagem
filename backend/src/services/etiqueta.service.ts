@@ -20,6 +20,22 @@ export interface EtiquetaDTO {
   possuiCaixaTeste?: boolean;
   plantaNome?: string;
   tipoLote?: 'CAIXA_TESTE' | 'LOTE_PRINCIPAL';
+  tipoEtiqueta?: 'SETOR' | 'CORTE';
+  setorNome?: string;
+  detalhe?: string;
+  ordemEtapa?: number;
+  rotaVersao?: number;
+  copias?: number;
+}
+
+function escapeHtml(value: string | number | null | undefined): string {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char] ?? char);
 }
 
 export class EtiquetaService {
@@ -35,10 +51,13 @@ export class EtiquetaService {
   }
 
   private static async compilarHtml(etiquetas: EtiquetaDTO[]): Promise<string> {
-    // 1. Multiplicação do Lote: Cria exatamente 10 cópias idênticas para cada etiqueta
+    // 1. Preserva as dez cópias das etiquetas atuais; tickets de setor usam uma cópia.
     const etiquetasMultiplicadas: EtiquetaDTO[] = [];
     for (const etq of etiquetas) {
-      for (let k = 0; k < 10; k++) {
+      const copias = Number.isFinite(etq.copias)
+        ? Math.min(10, Math.max(1, Math.floor(etq.copias!)))
+        : 10;
+      for (let k = 0; k < copias; k++) {
         etiquetasMultiplicadas.push({ ...etq });
       }
     }
@@ -55,29 +74,45 @@ export class EtiquetaService {
     for (const pagina of paginas) {
       let pageContent = '';
       for (const etq of pagina) {
+        const ticketSetor = etq.tipoEtiqueta === 'SETOR';
+        const ticketCorte = etq.tipoEtiqueta === 'CORTE';
         const sufixo = etq.tipoLote === 'CAIXA_TESTE' ? '-CX' : '-LP';
         let codigoBarras = etq.codigoBarras;
-        if (!codigoBarras.endsWith('-CX') && !codigoBarras.endsWith('-LP')) {
+        if (!ticketSetor && !ticketCorte && !codigoBarras.endsWith('-CX') && !codigoBarras.endsWith('-LP')) {
           codigoBarras += sufixo;
         }
 
         const barcodeData = await this.gerarBarcodeBase64(codigoBarras);
-        const badgeText = etq.tipoLote === 'CAIXA_TESTE' ? 'CAIXA TESTE' : 'LOTE PRINCIPAL';
+        const tipoFluxo = etq.tipoLote === 'CAIXA_TESTE' ? 'CAIXA TESTE' : 'LOTE PRINCIPAL';
+        const badgeText = ticketCorte
+          ? 'CORTE AUTOMÁTICO'
+          : ticketSetor
+            ? `${tipoFluxo} · ETAPA ${etq.ordemEtapa ?? ''} · ROTA V${etq.rotaVersao ?? ''}`
+            : tipoFluxo;
+        const tituloEtiqueta = ticketCorte
+          ? `SUBSETOR DE CORTE · ${etq.setorNome || 'GERAL'}`
+          : ticketSetor
+            ? `TICKET DE SETOR · ${etq.setorNome || 'SETOR'}`
+            : 'TESTE DE PRODUÇÃO';
+        const textoReferencia = ticketSetor || ticketCorte
+          ? `OP: ${etq.ordemTeste}`
+          : `REF: ${etq.produtoDescricao}`;
         
         pageContent += `
           <div class="etiqueta">
             <div class="etiqueta-header">
-              <span class="modelo-nome">${etq.modelo}</span>
-              <span class="badge-teste">${badgeText}</span>
+              <span class="modelo-nome">${escapeHtml(etq.modelo)}</span>
+              <span class="badge-teste">${escapeHtml(badgeText)}</span>
             </div>
-            <div class="alerta-producao">TESTE DE PRODUÇÃO</div>
+            <div class="alerta-producao${ticketSetor || ticketCorte ? ' alerta-producao--ticket' : ''}">${escapeHtml(tituloEtiqueta)}</div>
             <div class="barcode-container">
               <img class="barcode-img" src="${barcodeData}" alt="Codigo de barras" />
-              <div class="barcode-number">${codigoBarras}</div>
+              <div class="barcode-number${ticketSetor || ticketCorte ? ' barcode-number--ticket' : ''}">${escapeHtml(codigoBarras)}</div>
             </div>
+            ${ticketCorte && etq.detalhe ? `<div class="etiqueta-detalhe">${escapeHtml(etq.detalhe)}</div>` : ''}
             <div class="etiqueta-footer">
-              <span>${etq.plantaNome || 'PLANTA DASS'}</span>
-              <span class="ref-mono">REF: ${etq.produtoDescricao}</span>
+              <span>${escapeHtml(etq.plantaNome || 'PLANTA DASS')}</span>
+              <span class="ref-mono">${escapeHtml(textoReferencia)}</span>
               <span>${new Date().toLocaleDateString('pt-BR')}</span>
             </div>
           </div>
@@ -183,6 +218,13 @@ export class EtiquetaService {
             margin-top: 1mm;
             letter-spacing: 1px;
           }
+          .alerta-producao--ticket {
+            font-size: 8px;
+            letter-spacing: 0.35px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
           .barcode-container {
             display: flex;
             flex-direction: column;
@@ -204,6 +246,21 @@ export class EtiquetaService {
             letter-spacing: 2px;
             margin-top: 1px;
             color: #000000;
+          }
+          .barcode-number--ticket {
+            font-size: 7px;
+            letter-spacing: 0.35px;
+          }
+          .etiqueta-detalhe {
+            font-family: 'Inter', sans-serif;
+            font-size: 7px;
+            line-height: 1.15;
+            text-transform: uppercase;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #334155;
+            margin: 0 0 1mm;
           }
           .etiqueta-footer {
             display: flex;

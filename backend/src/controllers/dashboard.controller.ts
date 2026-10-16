@@ -38,6 +38,7 @@ export class DashboardController {
         .getMany();
 
       const leadTimeResultados: {
+        modeloId: string;
         codigoBarras: string;
         tipoLote: string;
         leadTimeHoras: number;
@@ -53,6 +54,7 @@ export class DashboardController {
         if (rastreamentos.length === 0) {
             const tempoDecorridoMin = Math.max(0, Math.floor((agora.getTime() - (ordem.dataInicio?.getTime() || agora.getTime())) / 60000));
             leadTimeResultados.push({
+                modeloId: ordem.modelo?.id ?? ordem.modeloId ?? ordem.codigoBarras,
                 codigoBarras: ordem.codigoBarras,
                 tipoLote: 'LOTE_PRINCIPAL', // Fallback assumido
                 leadTimeHoras: safeNum(tempoDecorridoMin / 60),
@@ -87,6 +89,7 @@ export class DashboardController {
           }
 
           leadTimeResultados.push({
+            modeloId: ordem.modelo?.id ?? ordem.modeloId ?? ordem.codigoBarras,
             codigoBarras: ordem.codigoBarras,
             tipoLote: tipo,
             leadTimeHoras: safeNum(totalMinAbsoluto / 60),
@@ -98,6 +101,28 @@ export class DashboardController {
       }
 
       leadTimeResultados.sort((a, b) => b.dataInicio.getTime() - a.dataInicio.getTime());
+
+      const lotePrincipalMaisRecentePorModelo = new Map<string, (typeof leadTimeResultados)[number]>();
+      for (const resultado of leadTimeResultados) {
+        if (resultado.tipoLote !== 'LOTE_PRINCIPAL') continue;
+
+        const atual = lotePrincipalMaisRecentePorModelo.get(resultado.modeloId);
+        if (!atual || resultado.dataInicio.getTime() > atual.dataInicio.getTime()) {
+          lotePrincipalMaisRecentePorModelo.set(resultado.modeloId, resultado);
+        }
+      }
+
+      const graficoPorModelo = Array.from(lotePrincipalMaisRecentePorModelo.values())
+        .sort((a, b) => b.leadTimeHoras - a.leadTimeHoras || b.dataInicio.getTime() - a.dataInicio.getTime())
+        .slice(0, 10)
+        .map(({ codigoBarras, tipoLote, leadTimeHoras, modelo, marca, dataInicio }) => ({
+          codigoBarras,
+          tipoLote,
+          leadTimeHoras,
+          modelo,
+          marca,
+          dataInicio
+        }));
 
       const ctList = leadTimeResultados.filter(r => r.tipoLote === 'CAIXA_TESTE');
       const lpList = leadTimeResultados.filter(r => r.tipoLote === 'LOTE_PRINCIPAL');
@@ -114,7 +139,7 @@ export class DashboardController {
         totalOrdensAtivas: ordensAtivas.length, // Propriedade nova solicitada
         mediaCaixaTeste: safeNum(avgCT),
         mediaLotePrincipal: safeNum(avgLP),
-        grafico: leadTimeResultados.slice(0, 10)
+        grafico: graficoPorModelo
       };
 
       // ==========================================
