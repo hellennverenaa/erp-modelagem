@@ -6,6 +6,7 @@ import api, {
   expireAuthSession,
   getApiOrigin,
   getApiSocketPath,
+  isAuthSessionRejected,
   refreshAccessToken,
 } from '../api/axios'
 import { gsap } from 'gsap'
@@ -548,7 +549,7 @@ async function refreshSocketSession() {
     socket.auth = { token }
     socket.connect()
   } catch (error: any) {
-    if (error?.response?.status === 401) {
+    if (isAuthSessionRejected(error)) {
       expireAuthSession()
       return
     }

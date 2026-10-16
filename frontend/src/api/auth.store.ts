@@ -1,4 +1,9 @@
-import api, { clearStoredAuth, revokeRemoteSession, storeAccessToken } from './axios'
+import api, {
+  clearStoredAuth,
+  isTransientApiFailure,
+  revokeRemoteSession,
+  storeAccessToken,
+} from './axios'
 import axios from 'axios'
 import { ref, computed } from 'vue'
 
@@ -19,10 +24,15 @@ const token = ref<string | null>(localStorage.getItem('erp_token'))
 const userRaw = localStorage.getItem('erp_user')
 const user = ref<UsuarioLogado | null>(userRaw ? JSON.parse(userRaw) : null)
 let retrySessionEndpointAfter = 0
+const sessionValidationIntervalMs = 30_000
+const transientRetryDelayMs = 10_000
 
 window.addEventListener('erp:auth-token-refreshed', (event) => {
   const refreshedToken = (event as CustomEvent<string>).detail
-  if (refreshedToken) token.value = refreshedToken
+  if (refreshedToken) {
+    token.value = refreshedToken
+    retrySessionEndpointAfter = Date.now() + sessionValidationIntervalMs
+  }
 })
 
 window.addEventListener('erp:auth-session-ended', () => {
@@ -62,12 +72,17 @@ async function refreshCurrentUser(): Promise<void> {
     const { data } = await api.get<UsuarioLogado>('/auth/me')
     user.value = data
     localStorage.setItem('erp_user', JSON.stringify(data))
-    retrySessionEndpointAfter = 0
+    retrySessionEndpointAfter = Date.now() + sessionValidationIntervalMs
   } catch (error) {
     // Durante a atualização do backend, a versão anterior ainda não expõe /auth/me.
     // A sessão veio do login pelo gateway; o backend continua validando cada API.
     if (axios.isAxiosError(error) && error.response?.status === 404 && user.value) {
-      retrySessionEndpointAfter = Date.now() + 30_000
+      retrySessionEndpointAfter = Date.now() + sessionValidationIntervalMs
+      return
+    }
+
+    if (user.value && isTransientApiFailure(error)) {
+      retrySessionEndpointAfter = Date.now() + transientRetryDelayMs
       return
     }
     throw error

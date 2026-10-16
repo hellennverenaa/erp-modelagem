@@ -51,6 +51,36 @@ type RetryableRequestConfig = InternalAxiosRequestConfig & { _authRetried?: bool
 let refreshRequest: Promise<string> | null = null
 let authSessionVersion = 0
 
+const invalidSessionCodes = new Set([
+  'AUTH_REFRESH_REJECTED',
+  'AUTH_TOKEN_REQUIRED',
+  'AUTH_IDENTIFIER_INVALID',
+  'AUTH_USER_NOT_FOUND',
+  'RBAC_UNAUTHENTICATED',
+  'AUTH_UNAUTHENTICATED',
+  'UNAUTHENTICATED',
+  'AUTH_TOKEN_INVALID',
+  'AUTH_USER_INACTIVE',
+  'AUTH_PROFILE_INACTIVE',
+])
+
+export function isAuthSessionRejected(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false
+
+  const status = error.response?.status
+  const code = error.response?.data?.code
+  if (typeof code !== 'string' || !invalidSessionCodes.has(code)) return false
+
+  return status === 401 || status === 403
+}
+
+export function isTransientApiFailure(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.code === 'ERR_CANCELED') return false
+
+  const status = error.response?.status
+  return status === undefined || status === 408 || status === 429 || status >= 500
+}
+
 export function storeAccessToken(token: string): void {
   localStorage.setItem('erp_token', token)
   localStorage.removeItem('token')
@@ -113,13 +143,10 @@ api.interceptors.response.use(
   async (err) => {
     const originalRequest = err.config as RetryableRequestConfig | undefined
     const isAuthenticationRequest = /\/auth\/(login|refresh|logout)(?:\/|$)/.test(originalRequest?.url || '')
+    const isExpiredToken = err.response?.status === 401 && err.response.data?.code === 'AUTH_TOKEN_EXPIRED'
 
-    if (err.response?.status === 401 && !isAuthenticationRequest) {
-      if (
-        err.response.data?.code === 'AUTH_TOKEN_EXPIRED' &&
-        originalRequest &&
-        !originalRequest._authRetried
-      ) {
+    if (!isAuthenticationRequest) {
+      if (isExpiredToken && originalRequest && !originalRequest._authRetried) {
         originalRequest._authRetried = true
         try {
           const token = await refreshAccessToken()
@@ -133,7 +160,7 @@ api.interceptors.response.use(
         }
       }
 
-      expireAuthSession()
+      if (isExpiredToken || isAuthSessionRejected(err)) expireAuthSession()
     }
     return Promise.reject(err)
   }

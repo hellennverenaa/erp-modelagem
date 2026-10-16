@@ -1,7 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import axios from 'axios'
 import LoginView from '../views/LoginView.vue'
+import AuthSessionUnavailableView from '../views/AuthSessionUnavailableView.vue'
 import { authStore } from '../api/auth.store'
+import { isAuthSessionRejected } from '../api/axios'
 
 function dashboardStartPath(): string {
   if (authStore.hasPermission('TELA_TORRE_CONTROLE')) return '/dashboard/gerencial'
@@ -29,6 +30,12 @@ const router = createRouter({
       path: '/',
       name: 'login',
       component: LoginView,
+      meta: { requiresAuth: false },
+    },
+    {
+      path: '/sessao-indisponivel',
+      name: 'sessao-indisponivel',
+      component: AuthSessionUnavailableView,
       meta: { requiresAuth: false },
     },
     {
@@ -120,13 +127,18 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   const token = localStorage.getItem('erp_token')
+
+  if (to.name === 'sessao-indisponivel' && !token) return { name: 'login' }
+
   if (to.name === 'login' && token) {
     try {
       await authStore.refreshCurrentUser()
       return { name: 'dashboard' }
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 401) {
+      if (isAuthSessionRejected(error)) {
         authStore.logout()
+      } else if (!authStore.user.value) {
+        return { name: 'sessao-indisponivel' }
       }
     }
   }
@@ -137,10 +149,11 @@ router.beforeEach(async (to) => {
     try {
       await authStore.refreshCurrentUser()
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 401) {
+      if (isAuthSessionRejected(error)) {
         authStore.logout()
+        return { name: 'login' }
       }
-      return { name: 'login' }
+      if (!authStore.user.value) return { name: 'sessao-indisponivel' }
     }
 
     if (to.name === 'rbac' && !authStore.isAdminAutomacao.value && !authStore.hasPermission('TELA_GESTAO_RBAC')) {
