@@ -94,3 +94,8 @@ O estado acima foi confirmado somente no PostgreSQL local apontado pela configur
 
 - `1791981100000-ControlaConfiguracaoOrdemRbac`: cadastra `CONFIGURAR_ORDEM_TESTE` no catálogo RBAC e concede a ação aos perfis que já podiam editar Gestão de Ordens. Aplicada somente no PostgreSQL local configurado em 2026-10-15; outros ambientes ainda precisam ser verificados e migrados.
 - `1791981200000-PersisteRemanejamentoPecaPorOrdem`: adiciona o mapa JSONB de peças remanejadas em `ordens_teste`, migra os remanejamentos já auditados para suas ordens e restaura o destino-base do modelo quando há uma única ordem associada.
+
+### 33 — TASK-033: Ajustar o alinhamento visual da tela de TV de rastreamento
+**Estado: implementação entregue — validação visual/manual pendente.** Na rota nomeada `rastreamento-ordem`, o contêiner compartilhado deixa de somar padding ao padding interno da tela, independentemente de haver um `ordemTesteId` na URL. O modo padrão usa o espaçamento, largura máxima e cabeçalho compacto da Torre de Controle; o botão Voltar e os controles de fullscreen e atualização foram preservados. Os intervalos entre ordens foram reduzidos para aproveitar melhor a área visível. Dados, chamadas de API e backend não foram alterados.
+
+**Evidências de validação:** `cd frontend && npm run build` e `git diff --check` concluídos. A apresentação precisa ser conferida manualmente no navegador, inclusive em modo TV fullscreen; nenhum teste funcional foi executado.
