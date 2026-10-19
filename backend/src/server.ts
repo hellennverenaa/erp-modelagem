@@ -10,23 +10,29 @@ import { globalLimiter, authLimiter, heavyLimiter } from './config/rateLimits';
 import { swaggerSetup } from './config/swagger';
 import apiRoutes from './routes';
 import { errorHandler } from './middlewares/errorHandler';
+import { requestLogger } from './middlewares/requestLogger';
+import { logger } from './config/logger';
 import { webSocketService } from './services/websocket.service';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ERP Chão de Fábrica v4.0 — Servidor Principal
 // ═══════════════════════════════════════════════════════════════════════════
 // Cadeia de Middlewares (ordem crítica conforme Seção 10.1 do plano v4.0):
-//   1. Helmet (headers de segurança)
-//   2. CORS (whitelist de origens)
-//   3. Rate Limiters (Global, Auth, Heavy)
-//   4. Body Parser (JSON com limite de 10MB)
-//   5. Swagger UI (documentação pública)
-//   6. Rotas públicas (health, auth)
-//   7. JWT + Rotas protegidas
-//   8. Error Handler (sanitização centralizada)
+//   1. Request Logger & Correlation ID (X-Request-ID)
+//   2. Helmet (headers de segurança)
+//   3. CORS (whitelist de origens)
+//   4. Rate Limiters (Global, Auth, Heavy)
+//   5. Body Parser (JSON com limite de 10MB)
+//   6. Swagger UI (documentação pública)
+//   7. Rotas públicas (health, auth)
+//   8. JWT + Rotas protegidas
+//   9. Error Handler (sanitização centralizada)
 
 const app = express();
 const port = process.env.ERP_PORT || 3001;
+
+// ═══ CAMADA 0: OBSERVABILIDADE E CORRELATION ID ═══
+app.use(requestLogger);
 
 // ═══ CAMADA 1: SEGURANÇA DE TRANSPORTE (Helmet) ═══
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
@@ -92,7 +98,7 @@ app.use('/', apiRoutes);
 app.use(errorHandler);
 
 // ═══ INICIALIZAÇÃO ═══
-console.log('🔧 Verificando configurações de ambiente...');
+logger.info('🔧 Verificando configurações de ambiente...');
 
 const httpServer = createServer(app);
 
@@ -102,17 +108,16 @@ async function startServer(): Promise<void> {
     if (await AppDataSource.showMigrations()) {
       throw new Error('Há migrações pendentes. Execute npm run migration:run antes de iniciar o backend.');
     }
-    console.log('📦 Banco de dados conectado com sucesso via TypeORM!');
+    logger.info('📦 Banco de dados conectado com sucesso via TypeORM!');
 
     webSocketService.init(httpServer);
     httpServer.listen(Number(port), '0.0.0.0', () => {
-      console.log(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
-      console.log(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
-      console.log('🔒 Helmet, CORS e Rate Limiting ativos');
+      logger.info(`🚀 Servidor ERP rodando com sucesso na porta ${port}`);
+      logger.info(`📖 Documentação Swagger disponível em: http://localhost:${port}/api-docs`);
+      logger.info('🔒 Helmet, CORS, Rate Limiting e Correlation ID ativos');
     });
   } catch (error: any) {
-    console.error('Não foi possível iniciar o backend: confirme o PostgreSQL, as migrações e as variáveis de ambiente.');
-    console.error(error?.message || error);
+    logger.fatal({ err: error }, 'Não foi possível iniciar o backend: confirme o PostgreSQL, as migrações e as variáveis de ambiente.');
     if (AppDataSource.isInitialized) {
       await AppDataSource.destroy().catch(() => undefined);
     }

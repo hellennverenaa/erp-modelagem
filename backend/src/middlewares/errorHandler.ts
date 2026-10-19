@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import './auth.middleware'; // Garante que a augmentação global de Express.Request.user está carregada
+import { logger } from '../config/logger';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware de Tratamento de Erros Centralizado
@@ -18,13 +19,16 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  // Log interno completo (visível apenas no servidor)
-  console.error(`[ERROR] ${req.method} ${req.path}`, {
+  // Log estruturado com correlation ID (visível apenas no servidor)
+  logger.error({
+    requestId: req.requestId,
+    method: req.method,
+    path: req.path,
     message: err.message,
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     userId: req.user?.userId,
     ip: req.ip,
-  });
+  }, `[ERROR_HANDLER] Falha não tratada em ${req.method} ${req.path}: ${err.message}`);
 
   // ═══ Erro de CORS ═══
   if (err.message?.includes('CORS')) {

@@ -216,10 +216,38 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
   - `marca.service.spec.ts` (6 testes): Normalização de espaços, comparação case-insensitive, duplicidade no cadastro e na atualização.
 
 **Validação técnica executada:**
-- `npm test` executado com 34/34 testes unitários aprovados em 518ms.
 - `npm run build` no backend concluído com 0 erros de TypeScript.
 - `npm run build` no frontend concluído com 0 erros.
 - `git diff --check` aprovado sem pendências.
+
+### TASK-039 — Observabilidade, Logs Estruturados (Pino) e Correlation ID (X-Request-ID)
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2.3 do relatório de melhorias: eliminação de saídas síncronas/desestruturadas de console, implantação de Correlation ID em todas as requisições HTTP e logging JSON assíncrono de alta performance.
+
+**Escopo implementado:**
+- Criação de `backend/src/config/logger.ts`:
+  - Configuração do logger `pino` com suporte a níveis de log (`debug`, `info`, `warn`, `error`, `fatal`).
+  - Redaction automático de campos sensíveis (`authorization`, `cookie`, `password`, `token`, `refreshToken`, `senha`).
+  - Pretty-printing colorido e legível para ambiente de desenvolvimento (`pino-pretty`) e JSON puro com timestamp ISO para produção.
+- Criação de `backend/src/middlewares/requestLogger.ts`:
+  - Captura ou geração automática de UUID para o correlation ID `X-Request-ID`.
+  - Injeção de `req.requestId` no contexto da requisição Express.
+  - Exposição do cabeçalho `X-Request-ID` em todas as respostas HTTP para auditoria e rastreamento pelo frontend.
+  - Cálculo de latência de execução com precisão de nanossegundos (`process.hrtime.bigint`) e emissão estruturada de logs (`requestId`, `method`, `url`, `statusCode`, `durationMs`, `ip`, `userId`).
+  - Categorização automática por código de resposta (2xx/3xx -> INFO, 4xx -> WARN, 5xx -> ERROR).
+- Integração em `backend/src/server.ts`:
+  - Inserção do middleware `requestLogger` como Camada 0 da pilha HTTP.
+  - Substituição de logs textuais de inicialização e tratamento de falhas críticas com `logger.info` e `logger.fatal`.
+- Integração em `backend/src/middlewares/errorHandler.ts`:
+  - Substituição de `console.error` por `logger.error` estruturado contendo o correlation ID da requisição falha.
+- Suíte de testes unitários criada no Vitest:
+  - `backend/src/middlewares/__tests__/requestLogger.spec.ts` (5 testes): Geração de UUID aleatório, propagação de correlation ID vindo do cliente, log de sucesso com latência, log de alerta para 4xx e log de erro para 5xx.
+
+**Validação técnica executada:**
+- `npm test` executado com 39/39 testes unitários aprovados em 702ms.
+- `npm run build` no backend concluído com 0 erros de TypeScript.
+- `npm run build` no frontend concluído com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
 
 
 
