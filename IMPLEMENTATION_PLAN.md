@@ -143,3 +143,26 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - `npm run seed` executado com 100% de sucesso e integridade preservada.
 - `npm run build` no backend e frontend aprovados sem erros.
 - `git diff --check` sem pendências.
+
+### TASK-036 — Otimização do Puppeteer (Browser Singleton) e Suíte de Testes com Vitest
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2 e Ponto 4 do relatório de melhorias: eliminação de inicialização e destruição contínua do Chromium para geração de PDFs/etiquetas e implantação da suíte de testes automatizados com Vitest cobrindo regras críticas de integridade de rota.
+
+**Escopo implementado:**
+- Criação de `backend/src/services/puppeteer.service.ts`:
+  - Padrão Singleton gerenciado para o Chromium, evitando o custo de *process spawn* a cada documento gerado.
+  - Isolamento seguro por aba (`browser.newPage()`), fechamento garantido no bloco `finally` (`page.close()`) e reciclagem transparente da aba.
+  - Auto-recuperação diante de crash ou desconexão inesperada (`browser.on('disconnected')`).
+  - Suporte a caminho customizado via variável de ambiente `PUPPETEER_EXECUTABLE_PATH`.
+  - Tratamento de *graceful shutdown* nos eventos `SIGTERM` e `SIGINT`.
+- Refatoração de `backend/src/services/etiqueta.service.ts` e `backend/src/services/dossie.service.ts` para consumir `PuppeteerService.renderPdf`, reduzindo o tempo de emissão e consumo de RAM.
+- Instalação e configuração do framework `vitest` no backend (`vitest.config.mts` e scripts `npm test` / `npm run test:watch`).
+- Criação de suíte de testes unitários determinísticos em `backend/src/services/__tests__/`:
+  - `route-integrity.spec.ts`: 8 testes cobrindo rotas vazias, peças sem setor de corte, categorias inválidas, integridade de plantas, exigência de Lectra e Ponte, presença condicional de Telas/Serigrafia e validação de peças vinculadas a subsetores de corte.
+  - `puppeteer.service.spec.ts`: 4 testes cobrindo Singleton, auto-recuperação de processo desconectado, garantia de renderização e liberação garantida de recursos no bloco `finally`.
+
+**Validação técnica executada:**
+- `npm test` executado no backend com 12 testes aprovados em 468ms (0 falhas).
+- `npm run build` no backend compilado com TypeScript 100% livre de erros.
+- `npm run build` no frontend compilado com Vue 3/TypeScript 100% livre de erros.
+- `git diff --check` sem pendências.
+

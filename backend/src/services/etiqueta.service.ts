@@ -1,5 +1,5 @@
 // backend/src/services/etiqueta.service.ts
-import puppeteer from 'puppeteer';
+import { PuppeteerService } from './puppeteer.service';
 import bwipjs from 'bwip-js';
 
 export interface EtiquetaDTO {
@@ -288,25 +288,21 @@ export class EtiquetaService {
 
   public static async gerarPdfEtiquetas(etiquetas: EtiquetaDTO[]): Promise<Buffer> {
     const html = await this.compilarHtml(etiquetas);
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    });
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'domcontentloaded' });
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      preferCSSPageSize: true, // Forçar o tamanho e escala do CSS da página
-      scale: 1, // Travar a escala em 1.0 para evitar "Shrink to Fit"
-      margin: {
-        top: '0mm',
-        bottom: '0mm',
-        left: '0mm',
-        right: '0mm',
-      }
-    });
-    await browser.close();
-    return Buffer.from(pdfBuffer);
+    return PuppeteerService.renderPdf(
+      html,
+      {
+        format: 'A4',
+        printBackground: true,
+        preferCSSPageSize: true, // Forçar o tamanho e escala do CSS da página
+        scale: 1, // Travar a escala em 1.0 para evitar "Shrink to Fit"
+        margin: {
+          top: '0mm',
+          bottom: '0mm',
+          left: '0mm',
+          right: '0mm',
+        }
+      },
+      'domcontentloaded'
+    );
   }
 }

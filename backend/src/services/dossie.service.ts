@@ -8,7 +8,7 @@ import { Inspecao } from '../entities/Inspecao';
 import { DossieModelo, DossieStatus } from '../entities/DossieModelo';
 import { AuditLog } from '../entities/AuditLog';
 import { In } from 'typeorm';
-import puppeteer, { Browser } from 'puppeteer';
+import { PuppeteerService } from './puppeteer.service';
 import path from 'path';
 import fs from 'fs';
 
@@ -409,7 +409,6 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
   const trackingRepo = AppDataSource.getRepository(Rastreamento);
   const auditRepo = AppDataSource.getRepository(AuditLog);
 
-  let browser: Browser | null = null;
   const startTime = Date.now();
 
   try {
@@ -486,26 +485,23 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
     // 4. Cria HTML com Template Literals
     const htmlContent = generateDossieHtml(testOrder, rastreamentos, checklists, ocorrencias, inspecoes, auditoriaConfiguracao);
 
-    // 5. Executa Puppeteer para converter HTML -> PDF
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-
-    const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: 'load' });
-
-    await page.pdf({
-      path: fullPath,
-      format: 'A4',
-      margin: {
-        top: '20mm',
-        bottom: '20mm',
-        left: '20mm',
-        right: '20mm'
+    // 5. Executa Puppeteer para converter HTML -> PDF reutilizando a instância compartilhada
+    const pdfBuffer = await PuppeteerService.renderPdf(
+      htmlContent,
+      {
+        format: 'A4',
+        margin: {
+          top: '20mm',
+          bottom: '20mm',
+          left: '20mm',
+          right: '20mm'
+        },
+        printBackground: true
       },
-      printBackground: true
-    });
+      'load'
+    );
+
+    fs.writeFileSync(fullPath, pdfBuffer);
 
     // 6. Calcula o tamanho do arquivo gerado
     const stats = fs.statSync(fullPath);
@@ -541,14 +537,6 @@ export async function processarGeracaoDossie(dossieId: string): Promise<void> {
       }
     } catch (dbErr) {
       console.error('[DossieService] Erro ao salvar status de falha do dossiê no banco:', dbErr);
-    }
-  } finally {
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (closeErr) {
-        console.error('[DossieService] Erro ao fechar browser do Puppeteer:', closeErr);
-      }
     }
   }
 }
