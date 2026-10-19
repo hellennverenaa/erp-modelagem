@@ -187,9 +187,39 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
   - Rejeição de UUIDs malformados, validação de restrição de planta, 404 para ordens ausentes, reconciliação ordenada de tickets, validação de códigos vazios, 404 para tickets inexistentes, 409 para Caixa Teste inativa e retorno estruturado de DTO.
 
 **Validação técnica executada:**
-- `npm test` executado com 20/20 testes unitários aprovados em 419ms.
 - `npm run build` no backend concluído com 0 erros de TypeScript.
 - `npm run build` no frontend concluído com 0 erros.
 - `git diff --check` aprovado sem pendências.
+
+### TASK-038 — Desacoplamento de admin.controller em AdminRbacService e MarcaService
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2.2 do relatório de melhorias: desacoplamento de segurança, permissões RBAC e regras de marcas para Services especializados, eliminando acoplamento do maior controller da aplicação (de 1.115 para ~770 linhas).
+
+**Escopo implementado:**
+- Criação de `backend/src/services/admin-rbac.service.ts`:
+  - `listarPerfis`: Filtragem sensível com ocultação de perfil `ADMIN_AUTOMACAO` para atores não autorizados.
+  - `criarPerfil`: Validação de duplicidade case-insensitive e bloqueio de nomes reservados do sistema (`ADMIN`, `ADMIN_AUTOMACAO`) com emissão de auditoria (`RBAC_PERFIL_CRIADO`).
+  - `atualizarPerfil`: Proteção intransponível contra renomeação ou inativação de perfis de sistema (`ADMIN`, `VISUALIZADOR`, `ADMIN_AUTOMACAO`), bloqueio de inativação de perfis com usuários associados (`PERFIL_HAS_USERS`) e registro no `AuditLog`.
+  - `atualizarPermissoes`: Validação de dependências de tela (edição requer visualização e remoção de visualização revoga edição), validação em lote (1 a 500 itens), trava de perfil de automação e diff atômico persistido em `AuditLog`.
+  - `atualizarPerfilUsuario`: Validação de privilégios de concessão/revogação de acesso à Matriz de Acessos, trava de permissão para provisionar `ADMIN_AUTOMACAO` e registro auditado.
+  - `atualizarPermissaoPausaSla`: Bloqueio estrito de acesso apenas a atores de automação e proteção permanente da conta `ADMIN_AUTOMACAO`.
+  - Classe de erro `AdminRbacError` com status HTTP e códigos semânticos.
+- Criação de `backend/src/services/marca.service.ts`:
+  - Normalização de espaços e caracteres em português.
+  - Comparação estrita case-insensitive.
+  - `listarMarcas` (ativas ou todas), `criarMarca` e `atualizarMarca` com validação de unicidade.
+  - Classe de erro `MarcaServiceError`.
+- Refatoração de `backend/src/controllers/admin.controller.ts`:
+  - Delegação completa dos fluxos de perfis, permissões, usuários e marcas aos novos services.
+  - Remoção de queries manuais e do helper procedural `auditarRbac` do controller.
+- Suíte de testes unitários criada no Vitest:
+  - `admin-rbac.service.spec.ts` (8 testes): Validação de ocultação de perfil, bloqueio de nomes reservados, duplicidade, proteção de perfis de sistema, bloqueio de desativação com usuários, trava de permissão e proteção da conta de automação.
+  - `marca.service.spec.ts` (6 testes): Normalização de espaços, comparação case-insensitive, duplicidade no cadastro e na atualização.
+
+**Validação técnica executada:**
+- `npm test` executado com 34/34 testes unitários aprovados em 518ms.
+- `npm run build` no backend concluído com 0 erros de TypeScript.
+- `npm run build` no frontend concluído com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
 
 
