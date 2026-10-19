@@ -6,155 +6,27 @@ import {
   Plus,
   RefreshCw,
   Search,
-  X,
   Package,
   AlertCircle,
-  ChevronDown,
-  Loader2,
   CheckCircle2,
   XCircle,
   BarChart3,
   Activity,
-  MapPin,
-  LogIn,
-  LogOut,
-  Timer,
-  ChevronRight,
-  Info,
   Printer,
   Settings,
-  Clock,
-  Sliders,
-  Scissors,
-  Lock,
-  ShieldCheck,
-  History,
-  User
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
-
-// ─── Tipos ───────────────────────────────────────────────────────────────────
-interface PecaInfo {
-  id: string
-  nome: string
-  codigoBarras: string | null
-  descricao: string | null
-  setorCorteOpcaoId: string
-}
-
-interface MarcaInfo {
-  id: string
-  nome: string
-}
-
-interface RotaModeloItem {
-  id: string
-  ordem: number
-  obrigatorio: boolean
-  slaAlvoMin?: number | null
-  setor: {
-    id: string
-    nome: string
-  }
-}
-
-interface Modelo {
-  id: string
-  nome: string
-  codigoProduto: string
-  dataCorte?: string | null
-  pecas?: PecaInfo[]
-  marca?: MarcaInfo
-  rotas?: RotaModeloItem[]
-  slasPorSetor?: Record<string, number> | null
-}
-
-interface OrdemTeste {
-  id: string
-  codigoBarras: string
-  modeloId: string
-  plantaId: string
-  prioridadePcp: string
-  status: string
-  liberadoProducao: boolean
-  possuiCaixaTeste: boolean | null
-  observacoes: string | null
-  slasPorSetor?: Record<string, number> | null
-  pecasRemanejadas?: Record<string, string> | null
-  createdAt: string
-  updatedAt: string
-  modelo?: Modelo
-}
-
-interface Planta {
-  id: string
-  nome: string
-  cidade: string | null
-  estado: string | null
-}
+import OrderCreateModal from '../components/ordens/OrderCreateModal.vue'
+import OrderPrintModal from '../components/ordens/OrderPrintModal.vue'
+import OrderHistoryModal from '../components/ordens/OrderHistoryModal.vue'
+import OrderMaintenanceModal from '../components/ordens/OrderMaintenanceModal.vue'
+import type { Modelo, Planta, OrdemTeste } from '../components/ordens/types'
 
 interface Toast {
   id: number
   type: 'success' | 'error'
   message: string
-}
-
-interface SetorInfo {
-  id: string
-  nome: string
-  tipoSetor?: string | null
-}
-
-interface OperadorInfo {
-  id: string
-  nomeCompleto: string
-  usuario: string
-}
-
-interface EstacaoInfo {
-  id?: string
-  nome?: string
-  codigo?: string
-}
-
-interface RastreamentoHistorico {
-  id: string
-  ordemTesteId: string
-  setorId: string
-  tipoLote: string
-  dataEntrada: string | null
-  dataSaida: string | null
-  tempoPermanenciaMin: number | null
-  status: string
-  setor: SetorInfo | null
-  operadorEntrada: OperadorInfo | null
-  operadorSaida: OperadorInfo | null
-  estacao?: EstacaoInfo | null
-  itens?: RastreamentoHistorico[]
-}
-
-interface HistoricoResponse {
-  ordemTesteId: string
-  total: number
-  historico: RastreamentoHistorico[]
-}
-
-interface TicketSetorInfo {
-  id: string
-  codigoBarras: string
-  tipoLote: 'LOTE_PRINCIPAL' | 'CAIXA_TESTE'
-  ordemEtapa: number
-  rotaVersao: number
-  setorNomeSnapshot: string
-}
-
-interface TicketsSetorResponse {
-  ordemTesteId: string
-  codigoBarras: string
-  modeloNome: string
-  rotaCongelada?: boolean
-  tickets: TicketSetorInfo[]
 }
 
 // ─── Estado Reativo ────────────────────────────────────────────
@@ -165,215 +37,10 @@ const catalogoModelos = ref<Modelo[]>([])
 const plantas = ref<Planta[]>([])
 
 const loading = ref(true)
-const loadingCreate = ref(false)
-const showModal = ref(false)
 const searchQuery = ref('')
 const toasts = ref<Toast[]>([])
 
-// ─── Resolução de Nomes do Catálogo ───────────────────────────────────
-function getModeloNome(modeloId: string) {
-  const m = catalogoModelos.value.find(x => x.id === modeloId)
-  return m ? m.nome : `Modelo #${modeloId.substring(0, 8)}`
-}
-
-function getModeloReferencia(modeloId: string) {
-  const m = catalogoModelos.value.find(x => x.id === modeloId)
-  return m ? m.codigoProduto : 'N/A'
-}
-let toastCounter = 0
-
-// ─── Timeline / Drawer de Rastreamento ──────────────────────────────
-const showTimeline = ref(false)
-const timelineOrdem = ref<OrdemTeste | null>(null)
-const timelineData = ref<RastreamentoHistorico[]>([])
-const loadingTimeline = ref(false)
-const showAcompanharModal = ref(false)
-const acompanharOrdem = ref<OrdemTeste | null>(null)
-const showTicketsSetorModal = ref(false)
-const ticketsSetorOrdem = ref<OrdemTeste | null>(null)
-const ticketsSetorItems = ref<TicketSetorInfo[]>([])
-const ticketsSetorModeloNome = ref('')
-const rotaTicketsCongelada = ref<boolean | null>(null)
-const loadingTicketsSetor = ref(false)
-const loadingTicketsSetorId = ref<string | null>(null)
-const loadingTicketPrintId = ref<string | null>(null)
-const erroTicketsSetor = ref('')
-
-type GrupoImpressaoTickets = 'LOTE_PRINCIPAL' | 'CAIXA_TESTE' | 'CORTE' | 'TODOS'
-
-async function imprimirTickets(ordem: OrdemTeste, grupo: GrupoImpressaoTickets) {
-  if (loadingTicketPrintId.value) return
-
-  const printWindow = window.open('about:blank', '_blank')
-  if (!printWindow) {
-    addToast('error', 'O navegador bloqueou a janela de impressão dos tickets.')
-    return
-  }
-
-  const endpoint = grupo === 'CORTE'
-    ? '/etiquetas/tickets-corte'
-    : grupo === 'TODOS'
-      ? '/etiquetas/tickets-ordem'
-      : '/etiquetas/tickets-setor'
-  const payload = {
-    ordemTesteId: ordem.id,
-    ...(grupo === 'LOTE_PRINCIPAL' || grupo === 'CAIXA_TESTE' ? { tipoLote: grupo } : {}),
-  }
-
-  loadingTicketPrintId.value = grupo
-  printWindow.document.write('<!doctype html><title>Gerando tickets...</title><p style="font:16px sans-serif;padding:24px">Gerando PDF dos tickets...</p>')
-  try {
-    const { data } = await api.post(endpoint, payload, { responseType: 'blob' })
-    const pdfUrl = window.URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
-    printWindow.location.replace(pdfUrl)
-    setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60000)
-  } catch (err: any) {
-    printWindow.close()
-    console.error(`[TicketsSetor] Erro ao gerar PDF do grupo ${grupo}:`, err)
-    const responseData = err?.response?.data
-    let message = 'Não foi possível gerar o PDF dos tickets.'
-    if (responseData instanceof Blob) {
-      const responseText = await responseData.text()
-      try {
-        message = JSON.parse(responseText)?.error || message
-      } catch {
-        if (err?.response?.status === 404 && /text\/html/i.test(responseData.type)) {
-          message = 'A API em execução não reconheceu a rota de impressão. Reinicie o backend e confirme o destino do gateway.'
-        }
-      }
-    }
-    addToast('error', message)
-  } finally {
-    loadingTicketPrintId.value = null
-  }
-}
-
-function imprimirTicketsCorte(ordem: OrdemTeste) {
-  return imprimirTickets(ordem, 'CORTE')
-}
-
-function imprimirTodosTicketsSetor() {
-  if (!ticketsSetorOrdem.value) return
-  return imprimirTickets(ticketsSetorOrdem.value, 'TODOS')
-}
-
-async function abrirTicketsSetor(ordem: OrdemTeste) {
-  if (loadingTicketsSetorId.value) return
-
-  loadingTicketsSetorId.value = ordem.id
-  ticketsSetorOrdem.value = ordem
-  ticketsSetorItems.value = []
-  ticketsSetorModeloNome.value = ordem.modelo?.nome || getModeloNome(ordem.modeloId)
-  rotaTicketsCongelada.value = null
-  erroTicketsSetor.value = ''
-  loadingTicketsSetor.value = true
-  showTicketsSetorModal.value = true
-
-  try {
-    const { data } = await api.get<TicketsSetorResponse>(`/lotes/${ordem.id}/tickets-setor`)
-    ticketsSetorItems.value = Array.isArray(data.tickets) ? data.tickets : []
-    ticketsSetorModeloNome.value = data.modeloNome || ticketsSetorModeloNome.value
-    rotaTicketsCongelada.value = typeof data.rotaCongelada === 'boolean' ? data.rotaCongelada : null
-  } catch (err: any) {
-    console.error('[TicketsSetor] Erro ao carregar tickets da ordem:', err)
-    const responseData = err?.response?.data
-    const rotaAusente = err?.response?.status === 404 && (
-      (typeof responseData === 'string' && /Cannot GET|Cannot POST/i.test(responseData)) ||
-      !responseData?.code
-    )
-    erroTicketsSetor.value = rotaAusente
-      ? 'A API em execução não reconheceu a rota de tickets por setor. Reinicie o backend e confirme que o gateway aponta para esta versão do projeto.'
-      : responseData?.error || 'Não foi possível carregar os tickets desta ordem.'
-  } finally {
-    loadingTicketsSetor.value = false
-    loadingTicketsSetorId.value = null
-  }
-}
-
-function fecharTicketsSetor() {
-  showTicketsSetorModal.value = false
-}
-
-function abrirAcompanhamento(ordem: OrdemTeste) {
-  acompanharOrdem.value = ordem
-  showAcompanharModal.value = true
-}
-
-function fecharAcompanhamento() {
-  showAcompanharModal.value = false
-}
-
-function abrirTimelineDaOrdem(ordem: OrdemTeste) {
-  fecharAcompanhamento()
-  void openTimeline(ordem)
-}
-
-function abrirRastreamentoDaOrdem(ordem: OrdemTeste) {
-  fecharAcompanhamento()
-  void router.push({ name: 'rastreamento-ordem', params: { ordemTesteId: ordem.id } })
-}
-
-async function openTimeline(ordem: OrdemTeste) {
-  timelineOrdem.value = ordem
-  timelineData.value = []
-  showTimeline.value = true
-  loadingTimeline.value = true
-  try {
-    const { data } = await api.get<HistoricoResponse>(`/rastreamentos/historico/${ordem.id}`)
-    const raw = data.historico ?? []
-    const grouped: RastreamentoHistorico[] = []
-    for (const r of raw) {
-      const g = grouped.find(x => x.setorId === r.setorId)
-      if (g && g.itens) {
-        g.itens.push(r)
-      } else {
-        grouped.push({ ...r, itens: [r] })
-      }
-    }
-    timelineData.value = grouped
-  } catch {
-    addToast('error', 'Erro ao carregar histórico de rastreamento.')
-    showTimeline.value = false
-  } finally {
-    loadingTimeline.value = false
-  }
-}
-
-function closeTimeline() {
-  showTimeline.value = false
-  timelineOrdem.value = null
-  timelineData.value = []
-}
-
-// Config visual dos status de rastreamento
-const rastreamentoStatusConfig: Record<string, { label: string; cls: string; dotCls: string }> = {
-  EM_PROCESSO:   { label: 'Em Processo',    cls: 'rstat--amber',  dotCls: 'rdot--amber'  },
-  CONCLUIDO:     { label: 'Concluído',       cls: 'rstat--green',  dotCls: 'rdot--green'  },
-  REPROVADO:     { label: 'Reprovado',       cls: 'rstat--red',    dotCls: 'rdot--red'    },
-  EM_RETRABALHO: { label: 'Em Retrabalho',  cls: 'rstat--orange', dotCls: 'rdot--orange' },
-}
-
-function getRastreamentoStatus(s: string) {
-  return rastreamentoStatusConfig[s] ?? { label: s, cls: 'rstat--slate', dotCls: 'rdot--slate' }
-}
-
-function formatDateTime(iso: string | null) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
-
-function formatPermanencia(min: number | null) {
-  if (min === null || min === undefined) return null
-  if (min < 60) return `${min}min`
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  return m > 0 ? `${h}h ${m}min` : `${h}h`
-}
-
-// ─── Modal de Manutenção e Remanejamento ─────────────────────────────────────
+// ─── Permissões ────────────────────────────────────────────────
 const canEditOrdens = computed(() => authStore.hasPermission('EDITAR_TELA_GESTAO_ORDENS'))
 const canConfigureOrdem = computed(() =>
   canEditOrdens.value && authStore.hasPermission('CONFIGURAR_ORDEM_TESTE')
@@ -389,297 +56,68 @@ const canPrintOrdens = computed(() =>
   authStore.hasPermission('EDITAR_TELA_BIPAGEM')
 )
 
-export interface SlaSetorFormItem {
-  setorKey: string
-  setorNome: string
-  valor: number
-  unidade: 'min' | 'h' | 'd'
+// ─── Resolução de Nomes do Catálogo ────────────────────────────
+function getModeloNome(modeloId: string) {
+  const m = catalogoModelos.value.find(x => x.id === modeloId)
+  return m ? m.nome : `Modelo #${modeloId.substring(0, 8)}`
 }
 
-function hydratateReverseSla(minutos: number): { valor: number; unidade: 'min' | 'h' | 'd' } {
-  const min = Number(minutos) || 0
-  if (min <= 0) {
-    return { valor: 0, unidade: 'min' }
-  }
-  if (min % 1440 === 0 && min >= 1440) {
-    return { valor: min / 1440, unidade: 'd' }
-  }
-  if (min % 60 === 0 && min >= 60) {
-    return { valor: min / 60, unidade: 'h' }
-  }
-  return { valor: min, unidade: 'min' }
+function getModeloReferencia(modeloId: string) {
+  const m = catalogoModelos.value.find(x => x.id === modeloId)
+  return m ? m.codigoProduto : 'N/A'
 }
+
+let toastCounter = 0
+
+// ─── Modais Desacoplados ───────────────────────────────────────
+const showModal = ref(false)
+const showTicketsSetorModal = ref(false)
+const ticketsSetorOrdem = ref<OrdemTeste | null>(null)
+const ticketsSetorModeloNome = computed(() =>
+  ticketsSetorOrdem.value ? (ticketsSetorOrdem.value.modelo?.nome || getModeloNome(ticketsSetorOrdem.value.modeloId)) : ''
+)
+
+const showAcompanharModal = ref(false)
+const acompanharOrdem = ref<OrdemTeste | null>(null)
 
 const showManutencaoModal = ref(false)
 const manutencaoOrdem = ref<OrdemTeste | null>(null)
-const activeTabManutencao = ref<'geral' | 'pecas' | 'historico'>('geral')
-const loadingAuditoria = ref(false)
-const manutencaoRastreamentos = ref<RastreamentoHistorico[]>([])
-const logsAuditoria = ref<Array<{
-  id: string
-  acao: string
-  entidadeTipo: string
-  dadosAnteriores: Record<string, any> | null
-  dadosNovos: Record<string, any> | null
-  ipAddress: string | null
-  criadoEm: string
-  usuario: { id: string; nome?: string; nomeCompleto?: string; usuario?: string } | null
-}>>([])
-const loadingManutencao = ref(false)
-const formManutencao = ref({
-  slas: [] as SlaSetorFormItem[],
-  pecas: [] as Array<{ id: string; nome: string; setorCorteOpcaoId: string }>
-})
-const maquinasCorteManutencao = ref<Array<{ id: string; label: string; valor: string }>>([])
 
-async function abrirManutencao(ordem: OrdemTeste) {
+function openModal() {
+  showModal.value = true
+}
+
+function abrirTicketsSetor(ordem: OrdemTeste) {
+  ticketsSetorOrdem.value = ordem
+  showTicketsSetorModal.value = true
+}
+
+function abrirAcompanhamento(ordem: OrdemTeste) {
+  acompanharOrdem.value = ordem
+  showAcompanharModal.value = true
+}
+
+function abrirRastreamentoDaOrdem(ordem: OrdemTeste) {
+  void router.push({ name: 'rastreamento-ordem', params: { ordemTesteId: ordem.id } })
+}
+
+function abrirManutencao(ordem: OrdemTeste) {
   manutencaoOrdem.value = ordem
-  activeTabManutencao.value = 'geral'
-  logsAuditoria.value = []
-  manutencaoRastreamentos.value = []
-
-  // Fonte primaria: SLAs proprios da ordem
-  const ordemSlaMap: Record<string, number> = ordem.slasPorSetor || {}
-
-  // Fonte secundaria: herda do modelo (slasPorSetor do modelo)
-  const modeloSlaMap: Record<string, number> = (ordem.modelo as any)?.slasPorSetor || {}
-
-  // Fonte de setores: rota cadastrada no banco para o modelo desta ordem
-  // Se a rota ainda nao estiver carregada na ordem, busca via API
-  let rotaSetores: Array<{ id: string; nome: string; ordem: number; slaAlvoMin?: number | null }> = []
-
-  if (Array.isArray(ordem.modelo?.rotas) && ordem.modelo!.rotas!.some((r: any) => (r.plantaId || r.planta?.id) === ordem.plantaId)) {
-    // Usa somente a rota da planta desta ordem.
-    rotaSetores = ordem.modelo!.rotas!
-      .filter((r: any) => (r.plantaId || r.planta?.id) === ordem.plantaId)
-      .sort((a, b) => a.ordem - b.ordem)
-      .map(r => ({ id: r.setor.id, nome: r.setor.nome, ordem: r.ordem, slaAlvoMin: r.slaAlvoMin }))
-  } else if (ordem.modeloId) {
-    // Fallback: busca a rota via API caso nao tenha vindo na listagem principal
-    try {
-      const resRota = await api.get(`/rotas/${ordem.modeloId}`, { params: { plantaId: ordem.plantaId } })
-      const rotaData = resRota.data.rota || resRota.data.rotas || resRota.data.modelo?.rotas || resRota.data
-      if (Array.isArray(rotaData) && rotaData.length > 0) {
-        rotaSetores = (rotaData as any[])
-          .sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
-          .map(r => ({
-            id: r.setor?.id || r.setorId || r.id,
-            nome: r.setor?.nome || r.setorNome || r.nome || 'Setor',
-            ordem: r.ordem || 0,
-            slaAlvoMin: r.slaAlvoMin ?? r.sla_alvo_min ?? null
-          }))
-        if (ordem.modelo) {
-          ;(ordem.modelo as any).rotas = rotaData
-        }
-      }
-      const modeloData = resRota.data.modelo || resRota.data
-      if (modeloData?.slasPorSetor && typeof modeloData.slasPorSetor === 'object') {
-        Object.assign(modeloSlaMap, modeloData.slasPorSetor)
-      }
-    } catch (err) {
-      console.warn('[abrirManutencao] Erro ao buscar rota do modelo:', err)
-    }
-  }
-
-  // Monta a lista a partir da rota; um mapa da ordem existente pode zerar prazos específicos.
-  const slasItems: SlaSetorFormItem[] = rotaSetores.map(setor => {
-    const rawMin = ordem.slasPorSetor != null
-      ? ordemSlaMap[setor.nome] ?? ordemSlaMap[setor.id] ?? 0
-      : setor.slaAlvoMin ?? modeloSlaMap[setor.nome] ?? modeloSlaMap[setor.id]
-    if (rawMin !== undefined && rawMin !== null) {
-      const { valor, unidade } = hydratateReverseSla(rawMin)
-      return { setorKey: setor.id, setorNome: setor.nome, valor, unidade }
-    }
-    return { setorKey: setor.id, setorNome: setor.nome, valor: 0, unidade: 'min' as const }
-  })
-
-  // Inclui chaves da ordem que nao pertencem a nenhum setor da rota (ex: SLAs customizados)
-  const rotaIds = new Set(rotaSetores.map(s => s.id))
-  const rotaNomes = new Set(rotaSetores.map(s => s.nome))
-  Object.keys(ordemSlaMap).forEach(k => {
-    if (k !== 'default' && !rotaIds.has(k) && !rotaNomes.has(k)) {
-      const { valor, unidade } = hydratateReverseSla(ordemSlaMap[k])
-      slasItems.push({ setorKey: k, setorNome: k, valor, unidade })
-    }
-  })
-
-  let pecasList = ordem.modelo?.pecas || []
-  if (pecasList.length === 0 && ordem.modeloId) {
-    try {
-      const resMod = await api.get(`/admin/modelos/${ordem.modeloId}`)
-      const m = resMod.data.modelo || resMod.data
-      if (m && Array.isArray(m.pecas)) {
-        pecasList = m.pecas
-      }
-    } catch (err) {
-      console.warn('[abrirManutencao] Erro ao buscar peças dinâmicas:', err)
-    }
-  }
-
-  formManutencao.value = {
-    slas: slasItems,
-    pecas: pecasList.map(p => ({
-      id: p.id,
-      nome: p.nome,
-      setorCorteOpcaoId: ordem.pecasRemanejadas?.[p.id] || (p as any).setorCorteOpcaoId || (p as any).setorCorteOpcao?.id || ''
-    }))
-  }
-
-  try {
-    const res = await api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
-      api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
-    )
-    maquinasCorteManutencao.value = (res.data || []).map((m: any) => ({
-      id: m.id,
-      label: m.label || m.valor,
-      valor: m.valor
-    }))
-  } catch (err) {
-    console.error('[abrirManutencao] Erro ao buscar máquinas de corte:', err)
-  }
-
   showManutencaoModal.value = true
 }
 
-async function loadHistorico() {
-  activeTabManutencao.value = 'historico'
-  if (!manutencaoOrdem.value) return
-  loadingAuditoria.value = true
-  logsAuditoria.value = []
-  manutencaoRastreamentos.value = []
-
-  const [auditoriaResult, rastreamentoResult] = await Promise.allSettled([
-    api.get(`/lotes/${manutencaoOrdem.value.id}/auditoria`),
-    api.get<HistoricoResponse>(`/rastreamentos/historico/${manutencaoOrdem.value.id}`),
-  ])
-
-  const falhas: string[] = []
-  if (auditoriaResult.status === 'fulfilled') {
-    logsAuditoria.value = auditoriaResult.value.data || []
-  } else {
-    console.error('[loadHistorico] Erro ao buscar auditoria de configuração:', auditoriaResult.reason)
-    falhas.push('alterações de configuração')
-  }
-  if (rastreamentoResult.status === 'fulfilled') {
-    manutencaoRastreamentos.value = rastreamentoResult.value.data.historico || []
-  } else {
-    console.error('[loadHistorico] Erro ao buscar rastreamentos da ordem:', rastreamentoResult.reason)
-    falhas.push('movimentações por setor')
-  }
-  if (falhas.length) {
-    addToast('error', `Não foi possível carregar ${falhas.join(' e ')}.`)
-  }
-
-  loadingAuditoria.value = false
+async function onOrdemCreated() {
+  await Promise.all([fetchOrdens(), fetchDropdownData()])
 }
 
-function getSetorNome(key: string): string {
-  if (!key) return '-'
-  if (key === 'default') return 'SLA Padrão'
-
-  const itemForm = formManutencao.value.slas.find(s => s.setorKey === key || s.setorNome === key)
-  if (itemForm?.setorNome) return itemForm.setorNome
-
-  const rotas = manutencaoOrdem.value?.modelo?.rotas || (manutencaoOrdem.value?.modelo as any)?.rota_modelo
-  if (Array.isArray(rotas)) {
-    const match = rotas.find((r: any) => r.setor?.id === key || r.setorId === key || r.setor?.nome === key)
-    if (match?.setor?.nome) return match.setor.nome
-  }
-
-  for (const o of ordens.value) {
-    const rList = o.modelo?.rotas || (o.modelo as any)?.rota_modelo
-    if (Array.isArray(rList)) {
-      const match = rList.find((r: any) => r.setor?.id === key || r.setorId === key)
-      if (match?.setor?.nome) return match.setor.nome
-    }
-  }
-
-  return key
-}
-
-function formatSlaDiff(dadosAnt: Record<string, any> | null, dadosNov: Record<string, any> | null): string {
-  const oldObj = dadosAnt || {}
-  const newObj = dadosNov || {}
-
-  const keys = Object.keys(newObj).filter(k => k !== 'default')
-  if (keys.length === 0) {
-    const oldKeys = Object.keys(oldObj).filter(k => k !== 'default')
-    if (oldKeys.length === 0) return '-'
-    return oldKeys.map(k => `${getSetorNome(k)}: ${oldObj[k]} min`).join('\n')
-  }
-
-  return keys.map(k => {
-    const nomeSector = getSetorNome(k)
-    const vOld = oldObj[k] !== undefined && oldObj[k] !== null ? `${oldObj[k]} min` : '0 min'
-    const vNew = newObj[k] !== undefined && newObj[k] !== null ? `${newObj[k]} min` : '0 min'
-    return `${nomeSector}: ${vOld} ➔ ${vNew}`
-  }).join('\n')
-}
-
-function formatPecaRemanejada(dadosAnt: Record<string, any> | null, dadosNov: Record<string, any> | null): string {
-  const pecaNome = dadosNov?.pecaNome || dadosAnt?.pecaNome || 'Peça'
-  const origem = dadosAnt?.maquinaNome || dadosAnt?.setorCorteOpcaoId || 'Sem máquina'
-  const destino = dadosNov?.maquinaNome || dadosNov?.setorCorteOpcaoId || 'Sem máquina'
-  return `Peça ${String(pecaNome).toUpperCase()} remanejada do subsetor ${origem} para ${destino}`
-}
-
-async function salvarManutencao() {
-  if (!manutencaoOrdem.value) return
-  loadingManutencao.value = true
-  try {
-    const payload: any = {
-      pecas: formManutencao.value.pecas
-        .filter(p => p.setorCorteOpcaoId)
-        .map(p => ({
-        id: p.id,
-        setorCorteOpcaoId: p.setorCorteOpcaoId
-      }))
-    }
-
-    if (canEditSla.value) {
-      const slasPorSetorPayload: Record<string, number> = {}
-      // Serializa os SLAs editados (exclui itens com valor 0 para nao poluir)
-      for (const item of formManutencao.value.slas) {
-        let min = Number(item.valor) || 0
-        if (item.unidade === 'd') min *= 1440
-        else if (item.unidade === 'h') min *= 60
-        if (min > 0) slasPorSetorPayload[item.setorKey] = min
-      }
-
-      payload.slasPorSetor = slasPorSetorPayload
-    }
-
-    const response = await api.put(`/ordens-teste/${manutencaoOrdem.value.id}/manutencao`, payload)
-
-    const loteAtualizado = response.data.lote || response.data
-    const idx = ordens.value.findIndex(o => o.id === loteAtualizado.id)
-    if (idx !== -1) {
-      ordens.value[idx] = { ...ordens.value[idx], ...loteAtualizado }
-    }
-    if (Array.isArray(loteAtualizado.auditLogs)) {
-      logsAuditoria.value = loteAtualizado.auditLogs
-    }
-
-    addToast('success', 'Configuração da Ordem salva com sucesso!')
-    showManutencaoModal.value = false
-  } catch (err: any) {
-    console.error('[salvarManutencao] Erro:', err)
-    addToast('error', err.response?.data?.error || 'Erro ao salvar configuração da ordem.')
-  } finally {
-    loadingManutencao.value = false
+function onManutencaoSaved(loteAtualizado: any) {
+  const idx = ordens.value.findIndex(o => o.id === loteAtualizado.id)
+  if (idx !== -1) {
+    ordens.value[idx] = { ...ordens.value[idx], ...loteAtualizado }
   }
 }
 
-// ─── Formulário ──────────────────────────────────────────────────────────────
-const form = ref({
-  modeloId: '',
-  plantaId: '',
-  prioridadePcp: '',
-  observacoes: '',
-})
-const formErrors = ref<Record<string, string>>({})
-
-// ─── Helpers de Status ───────────────────────────────────────────────────────
+// ─── Helpers de Status ─────────────────────────────────────────
 const statusConfig: Record<string, { label: string; cls: string }> = {
   AGUARDANDO_MODELAGEM:      { label: 'Aguardando Modelagem',   cls: 'badge--orange' },
   AGUARDANDO_MATERIAL:        { label: 'Aguardando Material',    cls: 'badge--amber' },
@@ -717,7 +155,7 @@ function getPrioridade(p: string) {
   return prioridadeConfig[p] ?? { label: p, cls: 'badge--slate' }
 }
 
-// ─── Computed ────────────────────────────────────────────────────────────────
+// ─── Computed ──────────────────────────────────────────────────
 const filteredOrdens = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return ordens.value
@@ -729,8 +167,6 @@ const filteredOrdens = computed(() => {
   )
 })
 
-const modeloFormSelecionado = computed(() => modelos.value.find((modelo) => modelo.id === form.value.modeloId) || null)
-
 const stats = computed(() => ({
   total: ordens.value.length,
   emAndamento: ordens.value.filter(
@@ -740,7 +176,7 @@ const stats = computed(() => ({
   alta: ordens.value.filter((o) => o.prioridadePcp === 'ALTA').length,
 }))
 
-// ─── Toast ───────────────────────────────────────────────────────────────────
+// ─── Toast ─────────────────────────────────────────────────────
 function addToast(type: 'success' | 'error', message: string) {
   const id = ++toastCounter
   toasts.value.push({ id, type, message })
@@ -749,7 +185,7 @@ function addToast(type: 'success' | 'error', message: string) {
   }, 4000)
 }
 
-// ─── Requisições ─────────────────────────────────────────────────────────────
+// ─── Requisições ───────────────────────────────────────────────
 async function fetchOrdens() {
   loading.value = true
   try {
@@ -765,7 +201,6 @@ async function fetchOrdens() {
 async function fetchDropdownData() {
   try {
     const [resModelos, resPlantas, resCatalogo] = await Promise.all([
-      // Endpoint filtrado: retorna apenas modelos SEM ordem de teste (regra 1:1)
       api.get<Modelo[]>('/admin/modelos'),
       api.get<Planta[]>('/admin/plantas'),
       api.get<Modelo[]>('/admin/modelos/catalogo'),
@@ -778,62 +213,6 @@ async function fetchDropdownData() {
   }
 }
 
-async function handleCreateOrdem() {
-  formErrors.value = {}
-
-  if (!form.value.modeloId)      formErrors.value.modeloId = 'Selecione um modelo.'
-  if (!form.value.plantaId)      formErrors.value.plantaId = 'Selecione uma planta.'
-  if (!form.value.prioridadePcp) formErrors.value.prioridadePcp = 'Selecione a prioridade.'
-  const modeloSelecionado = modelos.value.find((modelo) => modelo.id === form.value.modeloId)
-  if (modeloSelecionado && !modeloSelecionado.dataCorte) formErrors.value.modeloId = 'Cadastre a previsão de corte do modelo antes de criar a ordem.'
-
-  if (Object.keys(formErrors.value).length > 0) return
-
-  loadingCreate.value = true
-  try {
-    await api.post('/ordens-teste/wizard/ordem', {
-      modeloId:      form.value.modeloId,
-      plantaId:      form.value.plantaId,
-      prioridadePcp: form.value.prioridadePcp,
-      observacoes:   form.value.observacoes || null,
-    })
-    addToast('success', 'Ordem criada com status Aguardando Modelagem.')
-    // Recarrega dropdown para remover o modelo que agora tem ordem ativa
-    await Promise.all([fetchOrdens(), fetchDropdownData()])
-    closeModal()
-  } catch (err: any) {
-    const code = err?.response?.data?.code
-    const serverMsg = err?.response?.data?.error
-
-    // Trata o erro específico da regra 1:1
-    if (code === 'MODELO_TESTE_DUPLICADO') {
-      const cb = err?.response?.data?.codigoBarras
-      addToast('error', cb
-        ? `Este modelo já possui a ordem ativa: ${cb}. Cada modelo admite apenas um teste de produção.`
-        : 'Este modelo já possui um teste de produção ativo. Regra 1:1.'
-      )
-    } else {
-      addToast('error', typeof serverMsg === 'string'
-        ? serverMsg
-        : 'Erro ao criar ordem. Verifique os dados e tente novamente.'
-      )
-    }
-  } finally {
-    loadingCreate.value = false
-  }
-}
-
-// ─── Modal ───────────────────────────────────────────────────────────────────
-function openModal() {
-  form.value = { modeloId: '', plantaId: '', prioridadePcp: '', observacoes: '' }
-  formErrors.value = {}
-  showModal.value = true
-}
-
-function closeModal() {
-  showModal.value = false
-}
-
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('pt-BR', {
     day: '2-digit', month: '2-digit', year: 'numeric',
@@ -841,12 +220,7 @@ function formatDate(iso: string) {
   })
 }
 
-function formatDateOnly(value: string | null | undefined) {
-  const isoDate = value?.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  return isoDate ? `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}` : 'não cadastrada'
-}
-
-// ─── Lifecycle ───────────────────────────────────────────────────────────────
+// ─── Lifecycle ─────────────────────────────────────────────────
 onMounted(async () => {
   await Promise.all([fetchOrdens(), fetchDropdownData()])
 })
@@ -1026,13 +400,11 @@ onMounted(async () => {
                     type="button"
                     class="btn-action-print"
                     @click="abrirTicketsSetor(ordem)"
-                    :disabled="loadingTicketsSetorId === ordem.id"
                     :aria-label="`Abrir etiquetas da ordem ${ordem.codigoBarras}`"
                     title="Etiquetas do lote e dos setores"
                   >
-                    <Loader2 v-if="loadingTicketsSetorId === ordem.id" :size="14" class="spin-anim" aria-hidden="true" />
-                    <Printer v-else :size="14" aria-hidden="true" />
-                    <span>{{ loadingTicketsSetorId === ordem.id ? 'Carregando...' : 'Etiquetas' }}</span>
+                    <Printer :size="14" aria-hidden="true" />
+                    <span>Etiquetas</span>
                   </button>
                   <button
                     type="button"
@@ -1068,815 +440,43 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- ══════════════════════════════════════════════════════
-         MODAL — NOVA ORDEM DE TESTE
-    ══════════════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="showModal"
-          class="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title-ordens"
-          @click.self="closeModal"
-        >
-          <div class="modal-panel">
-            <!-- Modal Header -->
-            <div class="modal-header">
-              <div class="modal-header-left">
-                <div class="modal-icon-wrap" aria-hidden="true">
-                  <Plus :size="18" />
-                </div>
-                <h2 id="modal-title-ordens" class="modal-title">Nova Ordem de Teste</h2>
-              </div>
-              <button
-                id="btn-close-modal-ordens"
-                type="button"
-                class="modal-close"
-                @click="closeModal"
-                aria-label="Fechar modal"
-              >
-                <X :size="16" aria-hidden="true" />
-              </button>
-            </div>
+    <!-- ── Modais Desacoplados ──────────────────────────────── -->
+    <OrderCreateModal
+      v-model="showModal"
+      :modelos="modelos"
+      :plantas="plantas"
+      @created="onOrdemCreated"
+      @success="msg => addToast('success', msg)"
+      @error="msg => addToast('error', msg)"
+    />
 
-            <!-- Modal Body -->
-            <div class="modal-body">
-              <p class="modal-description">
-                Selecione o modelo de calçado, a planta industrial e a prioridade PCP para gerar automaticamente o código de barras da ordem de rastreamento.
-              </p>
+    <OrderPrintModal
+      v-model="showTicketsSetorModal"
+      :ordem="ticketsSetorOrdem"
+      :can-print="canPrintOrdens"
+      :modelo-nome="ticketsSetorModeloNome"
+      @error="msg => addToast('error', msg)"
+    />
 
-              <!-- Modelo -->
-              <div class="form-field">
-                <label for="sel-modelo" class="form-label">
-                  Modelo de Calçado <span class="required-star" aria-hidden="true">*</span>
-                </label>
-                <div class="select-wrap">
-                  <select
-                    id="sel-modelo"
-                    v-model="form.modeloId"
-                    class="form-select"
-                    :class="{ 'form-select--error': formErrors.modeloId }"
-                  >
-                    <option value="" disabled>Selecione um modelo...</option>
-                    <option v-for="m in modelos" :key="m.id" :value="m.id">
-                      {{ m.codigoProduto }} — {{ m.nome }}
-                    </option>
-                  </select>
-                  <ChevronDown :size="14" class="select-chevron" aria-hidden="true" />
-                </div>
-                <span v-if="formErrors.modeloId" class="form-error" role="alert">
-                  <AlertCircle :size="12" aria-hidden="true" />
-                  {{ formErrors.modeloId }}
-                </span>
-                <span v-else-if="form.modeloId" class="form-help">
-                  Previsão de corte: {{ formatDateOnly(modeloFormSelecionado?.dataCorte) }}
-                </span>
-              </div>
+    <OrderHistoryModal
+      v-model="showAcompanharModal"
+      :ordem="acompanharOrdem"
+      :can-view-rastreamento="canViewRastreamento"
+      :modelo-nome="ticketsSetorModeloNome"
+      @open-rastreamento="abrirRastreamentoDaOrdem"
+      @error="msg => addToast('error', msg)"
+    />
 
-              <!-- Planta -->
-              <div class="form-field">
-                <label for="sel-planta" class="form-label">
-                  Planta Industrial <span class="required-star" aria-hidden="true">*</span>
-                </label>
-                <div class="select-wrap">
-                  <select
-                    id="sel-planta"
-                    v-model="form.plantaId"
-                    class="form-select"
-                    :class="{ 'form-select--error': formErrors.plantaId }"
-                  >
-                    <option value="" disabled>Selecione uma planta...</option>
-                    <option v-for="p in plantas" :key="p.id" :value="p.id">
-                      {{ p.nome }}<template v-if="p.cidade"> — {{ p.cidade }}{{ p.estado ? `/${p.estado}` : '' }}</template>
-                    </option>
-                  </select>
-                  <ChevronDown :size="14" class="select-chevron" aria-hidden="true" />
-                </div>
-                <span v-if="formErrors.plantaId" class="form-error" role="alert">
-                  <AlertCircle :size="12" aria-hidden="true" />
-                  {{ formErrors.plantaId }}
-                </span>
-              </div>
-
-              <!-- Prioridade PCP -->
-              <div class="form-field">
-                <label for="sel-prioridade" class="form-label">
-                  Prioridade PCP <span class="required-star" aria-hidden="true">*</span>
-                </label>
-                <div class="select-wrap">
-                  <select
-                    id="sel-prioridade"
-                    v-model="form.prioridadePcp"
-                    class="form-select"
-                    :class="{ 'form-select--error': formErrors.prioridadePcp }"
-                  >
-                    <option value="" disabled>Selecione a prioridade...</option>
-                    <option value="ALTA">Alta — Entrega urgente</option>
-                    <option value="MEDIA">Média — Prazo padrão</option>
-                    <option value="BAIXA">Baixa — Sem urgência</option>
-                  </select>
-                  <ChevronDown :size="14" class="select-chevron" aria-hidden="true" />
-                </div>
-                <span v-if="formErrors.prioridadePcp" class="form-error" role="alert">
-                  <AlertCircle :size="12" aria-hidden="true" />
-                  {{ formErrors.prioridadePcp }}
-                </span>
-              </div>
-
-              <!-- Observações (opcional) -->
-              <div class="form-field">
-                <label for="txt-observacoes" class="form-label">Observações <span class="optional-tag">opcional</span></label>
-                <textarea
-                  id="txt-observacoes"
-                  v-model="form.observacoes"
-                  class="form-textarea"
-                  placeholder="Anotações adicionais sobre esta ordem..."
-                  rows="3"
-                ></textarea>
-              </div>
-
-              <!-- Info tip -->
-              <div class="info-tip" role="note">
-                <AlertCircle :size="14" class="tip-icon" aria-hidden="true" />
-                <span>O código de barras será gerado automaticamente. A ordem aguardará a configuração de peças, Caixa Teste e rota pela Modelagem.</span>
-              </div>
-            </div>
-
-            <!-- Modal Footer -->
-            <div class="modal-footer">
-              <button
-                id="btn-cancel-ordem"
-                type="button"
-                class="btn-outline"
-                @click="closeModal"
-                :disabled="loadingCreate"
-              >
-                Cancelar
-              </button>
-              <button
-                id="btn-confirm-ordem"
-                type="button"
-                class="btn-primary"
-                @click="handleCreateOrdem"
-                :disabled="loadingCreate"
-              >
-                <Loader2 v-if="loadingCreate" :size="15" class="spin-anim" aria-hidden="true" />
-                <Plus v-else :size="15" aria-hidden="true" />
-                <span>{{ loadingCreate ? 'Criando Ordem...' : 'Confirmar e Criar' }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ══════════════════════════════════════════════════════
-         MODAL — GESTÃO E IMPRESSÃO DAS ETIQUETAS DA ORDEM
-    ══════════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="showTicketsSetorModal"
-          class="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title-tickets-setor"
-          @click.self="fecharTicketsSetor"
-        >
-          <div class="modal-panel modal-panel--tickets-setor" style="max-width: 820px">
-            <div class="modal-header">
-              <div class="modal-header-left">
-                <div class="modal-icon-wrap" aria-hidden="true">
-                  <Printer :size="20" />
-                </div>
-                <div>
-                  <h2 id="modal-title-tickets-setor" class="modal-title">Etiquetas da ordem</h2>
-                  <p class="modal-description">
-                    Ordem {{ ticketsSetorOrdem?.codigoBarras }} · {{ ticketsSetorModeloNome }}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="modal-close"
-                aria-label="Fechar etiquetas da ordem"
-                @click="fecharTicketsSetor"
-              >
-                <X :size="18" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div class="modal-body modal-body--tickets-setor p-5">
-              <p class="mb-3 text-sm text-slate-600">
-                Imprima os tickets da rota do Lote Principal, da Caixa Teste e dos subsetores de Corte.
-              </p>
-
-              <section v-if="canPrintOrdens && ticketsSetorOrdem" class="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4" aria-label="Impressões da ordem">
-                <h3 class="mb-3 text-xs font-bold uppercase tracking-wide text-slate-600">Imprimir etiquetas e tickets</h3>
-                <div class="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    class="btn-outline inline-flex items-center gap-2"
-                    :disabled="loadingTicketPrintId !== null"
-                    @click="imprimirTickets(ticketsSetorOrdem, 'LOTE_PRINCIPAL')"
-                  >
-                    <Loader2 v-if="loadingTicketPrintId === 'LOTE_PRINCIPAL'" :size="14" class="animate-spin" aria-hidden="true" />
-                    <Printer v-else :size="14" aria-hidden="true" />
-                    {{ loadingTicketPrintId === 'LOTE_PRINCIPAL' ? 'Gerando...' : 'Lote principal' }}
-                  </button>
-                  <button
-                    v-if="ticketsSetorOrdem.possuiCaixaTeste"
-                    type="button"
-                    class="btn-outline inline-flex items-center gap-2"
-                    :disabled="loadingTicketPrintId !== null"
-                    @click="imprimirTickets(ticketsSetorOrdem, 'CAIXA_TESTE')"
-                  >
-                    <Loader2 v-if="loadingTicketPrintId === 'CAIXA_TESTE'" :size="14" class="animate-spin" aria-hidden="true" />
-                    <Printer v-else :size="14" aria-hidden="true" />
-                    {{ loadingTicketPrintId === 'CAIXA_TESTE' ? 'Gerando...' : 'Caixa Teste' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-outline inline-flex items-center gap-2"
-                    :disabled="loadingTicketPrintId !== null"
-                    @click="imprimirTicketsCorte(ticketsSetorOrdem)"
-                  >
-                    <Loader2 v-if="loadingTicketPrintId === 'CORTE'" :size="14" class="animate-spin" aria-hidden="true" />
-                    <Printer v-else :size="14" aria-hidden="true" />
-                    {{ loadingTicketPrintId === 'CORTE' ? 'Gerando...' : 'Tickets de Corte' }}
-                  </button>
-                </div>
-              </section>
-
-              <div class="mb-4 rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-                A impressão completa reúne Lote Principal, Caixa Teste quando ativada e Corte em um PDF. O gabarito comporta 10 etiquetas por folha A4, em 2 colunas por 5 linhas, com início a 13 mm do topo.
-              </div>
-
-              <div v-if="loadingTicketsSetor" class="flex min-h-32 items-center justify-center gap-2 text-sm text-slate-500" role="status">
-                <Loader2 :size="18" class="animate-spin" aria-hidden="true" />
-                Carregando tickets da ordem...
-              </div>
-
-              <div v-else-if="erroTicketsSetor" class="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">
-                <AlertCircle :size="18" class="mt-0.5 shrink-0" aria-hidden="true" />
-                <span>{{ erroTicketsSetor }}</span>
-              </div>
-
-              <div v-else-if="ticketsSetorItems.length === 0" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                <template v-if="rotaTicketsCongelada === false">
-                  A rota desta ordem ainda não foi definida e congelada. Finalize a configuração da Modelagem para gerar os tickets dos setores.
-                </template>
-                <template v-else-if="rotaTicketsCongelada === true">
-                  A rota está congelada, mas nenhum ticket foi retornado. Atualize a tela; se a mensagem persistir, confirme se o backend em execução está atualizado.
-                </template>
-                <template v-else>
-                  Esta ordem ainda não possui tickets de setor. Verifique se a rota da ordem já foi definida e congelada.
-                </template>
-              </div>
-
-              <ol v-else class="space-y-2" aria-label="Tickets dos setores da ordem">
-                <li
-                  v-for="ticket in ticketsSetorItems"
-                  :key="ticket.id"
-                  class="rounded-lg border border-slate-200 bg-white p-3"
-                >
-                  <div class="min-w-0">
-                    <p class="text-[10px] font-semibold uppercase tracking-wide text-indigo-600">
-                      {{ ticket.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste' : 'Lote Principal' }} · Etapa {{ ticket.ordemEtapa }} · Rota v{{ ticket.rotaVersao }}
-                    </p>
-                    <h3 class="mt-0.5 truncate text-sm font-semibold text-slate-900">{{ ticket.setorNomeSnapshot }}</h3>
-                    <p class="mt-1 break-all font-mono text-xs text-slate-600">{{ ticket.codigoBarras }}</p>
-                  </div>
-                </li>
-              </ol>
-            </div>
-
-            <div class="modal-footer">
-              <button type="button" class="btn-outline" @click="fecharTicketsSetor">Fechar</button>
-              <button
-                type="button"
-                class="btn-primary"
-                :disabled="loadingTicketsSetor || ticketsSetorItems.length === 0 || loadingTicketPrintId !== null"
-                @click="imprimirTodosTicketsSetor"
-              >
-                <Loader2 v-if="loadingTicketPrintId === 'TODOS'" :size="15" class="animate-spin" aria-hidden="true" />
-                <Printer v-else :size="15" aria-hidden="true" />
-                {{ loadingTicketPrintId === 'TODOS' ? 'Gerando PDF...' : 'Imprimir todos os setores' }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ══════════════════════════════════════════════════════
-         MODAL — OPÇÕES DE ACOMPANHAMENTO DA ORDEM
-    ══════════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="showAcompanharModal && acompanharOrdem"
-          class="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title-acompanhar"
-          @click.self="fecharAcompanhamento"
-        >
-          <div class="modal-panel" style="max-width: 520px">
-            <div class="modal-header">
-              <div class="modal-header-left">
-                <div class="modal-icon-wrap" aria-hidden="true"><Activity :size="20" /></div>
-                <div>
-                  <h2 id="modal-title-acompanhar" class="modal-title">Acompanhar ordem</h2>
-                  <p class="modal-description">{{ acompanharOrdem.codigoBarras }} · {{ acompanharOrdem.modelo?.nome || getModeloNome(acompanharOrdem.modeloId) }}</p>
-                </div>
-              </div>
-              <button type="button" class="modal-close" aria-label="Fechar opções de acompanhamento" @click="fecharAcompanhamento">
-                <X :size="18" aria-hidden="true" />
-              </button>
-            </div>
-            <div class="modal-body flex flex-col gap-3 p-5">
-              <button type="button" class="btn-outline flex w-full items-center gap-3 p-4 text-left" @click="abrirTimelineDaOrdem(acompanharOrdem)">
-                <Clock :size="18" aria-hidden="true" />
-                <span><strong class="block">Timeline</strong><small class="text-slate-500">Histórico de entradas, saídas e permanências</small></span>
-              </button>
-              <button v-if="canViewRastreamento" type="button" class="btn-outline flex w-full items-center gap-3 p-4 text-left" @click="abrirRastreamentoDaOrdem(acompanharOrdem)">
-                <Activity :size="18" aria-hidden="true" />
-                <span><strong class="block">Rastreamento detalhado</strong><small class="text-slate-500">Visualização das trilhas da ordem</small></span>
-              </button>
-            </div>
-            <div class="modal-footer">
-              <button type="button" class="btn-outline" @click="fecharAcompanhamento">Fechar</button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ══════════════════════════════════════════════════════
-         DRAWER — TIMELINE DE RASTREAMENTO
-    ══════════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition name="drawer">
-        <div
-          v-if="showTimeline"
-          class="tl-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="tl-drawer-title"
-          @click.self="closeTimeline"
-        >
-          <aside class="tl-drawer">
-
-            <!-- Drawer Header -->
-            <div class="tl-header">
-              <div class="tl-header-left">
-                <div class="tl-icon-wrap" aria-hidden="true">
-                  <Activity :size="18" />
-                </div>
-                <div>
-                  <h2 id="tl-drawer-title" class="tl-title">Timeline de Rastreamento</h2>
-                  <p class="tl-subtitle" v-if="timelineOrdem">
-                    Ordem
-                    <span class="tl-code">{{ timelineOrdem.codigoBarras }}</span>
-                  </p>
-                </div>
-              </div>
-              <button
-                id="btn-close-timeline"
-                type="button"
-                class="tl-close"
-                @click="closeTimeline"
-                aria-label="Fechar timeline"
-              >
-                <X :size="16" aria-hidden="true" />
-              </button>
-            </div>
-
-            <!-- Drawer Body -->
-            <div class="tl-body">
-
-              <!-- Loading state -->
-              <div v-if="loadingTimeline" class="tl-loading" aria-label="Carregando rastreamentos...">
-                <div v-for="i in 4" :key="i" class="tl-skel-row">
-                  <div class="tl-skel-dot"></div>
-                  <div class="tl-skel-content">
-                    <div class="tl-skel tl-skel--title"></div>
-                    <div class="tl-skel tl-skel--sub"></div>
-                    <div class="tl-skel tl-skel--sub"></div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Empty state -->
-              <div v-else-if="timelineData.length === 0" class="tl-empty">
-                <MapPin :size="32" class="tl-empty-icon" aria-hidden="true" />
-                <p class="tl-empty-title">Nenhum rastreamento registrado</p>
-                <p class="tl-empty-sub">A bipagem das peças nesta ordem ainda não foi iniciada no chão de fábrica.</p>
-              </div>
-
-              <!-- Timeline list -->
-              <ol v-else class="tl-list" aria-label="Histórico de rastreamento por setor">
-                <li
-                  v-for="(item, idx) in timelineData"
-                  :key="item.id"
-                  class="tl-item"
-                >
-                  <!-- Conector vertical (oculta no último) -->
-                  <div class="tl-connector" :class="{ 'tl-connector--hidden': idx === timelineData.length - 1 }" aria-hidden="true"></div>
-
-                  <!-- Bolha de status -->
-                  <div
-                    class="tl-dot"
-                    :class="getRastreamentoStatus(item.status).dotCls"
-                    :aria-label="getRastreamentoStatus(item.status).label"
-                  ></div>
-
-                  <!-- Card do rastreamento -->
-                  <div class="tl-card">
-                    <!-- Setor + badge -->
-                    <div class="tl-card-header">
-                      <div class="tl-setor-wrap">
-                        <MapPin :size="12" class="tl-setor-icon" aria-hidden="true" />
-                        <span class="tl-setor-nome">{{ item.setor?.nome ?? 'Setor desconhecido' }}</span>
-                        <span v-if="item.setor?.tipoSetor" class="tl-tipo-setor">{{ item.setor.tipoSetor }}</span>
-                      </div>
-                      <span class="tl-badge" :class="getRastreamentoStatus(item.status).cls">
-                        {{ getRastreamentoStatus(item.status).label }}
-                      </span>
-                    </div>
-
-                    <!-- Tipo de lote -->
-                    <div class="tl-lote-tag flex gap-2 flex-wrap">
-                      <div v-for="subItem in item.itens" :key="subItem.id" class="flex items-center gap-1">
-                        <ChevronRight :size="10" aria-hidden="true" />
-                        <span :class="subItem.tipoLote === 'CAIXA_TESTE' ? 'text-amber-600 font-bold' : 'text-blue-600 font-bold'">
-                          {{ subItem.tipoLote === 'CAIXA_TESTE' ? 'Caixa Teste (' + getRastreamentoStatus(subItem.status).label + ')' : 'Lote Principal (' + getRastreamentoStatus(subItem.status).label + ')' }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <!-- Máquina / Estação Utilizada -->
-                    <div v-if="item.estacao" class="tl-maquina-tag">
-                      <Sliders :size="12" class="tl-maquina-icon" aria-hidden="true" />
-                      <span class="tl-maquina-label">Máquina:</span>
-                      <span class="tl-maquina-val font-semibold">{{ item.estacao.codigo || item.estacao.nome }}</span>
-                    </div>
-
-                    <!-- Datas -->
-                    <div class="tl-dates">
-                      <div class="tl-date-row">
-                        <LogIn :size="12" class="tl-date-icon" aria-hidden="true" />
-                        <span class="tl-date-label">Entrada:</span>
-                        <span class="tl-date-val">{{ formatDateTime(item.dataEntrada) }}</span>
-                      </div>
-                      <div class="tl-date-row">
-                        <LogOut :size="12" class="tl-date-icon" aria-hidden="true" />
-                        <span class="tl-date-label">Saída:</span>
-                        <span class="tl-date-val">{{ formatDateTime(item.dataSaida) }}</span>
-                      </div>
-                    </div>
-
-                    <!-- Tempo de permanência em Tempo Real -->
-                    <div v-if="formatPermanencia(item.tempoPermanenciaMin)" class="tl-permanencia">
-                      <Timer :size="12" class="tl-perm-icon" aria-hidden="true" />
-                      <span class="tl-perm-label">Permanência Real:</span>
-                      <span class="tl-perm-val font-bold text-indigo-700">{{ formatPermanencia(item.tempoPermanenciaMin) }}</span>
-                    </div>
-
-                    <!-- Operadores (Modo Quiosque / Crachá) -->
-                    <div v-if="item.operadorEntrada || item.operadorSaida" class="tl-operadores">
-                      <div class="tl-op-header">
-                        <User :size="12" class="tl-op-icon" aria-hidden="true" />
-                        <span class="tl-op-title font-semibold">Operadores (Crachá):</span>
-                      </div>
-                      <div class="tl-op-list">
-                        <span v-if="item.operadorEntrada">
-                          <span class="tl-op-tag">Entrada:</span> {{ item.operadorEntrada.nomeCompleto }}
-                        </span>
-                        <span v-if="item.operadorEntrada && item.operadorSaida" class="tl-op-sep">|</span>
-                        <span v-if="item.operadorSaida">
-                          <span class="tl-op-tag">Saída:</span> {{ item.operadorSaida.nomeCompleto }}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </li>
-              </ol>
-
-            </div>
-
-            <!-- Drawer Footer -->
-            <div class="tl-footer">
-              <div class="tl-footer-info" v-if="!loadingTimeline && timelineData.length > 0">
-                <Info :size="13" aria-hidden="true" />
-                <span>{{ timelineData.length }} rastreamento{{ timelineData.length !== 1 ? 's' : '' }} registrado{{ timelineData.length !== 1 ? 's' : '' }}</span>
-              </div>
-              <button
-                id="btn-fechar-timeline-footer"
-                type="button"
-                class="btn-outline"
-                @click="closeTimeline"
-              >
-                Fechar
-              </button>
-            </div>
-
-          </aside>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ══════════════════════════════════════════════════════
-         MODAL — CONFIGURAÇÃO DA ORDEM & REMANEJAMENTO DE PEÇAS
-    ══════════════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="showManutencaoModal"
-          class="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title-configuracao"
-          @click.self="showManutencaoModal = false"
-        >
-          <div class="modal-panel modal-panel--manutencao">
-            <div class="modal-header">
-              <div class="modal-header-left">
-                <div class="modal-icon-wrap" aria-hidden="true">
-                  <Settings :size="20" />
-                </div>
-                <div>
-                  <h2 id="modal-title-configuracao" class="modal-title">Configuração da Ordem {{ manutencaoOrdem?.codigoBarras }}</h2>
-                  <p class="modal-description">Edite prazos, metas de tempo (SLA) ou altere a máquina de peças técnicas.</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="modal-close"
-                aria-label="Fechar modal"
-                @click="showManutencaoModal = false"
-              >
-                <X :size="18" aria-hidden="true" />
-              </button>
-            </div>
-
-            <!-- Abas do Modal -->
-            <div class="flex items-center gap-1 px-5 pt-3 border-b border-slate-200 bg-slate-50 overflow-x-auto">
-              <button
-                type="button"
-                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
-                :class="activeTabManutencao === 'geral' ? 'border-blue-700 text-blue-800 bg-white' : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-white/70'"
-                @click="activeTabManutencao = 'geral'"
-              >
-                <div class="flex items-center gap-1.5">
-                  <Sliders :size="13" />
-                  <span>1. Prazos e SLAs</span>
-                </div>
-              </button>
-              <button
-                type="button"
-                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
-                :class="activeTabManutencao === 'pecas' ? 'border-blue-700 text-blue-800 bg-white' : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-white/70'"
-                @click="activeTabManutencao = 'pecas'"
-              >
-                <div class="flex items-center gap-1.5">
-                  <Scissors :size="13" />
-                  <span>2. Remanejamento ({{ formManutencao.pecas.length }})</span>
-                </div>
-              </button>
-              <button
-                type="button"
-                class="px-4 py-2 text-xs font-bold rounded-t-lg transition-all border-b-2 whitespace-nowrap"
-                :class="activeTabManutencao === 'historico' ? 'border-blue-700 text-blue-800 bg-white' : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-white/70'"
-                @click="loadHistorico"
-              >
-                <div class="flex items-center gap-1.5">
-                  <History :size="13" />
-                  <span>3. Histórico</span>
-                </div>
-              </button>
-            </div>
-
-            <div class="modal-body p-6 space-y-4">
-              <!-- ABA 1: Prazos e SLAs -->
-              <div v-if="activeTabManutencao === 'geral'" class="space-y-5">
-                <!-- Cabecalho SLA -->
-                <div class="flex items-center justify-between gap-3 flex-wrap">
-                  <div class="flex items-center gap-2">
-                    <Clock :size="14" class="text-slate-500 shrink-0" />
-                    <span class="text-xs font-black text-slate-800 uppercase tracking-widest">Prazos de SLA por Setor</span>
-                  </div>
-                  <span
-                    v-if="!canEditSla"
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-xs font-bold"
-                  >
-                    <Lock :size="11" />
-                    Somente leitura
-                  </span>
-                  <span
-                    v-else
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-xs font-bold"
-                  >
-                    <ShieldCheck :size="11" />
-                    Edicao liberada
-                  </span>
-                </div>
-
-                <!-- Grid de cards SLA por setor -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 max-h-80 overflow-y-auto pr-1 w-full">
-                  <div
-                    v-for="s in formManutencao.slas"
-                    :key="s.setorKey"
-                    class="bg-slate-50/70 backdrop-blur-md border border-slate-200/80 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_4px_20px_rgba(0,0,0,0.02)] text-slate-800 transition-colors"
-                    :class="canEditSla ? 'hover:border-blue-500/50' : 'opacity-80'"
-                  >
-                    <!-- Nome do setor -->
-                    <div class="flex items-center justify-between min-w-0">
-                      <div class="flex items-center gap-2 min-w-0 flex-1">
-                        <Clock
-                          :size="13"
-                          class="shrink-0"
-                          :class="canEditSla ? 'text-blue-700' : 'text-slate-400'"
-                        />
-                        <span
-                          class="text-sm font-bold truncate text-slate-800"
-                        >{{ s.setorNome }}</span>
-                      </div>
-                      <Lock v-if="!canEditSla" :size="12" class="text-amber-500 shrink-0 ml-2" />
-                    </div>
-
-                    <!-- Divisor -->
-                    <div class="h-px bg-slate-200/60"></div>
-
-                    <!-- Controles: valor + unidade -->
-                    <div class="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="0"
-                        v-model.number="s.valor"
-                        :disabled="!canEditSla"
-                        class="w-20 px-3 py-2 text-sm font-bold font-mono text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
-                      />
-                      <select
-                        v-model="s.unidade"
-                        :disabled="!canEditSla"
-                        class="flex-1 min-w-[100px] px-3 py-2 text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100"
-                      >
-                        <option value="min">Minutos</option>
-                        <option value="h">Horas</option>
-                        <option value="d">Dias</option>
-                      </select>
-                    </div>
-
-                    <!-- Equivalencia em minutos -->
-                    <p class="text-xs font-semibold text-slate-500 text-right tabular-nums">
-                      = {{ s.unidade === 'd' ? s.valor * 1440 : s.unidade === 'h' ? s.valor * 60 : s.valor }} min
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <!-- ABA 2: Remanejamento de Pecas -->
-              <div v-else-if="activeTabManutencao === 'pecas'" class="space-y-3">
-                <p class="text-xs text-slate-500">
-                  Altere a maquina de destino de cada peca tecnica do corte automatico:
-                </p>
-
-                <div v-if="formManutencao.pecas.length === 0" class="p-4 text-center bg-slate-50 border border-slate-200 rounded-lg text-slate-500 text-xs">
-                  Este modelo nao possui pecas cadastradas para remanejamento.
-                </div>
-
-                <div v-else class="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                  <div
-                    v-for="p in formManutencao.pecas"
-                    :key="p.id"
-                    class="p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                  >
-                    <div class="text-xs font-bold text-slate-800">
-                      {{ p.nome }}
-                    </div>
-                    <div class="sm:w-64">
-                      <select
-                        v-model="p.setorCorteOpcaoId"
-                        :disabled="!canConfigureOrdem"
-                        class="w-full text-xs p-1.5 bg-white border border-slate-300 rounded-md font-medium text-slate-800"
-                      >
-                        <option value="">Selecione a maquina...</option>
-                        <option
-                          v-for="m in maquinasCorteManutencao"
-                          :key="m.id"
-                          :value="m.id"
-                        >
-                          {{ m.label }}
-                        </option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ABA 3: Histórico de rastreamento e configuração -->
-              <div v-else-if="activeTabManutencao === 'historico'" class="space-y-3">
-                <!-- Loading -->
-                <div v-if="loadingAuditoria" class="flex items-center justify-center py-12 gap-2">
-                  <Loader2 :size="18" class="animate-spin text-blue-600" />
-                  <span class="text-slate-400 text-sm">Carregando historico...</span>
-                </div>
-
-                <!-- Vazio -->
-                <div
-                  v-else-if="logsAuditoria.length === 0 && manutencaoRastreamentos.length === 0"
-                  class="p-8 text-center text-slate-400 text-sm border border-dashed border-slate-300 rounded-2xl bg-slate-50/50"
-                >
-                  <History :size="28" class="mx-auto mb-2 text-slate-300" />
-                  <p>Nenhuma movimentação ou alteração registrada para esta ordem.</p>
-                </div>
-
-                <div v-else class="max-h-80 overflow-y-auto pr-1 space-y-5">
-                  <section class="space-y-2">
-                    <h3 class="text-xs font-black text-slate-700 uppercase tracking-wide">Movimentações pelos setores</h3>
-                    <p v-if="manutencaoRastreamentos.length === 0" class="text-xs text-slate-400">Nenhum rastreamento registrado.</p>
-                    <article
-                      v-for="item in manutencaoRastreamentos"
-                      :key="item.id"
-                      class="bg-white border border-slate-200 rounded-xl p-3 flex flex-col gap-1.5"
-                    >
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="text-xs font-bold text-slate-800">{{ item.setor?.nome || 'Setor desconhecido' }}</span>
-                        <span class="text-[10px] font-bold text-slate-500">{{ getRastreamentoStatus(item.status).label }}</span>
-                      </div>
-                      <p class="text-[11px] text-slate-500">
-                        Entrada: {{ formatDateTime(item.dataEntrada) }} · Saída: {{ formatDateTime(item.dataSaida) }}
-                      </p>
-                      <p class="text-[11px] text-slate-500">
-                        Operadores: {{ item.operadorEntrada?.nomeCompleto || '—' }} → {{ item.operadorSaida?.nomeCompleto || '—' }}
-                      </p>
-                    </article>
-                  </section>
-
-                  <section class="space-y-2">
-                    <h3 class="text-xs font-black text-slate-700 uppercase tracking-wide">Alterações de configuração</h3>
-                    <p v-if="logsAuditoria.length === 0" class="text-xs text-slate-400">Nenhuma alteração de SLA ou remanejamento registrado.</p>
-                    <article
-                      v-for="log in logsAuditoria"
-                      :key="log.id"
-                      class="bg-white border border-slate-200 rounded-xl p-4 flex flex-col gap-2.5 transition-colors hover:border-blue-300 hover:shadow-sm"
-                    >
-                      <div class="flex items-start justify-between gap-2 flex-wrap">
-                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-800 text-xs font-black tracking-wider uppercase">
-                          <ShieldCheck :size="10" />
-                          {{ log.acao }}
-                        </span>
-                        <span class="text-slate-400 text-xs font-mono">{{ new Date(log.criadoEm).toLocaleString('pt-BR') }}</span>
-                      </div>
-
-                      <div class="flex items-center gap-2">
-                        <span class="text-slate-500 text-xs font-semibold">Operador:</span>
-                        <span class="text-slate-800 text-xs font-bold">{{ log.usuario?.nomeCompleto || log.usuario?.nome || log.usuario?.usuario || 'Sistema' }}</span>
-                      </div>
-
-                      <div v-if="log.acao === 'PECA_REMANEJADA'" class="bg-blue-50 rounded-lg p-3 border border-blue-200">
-                        <p class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
-                          <Scissors :size="13" class="text-blue-700 shrink-0" />
-                          <span>{{ formatPecaRemanejada(log.dadosAnteriores, log.dadosNovos) }}</span>
-                        </p>
-                      </div>
-                      <div v-else-if="log.acao === 'SLA_ALTERADO' && (log.dadosAnteriores || log.dadosNovos)" class="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                        <p class="text-slate-500 text-xs font-bold mb-1 uppercase tracking-wide">Alteração de SLA</p>
-                        <pre class="text-slate-800 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{{ formatSlaDiff(log.dadosAnteriores, log.dadosNovos) }}</pre>
-                      </div>
-                    </article>
-                  </section>
-                </div>
-              </div>
-            </div>
-
-            <div class="modal-footer">
-              <button
-                type="button"
-                class="btn-outline"
-                @click="showManutencaoModal = false"
-                :disabled="loadingManutencao"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                class="btn-primary"
-                @click="salvarManutencao"
-                v-if="canConfigureOrdem"
-                :disabled="loadingManutencao"
-              >
-                <Loader2 v-if="loadingManutencao" :size="14" class="animate-spin" />
-                <span>{{ loadingManutencao ? 'Salvando...' : 'Salvar Configuração' }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+    <OrderMaintenanceModal
+      v-model="showManutencaoModal"
+      :ordem="manutencaoOrdem"
+      :can-configure-ordem="canConfigureOrdem"
+      :can-edit-sla="canEditSla"
+      :ordens="ordens"
+      @saved="onManutencaoSaved"
+      @success="msg => addToast('success', msg)"
+      @error="msg => addToast('error', msg)"
+    />
 
   </div>
 </template>
@@ -2256,323 +856,6 @@ onMounted(async () => {
   text-align: right;
 }
 
-/* ─── Modal ────────────────────────────────────────── */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.55);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  padding: 1rem;
-}
-
-.modal-panel {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 1rem;
-  width: 100%;
-  max-width: 30rem;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.modal-panel--tickets-setor {
-  max-height: calc(100vh - 2rem);
-  max-height: calc(100dvh - 2rem);
-  min-height: 0;
-}
-
-.modal-body--tickets-setor {
-  flex: 1 1 auto;
-  min-height: 0;
-  overscroll-behavior: contain;
-}
-
-/* Variante do modal de manutencao: glassmorphism claro + largura expandida */
-.modal-panel--manutencao {
-  max-width: 48rem;
-  background: rgba(255, 255, 255, 0.80);
-  border: 1px solid rgba(203, 213, 225, 0.60);
-  border-radius: 1.5rem;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.04);
-}
-
-.modal-panel--manutencao .modal-header {
-  border-bottom-color: rgba(226, 232, 240, 0.80);
-  background: transparent;
-}
-.modal-panel--manutencao .modal-title {
-  color: #0f172a;
-}
-.modal-panel--manutencao .modal-description {
-  color: #64748b;
-}
-.modal-panel--manutencao .modal-icon-wrap {
-  background: linear-gradient(135deg, #0f172a, #1e293b);
-}
-.modal-panel--manutencao .modal-close {
-  border-color: #e2e8f0;
-  color: #94a3b8;
-}
-.modal-panel--manutencao .modal-close:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-.modal-panel--manutencao .modal-footer {
-  border-top-color: #f1f5f9;
-  background: transparent;
-}
-.modal-panel--manutencao .form-label {
-  color: #334155;
-}
-.modal-panel--manutencao .form-input {
-  background: #ffffff;
-  border-color: #e2e8f0;
-  color: #0f172a;
-}
-.modal-panel--manutencao .form-input:focus {
-  border-color: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
-}
-
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid #f1f5f9;
-  flex-shrink: 0;
-}
-
-.modal-header-left {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.modal-icon-wrap {
-  width: 2.25rem;
-  height: 2.25rem;
-  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
-  border-radius: 0.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  flex-shrink: 0;
-}
-
-.modal-title {
-  font-size: 1rem;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0;
-  letter-spacing: -0.02em;
-}
-
-.modal-close {
-  width: 2rem;
-  height: 2rem;
-  background: transparent;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.375rem;
-  color: #94a3b8;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
-}
-.modal-close:hover { background: #f1f5f9; color: #0f172a; }
-.modal-close:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
-
-.modal-body {
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.125rem;
-  overflow-y: auto;
-}
-
-.modal-description {
-  font-size: 0.8125rem;
-  color: #64748b;
-  line-height: 1.6;
-  margin: 0;
-}
-
-/* ─── Form Fields ──────────────────────────────────── */
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
-
-.form-label {
-  font-size: 0.8125rem;
-  font-weight: 700;
-  color: #334155;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.required-star { color: #dc2626; }
-.optional-tag {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: #94a3b8;
-  background: #f1f5f9;
-  padding: 0.05rem 0.4rem;
-  border-radius: 0.25rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.select-wrap {
-  position: relative;
-}
-
-.form-select {
-  width: 100%;
-  padding: 0.5625rem 2.25rem 0.5625rem 0.875rem;
-  font-size: 0.875rem;
-  font-family: inherit;
-  color: #0f172a;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.5rem;
-  outline: none;
-  appearance: none;
-  cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
-  box-sizing: border-box;
-}
-.form-select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
-.form-select--error { border-color: #dc2626; }
-.form-select--error:focus { box-shadow: 0 0 0 3px rgba(220,38,38,0.12); }
-
-.select-chevron {
-  position: absolute;
-  right: 0.75rem;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #94a3b8;
-  pointer-events: none;
-}
-
-.form-error {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #dc2626;
-}
-
-.form-textarea {
-  width: 100%;
-  padding: 0.625rem 0.875rem;
-  font-size: 0.875rem;
-  font-family: inherit;
-  color: #0f172a;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.5rem;
-  outline: none;
-  resize: vertical;
-  min-height: 5rem;
-  transition: border-color 0.15s, box-shadow 0.15s;
-  box-sizing: border-box;
-  line-height: 1.5;
-}
-.form-textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
-.form-textarea::placeholder { color: #94a3b8; }
-
-.info-tip {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 0.5rem;
-  padding: 0.625rem 0.875rem;
-  font-size: 0.8125rem;
-  color: #1d4ed8;
-  line-height: 1.5;
-}
-
-.tip-icon { flex-shrink: 0; margin-top: 0.05rem; }
-
-/* Modal Footer */
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.625rem;
-  padding: 1.125rem 1.5rem;
-  border-top: 1px solid #f1f5f9;
-  flex-shrink: 0;
-}
-
-/* ─── Toast ────────────────────────────────────────── */
-.toast-stack {
-  position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  z-index: 99999;
-  pointer-events: none;
-}
-
-.toast {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.125rem;
-  border-radius: 0.625rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-  max-width: 22rem;
-  pointer-events: auto;
-}
-
-.toast--success { background: #0f172a; color: #dcfce7; }
-.toast--error   { background: #7f1d1d; color: #fee2e2; }
-
-.toast-icon { flex-shrink: 0; }
-.toast-msg  { line-height: 1.4; }
-
-/* ─── Animations ───────────────────────────────────── */
-.spin-anim {
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* Modal transitions */
-.modal-enter-active, .modal-leave-active {
-  transition: opacity 0.2s ease;
-}
-.modal-enter-active .modal-panel, .modal-leave-active .modal-panel {
-  transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.2s ease;
-}
-.modal-enter-from, .modal-leave-to { opacity: 0; }
-.modal-enter-from .modal-panel, .modal-leave-to .modal-panel {
-  transform: translateY(1.5rem) scale(0.97);
-  opacity: 0;
-}
-
 /* Toast transitions */
 .toast-enter-active  { transition: all 0.3s cubic-bezier(0.32, 0.72, 0, 1); }
 .toast-leave-active  { transition: all 0.25s ease; }
@@ -2599,249 +882,6 @@ onMounted(async () => {
 }
 .btn-action-timeline:hover { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
 .btn-action-timeline:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
-
-/* ═══════════════════════════════════════════════════════════════
-   DRAWER — TIMELINE DE RASTREAMENTO (PAINEL E)
-   Light Mode Industrial, slide da direita
-═══════════════════════════════════════════════════════════════ */
-.tl-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(4px);
-  z-index: 9998;
-  display: flex;
-  justify-content: flex-end;
-}
-.tl-drawer {
-  width: 100%;
-  max-width: 26rem;
-  height: 100%;
-  background: #ffffff;
-  border-left: 1px solid #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
-}
-.tl-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.125rem 1.25rem;
-  border-bottom: 1px solid #f1f5f9;
-  flex-shrink: 0;
-  background: #ffffff;
-}
-.tl-header-left { display: flex; align-items: center; gap: 0.75rem; }
-.tl-icon-wrap {
-  width: 2.25rem;
-  height: 2.25rem;
-  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
-  border-radius: 0.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.25);
-}
-.tl-title { font-size: 0.9375rem; font-weight: 800; color: #0f172a; margin: 0; letter-spacing: -0.02em; }
-.tl-subtitle { font-size: 0.75rem; color: #64748b; margin: 0.15rem 0 0; }
-.tl-code {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.7rem;
-  font-weight: 700;
-  background: #f1f5f9;
-  padding: 0.1rem 0.375rem;
-  border-radius: 0.2rem;
-  color: #1d4ed8;
-}
-.tl-close {
-  width: 2rem; height: 2rem;
-  background: transparent;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.375rem;
-  color: #94a3b8;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
-}
-.tl-close:hover { background: #f1f5f9; color: #0f172a; }
-.tl-close:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
-
-.tl-body { flex: 1; overflow-y: auto; padding: 1.25rem; background: #f8fafc; }
-
-/* Loading skeleton */
-.tl-loading { display: flex; flex-direction: column; gap: 1.25rem; }
-.tl-skel-row { display: flex; gap: 1rem; align-items: flex-start; }
-.tl-skel-dot {
-  width: 0.875rem; height: 0.875rem;
-  border-radius: 50%;
-  background: #e2e8f0;
-  flex-shrink: 0;
-  margin-top: 0.25rem;
-  animation: shimmer 1.4s infinite;
-}
-.tl-skel-content { flex: 1; display: flex; flex-direction: column; gap: 0.375rem; }
-.tl-skel {
-  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-  border-radius: 0.25rem;
-  height: 0.875rem;
-}
-.tl-skel--title { width: 60%; height: 1rem; }
-.tl-skel--sub   { width: 85%; height: 0.75rem; }
-
-/* Empty */
-.tl-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 3rem 1.5rem; gap: 0.5rem; }
-.tl-empty-icon  { color: #cbd5e1; margin-bottom: 0.25rem; }
-.tl-empty-title { font-size: 0.9375rem; font-weight: 700; color: #334155; }
-.tl-empty-sub   { font-size: 0.8125rem; color: #94a3b8; line-height: 1.5; max-width: 18rem; }
-
-/* Timeline list */
-.tl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.tl-item { display: flex; gap: 0.875rem; position: relative; align-items: flex-start; }
-
-/* Conector e dot */
-.tl-connector {
-  position: absolute;
-  left: 0.375rem;
-  top: 1.125rem;
-  width: 2px;
-  bottom: 0;
-  background: #e2e8f0;
-  transform: translateX(-50%);
-  z-index: 0;
-}
-.tl-connector--hidden { background: transparent; }
-
-.tl-dot {
-  width: 0.875rem;
-  height: 0.875rem;
-  border-radius: 50%;
-  border: 2.5px solid #fff;
-  box-shadow: 0 0 0 1.5px currentColor;
-  flex-shrink: 0;
-  margin-top: 0.3125rem;
-  z-index: 1;
-  position: relative;
-}
-.rdot--green  { background: #16a34a; color: #16a34a; }
-.rdot--amber  { background: #d97706; color: #d97706; }
-.rdot--red    { background: #dc2626; color: #dc2626; }
-.rdot--orange { background: #ea580c; color: #ea580c; }
-.rdot--slate  { background: #64748b; color: #64748b; }
-
-/* Card */
-.tl-card {
-  flex: 1;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.625rem;
-  padding: 0.875rem 1rem;
-  margin-bottom: 1.125rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.tl-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.tl-setor-wrap { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
-.tl-setor-icon { color: #64748b; flex-shrink: 0; }
-.tl-setor-nome { font-size: 0.875rem; font-weight: 800; color: #0f172a; }
-.tl-tipo-setor {
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: #64748b;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  padding: 0.05rem 0.375rem;
-  border-radius: 9999px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.tl-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; flex-shrink: 0; }
-.rstat--green  { background: #dcfce7; color: #15803d; }
-.rstat--amber  { background: #fef3c7; color: #92400e; }
-.rstat--red    { background: #fee2e2; color: #b91c1c; }
-.rstat--orange { background: #ffedd5; color: #c2410c; }
-.rstat--slate  { background: #f1f5f9; color: #475569; }
-
-.tl-lote-tag { display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; font-weight: 600; color: #64748b; }
-
-.tl-dates {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  background: #f8fafc;
-  border: 1px solid #f1f5f9;
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.625rem;
-}
-.tl-date-row { display: flex; align-items: center; gap: 0.375rem; }
-.tl-date-icon  { color: #94a3b8; flex-shrink: 0; }
-.tl-date-label { font-size: 0.75rem; font-weight: 600; color: #64748b; min-width: 4rem; }
-.tl-date-val   { font-size: 0.8125rem; color: #0f172a; font-weight: 500; }
-
-.tl-permanencia { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; }
-.tl-perm-icon  { color: #64748b; flex-shrink: 0; }
-.tl-perm-label { font-weight: 600; color: #64748b; }
-.tl-perm-val   { font-weight: 800; color: #1d4ed8; }
-
-.tl-maquina-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: 0.75rem;
-  color: #4338ca;
-  background: #eef2ff;
-  border: 1px solid #c7d2fe;
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.375rem;
-}
-.tl-maquina-icon { color: #6366f1; flex-shrink: 0; }
-.tl-maquina-label { font-weight: 600; color: #3730a3; }
-.tl-maquina-val { font-family: 'IBM Plex Mono', monospace; font-weight: 700; color: #312e81; }
-
-.tl-operadores { display: flex; flex-direction: column; gap: 0.375rem; border-top: 1px solid #f1f5f9; padding-top: 0.5rem; background: #f8fafc; border-radius: 0.375rem; padding: 0.5rem 0.625rem; }
-.tl-op-header { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; color: #334155; }
-.tl-op-icon { color: #64748b; flex-shrink: 0; }
-.tl-op-title { font-weight: 700; color: #1e293b; }
-.tl-op-list { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: #475569; flex-wrap: wrap; }
-.tl-op-tag { font-weight: 700; color: #334155; }
-.tl-op-sep { color: #cbd5e1; }
-.tl-op { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; }
-.tl-op-nome { color: #334155; font-weight: 500; }
-
-.tl-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.875rem 1.25rem;
-  border-top: 1px solid #f1f5f9;
-  flex-shrink: 0;
-  background: #ffffff;
-}
-.tl-footer-info { display: flex; align-items: center; gap: 0.375rem; font-size: 0.75rem; color: #94a3b8; font-weight: 500; }
-
-/* Drawer slide-in */
-.drawer-enter-active { transition: opacity 0.2s ease; }
-.drawer-leave-active { transition: opacity 0.25s ease; }
-.drawer-enter-active .tl-drawer { transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1); }
-.drawer-leave-active .tl-drawer { transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1); }
-.drawer-enter-from            { opacity: 0; }
-.drawer-enter-from .tl-drawer { transform: translateX(100%); }
-.drawer-leave-to              { opacity: 0; }
-.drawer-leave-to .tl-drawer   { transform: translateX(100%); }
 
 /* ─── Botão de Impressão e Layouts Extras ─────────────────── */
 .actions-flex {

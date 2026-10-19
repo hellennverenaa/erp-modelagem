@@ -254,5 +254,33 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - **Pull Request**: [#16 — feat: seeding operacional, otimizações de banco, desacoplamento em services, vitest e observabilidade (TASK-034 a TASK-039)](https://github.com/hellennverenaa/erp-modelagem/pull/16)
 - **Branch Origem**: `feature/seeding-dados-genericos`
 - **Branch Destino**: `main`
-- **Estado**: Aberto aguardando revisão e merge.
 - **Escopo Integrado**: TASK-034 (População de dados genéricos/operacionais), TASK-035 (Índices e performance de banco), TASK-036 (Puppeteer Singleton e Vitest), TASK-037 (Desacoplamento de lotes/tickets), TASK-038 (Desacoplamento de admin/RBAC e marcas) e TASK-039 (Observabilidade e logs estruturados Pino).
+
+---
+
+### TASK-040 — Modularização e Fatiamento da God View GestaoOrdensView.vue
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 3.1 do relatório de melhorias: desmantelamento da "God View" monolítica (`GestaoOrdensView.vue`), que possuía 2.892 linhas de código, fatiando modais e drawers pesados em componentes Vue 3 desacoplados e tipados.
+
+**Escopo implementado:**
+- Criação do diretório de componentes `frontend/src/components/ordens/` e interfaces TypeScript em `types.ts`.
+- Extração de `OrderCreateModal.vue`:
+  - Formulário completo de criação de ordem de teste com regras de validação (modelo, planta, prioridade PCP e previsão de corte).
+  - Isolamento de erros específicos (ex.: duplicidade na regra 1:1 `MODELO_TESTE_DUPLICADO`).
+- Extração de `OrderPrintModal.vue`:
+  - Modal de seleção e impressão de tickets por setor e por fluxo (Lote Principal, Caixa Teste e Corte) e impressão agrupada em gabarito A4.
+  - Carregamento assíncrono dos tickets por ordem via `/lotes/:id/tickets-setor`.
+- Extração de `OrderHistoryModal.vue`:
+  - Modal de escolha rápida (Timeline vs Rastreamento Detalhado) e drawer lateral retrátil de Timeline de Rastreamento com histórico, tempos de permanência em minutos/horas, status dots e crachás de operadores.
+- Extração de `OrderMaintenanceModal.vue`:
+  - Abas de SLA por setor (com conversão bidirecional minutos/horas/dias), remanejamento de máquinas técnicas para corte automático e histórico auditado com diff de alterações.
+- Refatoração de `frontend/src/views/GestaoOrdensView.vue`:
+  - Redução massiva de **2.892 linhas** para **932 linhas** (-68% de tamanho de arquivo).
+  - Eliminação de centenas de linhas de CSS de modal e drawer duplicados do escopo da view.
+  - Orquestração limpa e reativa baseada em eventos (`v-model`, `@saved`, `@created`, `@error`, `@success`).
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.25s).
+- `npm test` no backend com 39/39 testes unitários aprovados em 775ms.
+- `npm run build` no backend compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
