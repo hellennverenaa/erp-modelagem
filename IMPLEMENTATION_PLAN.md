@@ -166,3 +166,30 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - `npm run build` no frontend compilado com Vue 3/TypeScript 100% livre de erros.
 - `git diff --check` sem pendências.
 
+### TASK-037 — Desacoplamento de Fat Controllers (TicketService e LoteService)
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2.2 do relatório de melhorias: extração das regras transacionais de ordens e resolução de tickets de dentro de `lotes.controller.ts` para Services de aplicação especializados.
+
+**Escopo implementado:**
+- Criação de `backend/src/services/ticket.service.ts`:
+  - `obterTicketsOrdem`: Validação de autorização multi-planta, reconciliação idempotente de tickets a partir da rota congelada (`garantirTicketsSetorDaOrdem`) e serialização ordenada do DTO de resposta.
+  - `obterTicketPorCodigo`: Resolução e validação de código de barras físico/bipado, consistência de Caixa Teste e retorno de metadados da ordem.
+  - Classe de erro especializada `TicketServiceError` com status HTTP e códigos de erro tipados.
+- Criação de `backend/src/services/lote.service.ts`:
+  - `criarOrdemPcp`: Orquestração transacional de lock de concorrência (`lockModelConfiguration`), validação de unicidade 1:1 Modelo-Ordem, verificação de planta, gravação de data de corte e persistência da ordem em estado inicial.
+  - `salvarConfiguracaoPecasModelagem`: Validação de estado `AGUARDANDO_MODELAGEM`, lock e persistência atômica das peças técnicas vinculadas e decisão de Caixa Teste via `saveModelPieces`.
+  - `finalizarConfiguracaoModelagem`: Validação estrita de integridade de rota congelada (`validatePersistedModelRoute`), congelamento do snapshot com versionamento e SLAs por setor, transição de estado para `AGUARDANDO_MATERIAL`, liberação de produção e emissão idempotente de tickets.
+  - Classe de erro especializada `LoteServiceError`.
+- Refatoração de `backend/src/controllers/lotes.controller.ts`:
+  - Delegação de `criarOrdemPcp`, `salvarConfiguracaoPecasModelagem`, `finalizarConfiguracaoModelagem`, `getTicketsSetor` e `getTicketSetorPorCodigo` para os novos services.
+  - Remoção de queries manuais e blocos de transação aninhados do controller.
+  - Limpeza de imports não utilizados (`randomUUID`, `Modelo`, `Planta`, `TicketSetor`, `ModelPieceInput`, `saveModelPieces`).
+- Criação de suíte de testes unitários para `TicketService` em `backend/src/services/__tests__/ticket.service.spec.ts` (8 testes):
+  - Rejeição de UUIDs malformados, validação de restrição de planta, 404 para ordens ausentes, reconciliação ordenada de tickets, validação de códigos vazios, 404 para tickets inexistentes, 409 para Caixa Teste inativa e retorno estruturado de DTO.
+
+**Validação técnica executada:**
+- `npm test` executado com 20/20 testes unitários aprovados em 419ms.
+- `npm run build` no backend concluído com 0 erros de TypeScript.
+- `npm run build` no frontend concluído com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+
