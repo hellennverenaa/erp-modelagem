@@ -90,3 +90,27 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 **Escopo:** classificar erros de autenticação pelos códigos reais do backend; renovar em `AUTH_TOKEN_EXPIRED`; limpar a sessão apenas em rejeição explícita ou invalidez conhecida; manter o perfil em cache e não redirecionar durante falhas transitórias; limitar a validação de `/auth/me` para evitar uma chamada a cada navegação. Quando não houver perfil em cache durante uma indisponibilidade, apresentar uma tela temporária com opção de tentar novamente.
 
 **Validação executada:** `npm run build` no frontend e `git diff --check` passaram. **Validação funcional pendente:** conferir renovação após expiração, falha de rede/`5xx` com navegação e perfil em cache, indisponibilidade sem perfil em cache, rejeição definitiva do refresh token e reconexão da TV. Não presumir o gatilho específico do logout observado sem os códigos de resposta da sessão real.
+
+### TASK-034 — Seeding de dados genéricos operacionais para o ERP de Modelagem
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Correção do seeder para respeitar a constraint `CHK_modelos_codigo_produto_numerico` e expansão de dados genéricos completos para permitir teste e operação de todas as telas (Gestão de Modelos, Catálogo de Peças, Gestão de Ordens, Construtor de Rota, Bipagem Operacional, TV Rastreamento, Torre de Controle e Inspeção de Qualidade).
+
+**Escopo implementado:**
+- Resolução do erro na inserção de modelos garantindo códigos estritamente numéricos (`3080910`, `3080920`, `3060908`, `3060918`, `3060400`, `3060410`, `3060420`, `3060430`).
+- Otimização do seeder do catálogo de peças evitando loops redundantes quando o catálogo técnico já estiver populado (969 registros de `Dados.csv`).
+- Provisionamento idempotente de 21 setores operacionais por planta (Planta Padrão e Planta Principal) alinhados às categorias `setor_tipo` e `subsetor_corte`.
+- Cadastro de estações de trabalho e máquinas físicas para os setores de corte, serigrafia, apoio, costura, montagem e laboratório.
+- Cadastro de colaboradores e crachás para teste de leitura de crachá/RFID agnóstica de hardware.
+- Cadastro de modelos e associação com peças técnicas do catálogo (`CatalogoPeca`) respeitando as exigências de corte da regra de negócio (`validateRouteIntegrity`).
+- Construção de rotas operacionais completas, sequenciais, com versionamento e SLAs definidos.
+- Geração de 6 ordens de teste em múltiplos estados operacionais (`MONTAGEM`, `LIBERADO_PRODUCAO`, `EM_CORTE`, `EM_RETRABALHO`, `INSPECAO_QUALIDADE`, `AGUARDANDO_MATERIAL`), além de modelos livres para criação via Wizard/PCP.
+- Geração idempotente de tickets persistentes por setor para os fluxos Lote Principal e Caixa Teste.
+- Registro de 104 eventos de rastreamento com horários, tempos de permanência, operadores e estações de trabalho para cálculo de Lead Time e WIP.
+- Registro de ocorrências ativas e em análise de chão de fábrica (gargalo de máquina e falta de material).
+- Registro de inspeções de qualidade formais e de saída de setor, com divergência dimensional e ordem de retrabalho cirúrgico.
+
+**Validação técnica executada:**
+- `npm run seed` executado duas vezes com sucesso, confirmando idempotência (0 duplicatas, 0 falhas).
+- Verificação das 18 tabelas operacionais no PostgreSQL confirmando dados consistentes.
+- `npm run build` no backend concluído sem erros de TypeScript.
+- `npm run build` no frontend concluído sem erros de TypeScript/Vue.
+- `git diff --check` aprovado sem pendências.

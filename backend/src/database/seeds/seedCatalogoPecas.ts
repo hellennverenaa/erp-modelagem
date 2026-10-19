@@ -7,6 +7,12 @@ export async function seedCatalogoPecas(dataSource: DataSource): Promise<number>
   console.log('[DEBUG] Iniciando Seeder do Catálogo de Peças via Raw Parsing (Dados.csv)...');
   const repo = dataSource.getRepository(CatalogoPeca);
 
+  const countExistente = await repo.count();
+  if (countExistente >= 500) {
+    console.log(`[OK] Catálogo de peças já populado no banco (${countExistente} registros). Pulando importação redundante.`);
+    return countExistente;
+  }
+
   const defaultPath = path.join(process.cwd(), 'docs', 'Dados.csv');
   const parentPath = path.join(process.cwd(), '..', 'docs', 'Dados.csv');
   const csvPath = fs.existsSync(parentPath) ? parentPath : defaultPath;
