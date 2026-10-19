@@ -77,7 +77,10 @@ router.post('/modelo/:modeloId', exigirAlgumaPermissao([
 router.get('/', exigirAlgumaPermissao(['TELA_CATALOGO_PECAS', 'TELA_NOVA_ORDEM_TESTE']), async (req: Request, res: Response) => {
   try {
     const { CatalogoPeca } = await import('../entities/CatalogoPeca');
-    const q = req.query.q as string;
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : undefined;
+    const page = req.query.page ? Math.max(1, Number(req.query.page) || 1) : undefined;
+    const limit = req.query.limit ? Math.max(1, Math.min(200, Number(req.query.limit) || 50)) : undefined;
+
     const repo = AppDataSource.getRepository(CatalogoPeca);
     let query = repo.createQueryBuilder('p').where('p.ativo = true');
     
@@ -87,7 +90,35 @@ router.get('/', exigirAlgumaPermissao(['TELA_CATALOGO_PECAS', 'TELA_NOVA_ORDEM_T
       });
     }
 
-    const pecas = await query.orderBy('p.numero', 'ASC').addOrderBy('p.nome', 'ASC').getMany();
+    query = query.orderBy('p.numero', 'ASC').addOrderBy('p.nome', 'ASC');
+
+    let pecas: InstanceType<typeof CatalogoPeca>[];
+    let total = 0;
+
+    if (page !== undefined || limit !== undefined) {
+      const take = limit || 50;
+      const skip = ((page || 1) - 1) * take;
+      const [items, count] = await query.skip(skip).take(take).getManyAndCount();
+      pecas = items;
+      total = count;
+    } else {
+      pecas = await query.getMany();
+      total = pecas.length;
+    }
+
+    res.setHeader('X-Total-Count', total);
+
+    if (page !== undefined || limit !== undefined) {
+      const take = limit || 50;
+      return res.json({
+        data: pecas,
+        total,
+        page: page || 1,
+        limit: take,
+        totalPages: Math.ceil(total / take)
+      });
+    }
+
     return res.json(pecas);
   } catch (error) {
     console.error('[PecasRouter] Erro ao buscar catálogo de peças:', error);

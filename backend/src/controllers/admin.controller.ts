@@ -9,27 +9,15 @@ import { Modelo } from '../entities/Modelo';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { Planta } from '../entities/Planta';
 import { Marca } from '../entities/Marca';
-import { EntityManager, In, IsNull } from 'typeorm';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { ehUsuarioAdminAutomacao, PERFIL_ADMIN_AUTOMACAO } from '../config/rbac.constants';
 import { carregarCatalogoRbac } from '../services/rbac-catalog.service';
-import { perfilPossuiPermissao } from '../services/rbac.service';
 import { AuditLog } from '../entities/AuditLog';
 import { modeloIdentificacaoSchema } from '../schemas/modelo.schema';
 import { ModelPiecesError, ModelPieceInput, saveModelPieces } from '../services/model-pieces.service';
 import { lockModelConfiguration } from '../services/route-integrity.service';
-
-async function auditarRbac(manager: EntityManager, req: Request, acao: string, entidadeTipo: string, entidadeId: string, anteriores: Record<string, unknown> | null, novos: Record<string, unknown> | null) {
-  await manager.getRepository(AuditLog).save(manager.getRepository(AuditLog).create({
-    usuarioId: req.user?.userId || null,
-    acao,
-    entidadeTipo,
-    entidadeId,
-    dadosAnteriores: anteriores,
-    dadosNovos: novos,
-    ipAddress: req.ip || null,
-  }));
-}
+import { AdminRbacService, AdminRbacError } from '../services/admin-rbac.service';
+import { MarcaService, MarcaServiceError } from '../services/marca.service';
 
 function isAutomationActor(req: Request): boolean {
   const user = req.user;
@@ -83,14 +71,6 @@ const updateMarcaSchema = z.object({
 }).refine((data) => data.nome !== undefined || data.ativo !== undefined, {
   message: 'Informe o nome ou o status da marca para atualizar.',
 });
-
-function normalizarNomeMarca(nome: string): string {
-  return nome.trim().replace(/\s+/g, ' ');
-}
-
-function nomesDeMarcaIguais(a: string, b: string): boolean {
-  return normalizarNomeMarca(a).toLocaleLowerCase('pt-BR') === normalizarNomeMarca(b).toLocaleLowerCase('pt-BR');
-}
 
 export class AdminController {
   /** Cria somente a identificação do modelo para o PCP continuar com a ordem. */
@@ -166,13 +146,8 @@ export class AdminController {
    */
   public async getPerfis(req: Request, res: Response): Promise<Response> {
     try {
-      const perfilRepo = AppDataSource.getRepository(Perfil);
-      const perfis = await perfilRepo.find({
-        order: { nome: 'ASC' }
-      });
-      return res.json(isAutomationActor(req)
-        ? perfis
-        : perfis.filter((perfil) => perfil.nome !== PERFIL_ADMIN_AUTOMACAO));
+      const perfis = await AdminRbacService.listarPerfis(isAutomationActor(req));
+      return res.json(perfis);
     } catch (error) {
       console.error('[AdminController] Erro ao listar perfis:', error);
       return res.status(500).json({ error: 'Erro ao listar perfis' });
@@ -191,35 +166,15 @@ export class AdminController {
     }
 
     try {
-      const perfilRepo = AppDataSource.getRepository(Perfil);
-      const nome = parsed.data.nome.replace(/\s+/g, ' ').toLocaleUpperCase('pt-BR');
-      if (['ADMIN', 'ADMIN_AUTOMACAO'].includes(nome)) {
-        return res.status(409).json({
-          error: 'Esse nome é reservado a um perfil de sistema.',
-          code: 'PERFIL_SYSTEM_NAME_RESERVED',
-        });
-      }
-      const existente = await perfilRepo.findOne({ where: { nome } });
-      if (existente) {
-        return res.status(409).json({
-          error: 'Já existe um perfil com esse nome.',
-          code: 'PERFIL_DUPLICATE_NAME',
-        });
-      }
-
-      const perfil = perfilRepo.create({
-        nome,
-        descricao: parsed.data.descricao?.trim() || null,
-        permissoes: {},
-        ativo: true,
-      });
-      const salvo = await AppDataSource.transaction(async (manager) => {
-        const criado = await manager.getRepository(Perfil).save(perfil);
-        await auditarRbac(manager, req, 'RBAC_PERFIL_CRIADO', 'perfis', criado.id, null, { nome: criado.nome, descricao: criado.descricao, ativo: criado.ativo });
-        return criado;
-      });
+      const salvo = await AdminRbacService.criarPerfil(
+        parsed.data,
+        { usuarioId: req.user?.userId, ipAddress: req.ip || null, isAutomationActor: isAutomationActor(req) }
+      );
       return res.status(201).json(salvo);
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof AdminRbacError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController] Erro ao criar perfil:', error);
       return res.status(500).json({ error: 'Erro ao criar perfil.' });
     }
@@ -242,80 +197,16 @@ export class AdminController {
     }
 
     try {
-      const perfilRepo = AppDataSource.getRepository(Perfil);
-      const perfil = await perfilRepo.findOne({ where: { id: id.data } });
-      if (!perfil) {
-        return res.status(404).json({ error: 'Perfil não encontrado.', code: 'PERFIL_NOT_FOUND' });
-      }
-
-      if (!isAutomationActor(req) && perfil.nome === PERFIL_ADMIN_AUTOMACAO) {
-        return res.status(403).json({
-          error: 'O perfil ADMIN_AUTOMACAO só pode ser administrado pela equipe de automação.',
-          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
-        });
-      }
-
-      if (!isAutomationActor(req) && parsed.data.ativo === false && await perfilPossuiPermissao(perfil.id, 'TELA_GESTAO_RBAC')) {
-        return res.status(403).json({
-          error: 'Somente a equipe de automação pode revogar acesso à Matriz de Acessos.',
-          code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
-        });
-      }
-
-      if (['ADMIN', 'VISUALIZADOR', PERFIL_ADMIN_AUTOMACAO].includes(perfil.nome) && (
-        (parsed.data.nome !== undefined && parsed.data.nome.trim().toLocaleUpperCase('pt-BR') !== perfil.nome) ||
-        parsed.data.ativo === false
-      )) {
-        return res.status(409).json({
-          error: `O perfil ${perfil.nome} é protegido e não pode ser renomeado ou desativado.`,
-          code: 'PERFIL_SYSTEM_PROTECTED',
-        });
-      }
-
-      const anteriores = { nome: perfil.nome, descricao: perfil.descricao, ativo: perfil.ativo };
-      if (parsed.data.nome !== undefined) {
-        const nome = parsed.data.nome.replace(/\s+/g, ' ').toLocaleUpperCase('pt-BR');
-        if (['ADMIN', 'ADMIN_AUTOMACAO', 'VISUALIZADOR'].includes(nome) && nome !== perfil.nome) {
-          return res.status(409).json({
-            error: 'Esse nome é reservado a um perfil de sistema.',
-            code: 'PERFIL_SYSTEM_NAME_RESERVED',
-          });
-        }
-        const duplicado = await perfilRepo.findOne({ where: { nome } });
-        if (duplicado && duplicado.id !== perfil.id) {
-          return res.status(409).json({ error: 'Já existe um perfil com esse nome.', code: 'PERFIL_DUPLICATE_NAME' });
-        }
-        perfil.nome = nome;
-      }
-
-      if (parsed.data.descricao !== undefined) {
-        perfil.descricao = parsed.data.descricao?.trim() || null;
-      }
-
-      if (parsed.data.ativo === false) {
-        const usuariosAssociados = await AppDataSource.getRepository(Usuario).count({ where: { perfilId: perfil.id } });
-        if (usuariosAssociados > 0) {
-          return res.status(409).json({
-            error: 'Reatribua os usuários deste perfil antes de desativá-lo.',
-            code: 'PERFIL_HAS_USERS',
-          });
-        }
-      }
-
-      if (parsed.data.ativo !== undefined) {
-        perfil.ativo = parsed.data.ativo;
-      }
-
-      const salvo = await AppDataSource.transaction(async (manager) => {
-        const atualizado = await manager.getRepository(Perfil).save(perfil);
-        const novos = { nome: atualizado.nome, descricao: atualizado.descricao, ativo: atualizado.ativo };
-        if (JSON.stringify(anteriores) !== JSON.stringify(novos)) {
-          await auditarRbac(manager, req, 'RBAC_PERFIL_ATUALIZADO', 'perfis', atualizado.id, anteriores, novos);
-        }
-        return atualizado;
-      });
+      const salvo = await AdminRbacService.atualizarPerfil(
+        id.data,
+        parsed.data,
+        { usuarioId: req.user?.userId, ipAddress: req.ip || null, isAutomationActor: isAutomationActor(req) }
+      );
       return res.json(salvo);
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof AdminRbacError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController] Erro ao atualizar perfil:', error);
       return res.status(500).json({ error: 'Erro ao atualizar perfil.' });
     }
@@ -539,11 +430,7 @@ export class AdminController {
    */
   public async getMarcas(_req: Request, res: Response): Promise<Response> {
     try {
-      const marcaRepo = AppDataSource.getRepository(Marca);
-      const marcas = await marcaRepo.find({
-        where: { ativo: true },
-        order: { nome: 'ASC' },
-      });
+      const marcas = await MarcaService.listarMarcas(true);
       return res.json(marcas);
     } catch (error) {
       console.error('[AdminController] Erro ao listar marcas:', error);
@@ -554,9 +441,7 @@ export class AdminController {
   /** Lista marcas ativas e inativas para a tela administrativa. */
   public async getTodasMarcas(_req: Request, res: Response): Promise<Response> {
     try {
-      const marcas = await AppDataSource.getRepository(Marca).find({
-        order: { nome: 'ASC' },
-      });
+      const marcas = await MarcaService.listarMarcas(false);
       return res.json(marcas);
     } catch (error) {
       console.error('[AdminController] Erro ao listar marcas para administração:', error);
@@ -576,19 +461,12 @@ export class AdminController {
     }
 
     try {
-      const nome = normalizarNomeMarca(parsed.data.nome);
-      const marcaRepo = AppDataSource.getRepository(Marca);
-      const existentes = await marcaRepo.find({ select: { id: true, nome: true } });
-      if (existentes.some((marca) => nomesDeMarcaIguais(marca.nome, nome))) {
-        return res.status(409).json({
-          error: 'Já existe uma marca com esse nome.',
-          code: 'MARCA_DUPLICATE_NAME',
-        });
-      }
-
-      const marca = await marcaRepo.save(marcaRepo.create({ nome, ativo: true }));
+      const marca = await MarcaService.criarMarca(parsed.data.nome);
       return res.status(201).json(marca);
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof MarcaServiceError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController] Erro ao criar marca:', error);
       return res.status(500).json({ error: 'Erro ao cadastrar marca.' });
     }
@@ -611,30 +489,12 @@ export class AdminController {
     }
 
     try {
-      const marcaRepo = AppDataSource.getRepository(Marca);
-      const marca = await marcaRepo.findOne({ where: { id: id.data } });
-      if (!marca) {
-        return res.status(404).json({ error: 'Marca não encontrada.', code: 'MARCA_NOT_FOUND' });
+      const marca = await MarcaService.atualizarMarca(id.data, parsed.data);
+      return res.json(marca);
+    } catch (error: any) {
+      if (error instanceof MarcaServiceError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
       }
-
-      if (parsed.data.nome !== undefined) {
-        const nome = normalizarNomeMarca(parsed.data.nome);
-        const existentes = await marcaRepo.find({ select: { id: true, nome: true } });
-        if (existentes.some((outra) => outra.id !== marca.id && nomesDeMarcaIguais(outra.nome, nome))) {
-          return res.status(409).json({
-            error: 'Já existe uma marca com esse nome.',
-            code: 'MARCA_DUPLICATE_NAME',
-          });
-        }
-        marca.nome = nome;
-      }
-
-      if (parsed.data.ativo !== undefined) {
-        marca.ativo = parsed.data.ativo;
-      }
-
-      return res.json(await marcaRepo.save(marca));
-    } catch (error) {
       console.error('[AdminController] Erro ao atualizar marca:', error);
       return res.status(500).json({ error: 'Erro ao atualizar marca.' });
     }
@@ -821,116 +681,14 @@ export class AdminController {
     }
 
     try {
-      const savedItems = await AppDataSource.transaction(async (manager) => {
-        const items = [...normalizedItems.values()];
-        const byPermissionKey = new Map(items.map((item) => [
-          `${item.perfilId}|${item.setorId || ''}|${item.acao}`,
-          item,
-        ]));
-
-        for (const screen of catalogo.screens) {
-          if (!screen.editPermission) continue;
-          for (const item of items) {
-            if (item.setorId !== null) continue;
-            if (item.acao === screen.editPermission && item.permitido) {
-              const viewKey = `${item.perfilId}||${screen.viewPermission}`;
-              const explicitView = byPermissionKey.get(viewKey);
-              if (explicitView?.permitido === false) {
-                throw Object.assign(new Error('A permissão de edição exige acesso de visualização à mesma tela.'), {
-                  statusCode: 400,
-                  code: 'RBAC_EDIT_REQUIRES_VIEW',
-                });
-              }
-              if (!explicitView) {
-                const viewPermission = {
-                  perfilId: item.perfilId,
-                  setorId: null,
-                  acao: screen.viewPermission,
-                  permitido: true,
-                };
-                byPermissionKey.set(viewKey, viewPermission);
-              }
-            }
-
-            if (item.acao === screen.viewPermission && !item.permitido) {
-              const editKey = `${item.perfilId}||${screen.editPermission}`;
-              const explicitEdit = byPermissionKey.get(editKey);
-              if (explicitEdit?.permitido === true) {
-                throw Object.assign(new Error('Não é possível remover a visualização enquanto a edição estiver habilitada.'), {
-                  statusCode: 400,
-                  code: 'RBAC_VIEW_REQUIRED_FOR_EDIT',
-                });
-              }
-              byPermissionKey.set(editKey, {
-                perfilId: item.perfilId,
-                setorId: null,
-                acao: screen.editPermission,
-                permitido: false,
-              });
-            }
-          }
-        }
-
-        const itemsToSave = [...byPermissionKey.values()];
-        const profileIds = [...new Set(itemsToSave.map(({ perfilId }) => perfilId))];
-        const profiles = await manager.getRepository(Perfil).findBy({ id: In(profileIds), ativo: true });
-        if (profiles.length !== profileIds.length) {
-          throw Object.assign(new Error('Um ou mais perfis não existem ou estão inativos.'), { statusCode: 404, code: 'PERFIL_NOT_FOUND' });
-        }
-        if (!automationActor && profiles.some((profile) => profile.nome === PERFIL_ADMIN_AUTOMACAO)) {
-          throw Object.assign(new Error('O perfil ADMIN_AUTOMACAO só pode ser administrado pela equipe de automação.'), {
-            statusCode: 403,
-            code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
-          });
-        }
-
-        const sectorIds = [...new Set(itemsToSave.map(({ setorId }) => setorId).filter((id): id is string => !!id))];
-        if (sectorIds.length > 0) {
-          const sectors = await manager.getRepository(Setor).findBy({ id: In(sectorIds), ativo: true });
-          if (sectors.length !== sectorIds.length) {
-            throw Object.assign(new Error('Um ou mais setores não existem ou estão inativos.'), { statusCode: 404, code: 'SETOR_NOT_FOUND' });
-          }
-        }
-
-        const permissionRepo = manager.getRepository(PerfilPermissao);
-        const saved: PerfilPermissao[] = [];
-        for (const item of itemsToSave) {
-          let permission = await permissionRepo.findOne({
-            where: {
-              perfilId: item.perfilId,
-              setorId: item.setorId === null ? IsNull() : item.setorId,
-              acao: item.acao,
-            },
-          });
-          const antes = permission ? { permitido: permission.permitido } : null;
-          if (permission) {
-            permission.permitido = item.permitido;
-          } else {
-            permission = permissionRepo.create(item);
-          }
-          if (antes?.permitido !== item.permitido) {
-            const salvo = await permissionRepo.save(permission);
-            await auditarRbac(manager, req, 'RBAC_PERMISSAO_ALTERADA', 'perfil_permissoes', salvo.id, antes, {
-              perfilId: salvo.perfilId, setorId: salvo.setorId, acao: salvo.acao, permitido: salvo.permitido,
-            });
-            saved.push(salvo);
-          } else {
-            saved.push(permission);
-          }
-        }
-        return saved;
-      });
-
+      const savedItems = await AdminRbacService.atualizarPermissoes(
+        [...normalizedItems.values()],
+        { usuarioId: req.user?.userId, ipAddress: req.ip || null, isAutomationActor: automationActor }
+      );
       return res.json(savedItems);
     } catch (error: any) {
-      if (error?.statusCode === 404) {
-        return res.status(404).json({ error: error.message, code: error.code });
-      }
-      if (error?.statusCode === 400) {
-        return res.status(400).json({ error: error.message, code: error.code });
-      }
-      if (error?.statusCode === 403) {
-        return res.status(403).json({ error: error.message, code: error.code });
+      if (error instanceof AdminRbacError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
       }
       console.error('[AdminController.updatePermissoes] Erro crítico ao atualizar permissões:', error);
       return res.status(500).json({ error: 'Erro ao atualizar permissões no banco de dados.' });
@@ -949,104 +707,45 @@ export class AdminController {
         return res.status(400).json({ error: 'perfilId é obrigatório.' });
       }
 
-      const userRepo = AppDataSource.getRepository(Usuario);
-      const perfilRepo = AppDataSource.getRepository(Perfil);
-
-      const user = await userRepo.findOne({
-        where: { id },
-        relations: { perfil: true, setor: true }
-      });
-
-      if (!user) {
-        return res.status(404).json({ error: 'Usuário não encontrado.' });
-      }
-
-      if (!isAutomationActor(req) && (
-        user.perfil?.nome === PERFIL_ADMIN_AUTOMACAO || ehUsuarioAdminAutomacao(user.usuario)
-      )) {
-        return res.status(403).json({
-          error: 'Contas e perfil ADMIN_AUTOMACAO só podem ser alterados pela equipe de automação.',
-          code: 'RBAC_AUTOMACAO_PROFILE_PROTECTED',
-        });
-      }
-
       const perfilIdValidado = z.string().uuid().safeParse(perfilId);
       if (!perfilIdValidado.success) {
         return res.status(400).json({ error: 'Identificador de perfil inválido.', code: 'PERFIL_ID_INVALID' });
       }
 
-      const novoPerfil = await perfilRepo.findOne({ where: { id: perfilIdValidado.data, ativo: true } });
-      if (!novoPerfil) {
-        return res.status(404).json({ error: 'Perfil não encontrado ou inativo.', code: 'PERFIL_NOT_FOUND' });
-      }
-
-      if (!isAutomationActor(req) && novoPerfil.id !== user.perfilId) {
-        const [origemTemAcessoRbac, destinoTemAcessoRbac] = await Promise.all([
-          perfilPossuiPermissao(user.perfilId, 'TELA_GESTAO_RBAC'),
-          perfilPossuiPermissao(novoPerfil.id, 'TELA_GESTAO_RBAC'),
-        ]);
-        if (origemTemAcessoRbac || destinoTemAcessoRbac) {
-          return res.status(403).json({
-            error: 'Somente a equipe de automação pode conceder ou revogar acesso à Matriz de Acessos.',
-            code: 'RBAC_MATRIX_ACCESS_AUTOMATION_ONLY',
-          });
-        }
-      }
-
-      const usuarioAdminAutomacao = ehUsuarioAdminAutomacao(user.usuario);
-      if (
-        (novoPerfil.nome === PERFIL_ADMIN_AUTOMACAO && !usuarioAdminAutomacao) ||
-        (usuarioAdminAutomacao && novoPerfil.nome !== PERFIL_ADMIN_AUTOMACAO)
-      ) {
-        return res.status(403).json({
-          error: 'O perfil ADMIN_AUTOMACAO só pode ser provisionado para as contas autorizadas.',
-          code: 'RBAC_AUTOMACAO_ASSIGNMENT_RESTRICTED',
-        });
-      }
-
-      const anteriores = { perfilId: user.perfilId, setorId: user.setorId };
-      user.perfil = novoPerfil;
-      user.perfilId = novoPerfil.id;
-
+      let setorIdFinal: string | null | undefined = undefined;
       if (setorId !== undefined) {
         if (setorId === null || setorId === '') {
-          user.setor = null;
-          user.setorId = null;
+          setorIdFinal = null;
         } else {
           const setorIdValidado = z.string().uuid().safeParse(setorId);
           if (!setorIdValidado.success) {
             return res.status(400).json({ error: 'Identificador de setor inválido.', code: 'SETOR_ID_INVALID' });
           }
-          const setorRepo = AppDataSource.getRepository(Setor);
-          const setor = await setorRepo.findOne({ where: { id: setorIdValidado.data, ativo: true } });
-          if (!setor) {
-            return res.status(404).json({ error: 'Setor não encontrado ou inativo.', code: 'SETOR_NOT_FOUND' });
-          }
-          user.setor = setor;
-          user.setorId = setor.id;
+          setorIdFinal = setorIdValidado.data;
         }
       }
-      
-      const salvo = await AppDataSource.transaction(async (manager) => {
-        const atualizado = await manager.getRepository(Usuario).save(user);
-        const novos = { perfilId: atualizado.perfilId, setorId: atualizado.setorId };
-        if (JSON.stringify(anteriores) !== JSON.stringify(novos)) {
-          await auditarRbac(manager, req, 'RBAC_USUARIO_ATUALIZADO', 'usuarios', atualizado.id, anteriores, novos);
-        }
-        return atualizado;
-      });
+
+      const atualizado = await AdminRbacService.atualizarPerfilUsuario(
+        id,
+        perfilIdValidado.data,
+        setorIdFinal,
+        { usuarioId: req.user?.userId, ipAddress: req.ip || null, isAutomationActor: isAutomationActor(req) }
+      );
 
       return res.json({
         message: 'Perfil do usuário atualizado com sucesso.',
         usuario: {
-          id: salvo.id,
-          nomeCompleto: salvo.nomeCompleto,
-          usuario: salvo.usuario,
-          perfilId: salvo.perfilId,
-          setorId: salvo.setorId,
+          id: atualizado.id,
+          nomeCompleto: atualizado.nomeCompleto,
+          usuario: atualizado.usuario,
+          perfilId: atualizado.perfilId,
+          setorId: atualizado.setorId,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof AdminRbacError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
       console.error('[AdminController] Erro ao atualizar perfil do usuário:', error);
       return res.status(500).json({ error: 'Erro ao atualizar perfil do usuário.' });
     }
@@ -1054,13 +753,6 @@ export class AdminController {
 
   /** Concede ou revoga a permissão individual de interromper o SLA. */
   public async updateUsuarioPermissaoPausaSla(req: Request, res: Response): Promise<Response> {
-    if (!isAutomationActor(req)) {
-      return res.status(403).json({
-        error: 'Somente ADMIN_AUTOMACAO pode definir quem pode interromper o SLA.',
-        code: 'RBAC_AUTOMACAO_REQUIRED',
-      });
-    }
-
     const id = z.string().uuid().safeParse(req.params.id);
     const payload = z.object({ permitido: z.boolean() }).safeParse(req.body);
     if (!id.success) {
@@ -1071,42 +763,16 @@ export class AdminController {
     }
 
     try {
-      const userRepo = AppDataSource.getRepository(Usuario);
-      const user = await userRepo.findOne({ where: { id: id.data }, relations: { perfil: true } });
-      if (!user) {
-        return res.status(404).json({ error: 'Usuário não encontrado.', code: 'USUARIO_NOT_FOUND' });
+      const resultado = await AdminRbacService.atualizarPermissaoPausaSla(
+        id.data,
+        payload.data.permitido,
+        { usuarioId: req.user?.userId, ipAddress: req.ip || null, isAutomationActor: isAutomationActor(req) }
+      );
+      return res.json(resultado);
+    } catch (error: any) {
+      if (error instanceof AdminRbacError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
       }
-      if (user.perfil?.nome === PERFIL_ADMIN_AUTOMACAO && ehUsuarioAdminAutomacao(user.usuario)) {
-        return res.status(409).json({
-          error: 'Contas ADMIN_AUTOMACAO mantêm acesso permanente à interrupção do SLA.',
-          code: 'RBAC_AUTOMACAO_PERMISSION_PROTECTED',
-        });
-      }
-
-      const anterior = user.podeInterromperSla;
-      const permitido = payload.data.permitido;
-      const salvo = await AppDataSource.transaction(async (manager) => {
-        user.podeInterromperSla = permitido;
-        const atualizado = await manager.getRepository(Usuario).save(user);
-        if (anterior !== permitido) {
-          await auditarRbac(
-            manager,
-            req,
-            'RBAC_USUARIO_PAUSA_SLA_ALTERADA',
-            'usuarios',
-            atualizado.id,
-            { podeInterromperSla: anterior },
-            { podeInterromperSla: permitido },
-          );
-        }
-        return atualizado;
-      });
-
-      return res.json({
-        id: salvo.id,
-        podeInterromperSla: salvo.podeInterromperSla,
-      });
-    } catch (error) {
       console.error('[AdminController] Erro ao atualizar permissão individual de pausa do SLA:', error);
       return res.status(500).json({ error: 'Erro ao atualizar permissão para interromper o SLA.' });
     }

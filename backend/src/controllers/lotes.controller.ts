@@ -1,24 +1,22 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { randomUUID } from 'crypto';
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { OrdemTeste, OrdemTesteStatus } from '../entities/OrdemTeste';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Peca } from '../entities/Peca';
-import { Modelo } from '../entities/Modelo';
-import { Planta } from '../entities/Planta';
 import { AuditLog } from '../entities/AuditLog';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Setor } from '../entities/Setor';
-import { TicketSetor } from '../entities/TicketSetor';
 import { perfilPossuiPermissao } from '../services/rbac.service';
 import { finalizarNovoTeste, NovoTesteServiceError } from '../services/novo-teste.service';
 import { getPersistedModelRoute, lockModelConfiguration, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 import { finalizarNovoTesteSchema } from '../schemas/novo-teste.schema';
-import { ModelPieceInput, ModelPiecesError, saveModelPieces } from '../services/model-pieces.service';
+import { ModelPiecesError } from '../services/model-pieces.service';
 import { getSetorCorteOpcaoEfetiva, mapearSubsetoresParaTiposDeSetor } from '../services/ordem-pecas.service';
 import { garantirTicketsSetorDaOrdem } from '../services/ticket-setor.service';
+import { LoteService, LoteServiceError } from '../services/lote.service';
+import { TicketService, TicketServiceError } from '../services/ticket.service';
 
 // ═══ Schemas de Validação Zod ═══
 const createLoteSchema = z.object({
@@ -86,54 +84,21 @@ export class LotesController {
       return res.status(400).json({ error: 'Dados inválidos para criar a ordem.', code: 'VALIDATION_ERROR', details: parsed.error.flatten().fieldErrors });
     }
 
-    const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
-    if (!acessoTodasPlantas && parsed.data.plantaId !== req.user.plantaId) {
-      return res.status(403).json({ error: 'Não é permitido criar uma ordem em outra planta.', code: 'PLANTA_FORBIDDEN' });
-    }
-
     try {
-      const ordem = await AppDataSource.transaction(async (manager) => {
-        await lockModelConfiguration(manager, parsed.data.modeloId);
-        const modeloRepo = manager.getRepository(Modelo);
-        const modelo = await modeloRepo.findOne({ where: { id: parsed.data.modeloId, ativo: true } });
-        if (!modelo) throw Object.assign(new Error('Modelo não encontrado ou inativo.'), { status: 404, code: 'MODELO_NOT_FOUND' });
-
-        const ordemExistente = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: modelo.id } });
-        if (ordemExistente) throw Object.assign(new Error('Este modelo já possui uma ordem de teste. A relação Modelo → Ordem de Teste é 1:1.'), { status: 409, code: 'MODELO_TESTE_DUPLICADO', ordemId: ordemExistente.id, codigoBarras: ordemExistente.codigoBarras });
-
-        const planta = await manager.getRepository(Planta).findOne({ where: { id: parsed.data.plantaId, ativo: true }, select: { id: true } });
-        if (!planta) throw Object.assign(new Error('Planta não encontrada ou inativa.'), { status: 404, code: 'PLANTA_NOT_FOUND' });
-        const previsaoCorte = parsed.data.dataCorte ? new Date(parsed.data.dataCorte) : modelo.dataCorte;
-        if (!previsaoCorte) throw Object.assign(new Error('Informe a previsão de corte antes de criar a ordem.'), { status: 400, code: 'DATA_CORTE_REQUIRED' });
-        if (parsed.data.dataCorte) {
-          modelo.dataCorte = previsaoCorte;
-          await modeloRepo.save(modelo);
-        }
-
-        const repo = manager.getRepository(OrdemTeste);
-        return repo.save(repo.create({
-          modeloId: modelo.id,
-          plantaId: parsed.data.plantaId,
-          criadoPorId: req.user!.userId,
-          codigoBarras: `OT-${randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`,
-          dataInicio: new Date(),
-          prioridadePcp: parsed.data.prioridadePcp,
-          observacoes: parsed.data.observacoes?.trim() || null,
-          status: OrdemTesteStatus.AGUARDANDO_MODELAGEM,
-          liberadoProducao: false,
-          possuiCaixaTeste: null,
-          rotaSnapshot: null,
-          rotaVersao: null,
-          slasPorSetor: null,
-        }));
-      });
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      const ordem = await LoteService.criarOrdemPcp(
+        parsed.data,
+        { userId: req.user.userId, perfilId: req.user.perfilId, plantaId: req.user.plantaId },
+        acessoTodasPlantas
+      );
       return res.status(201).json({ message: 'Ordem criada e enviada para a fila da Modelagem.', ordem, lote: ordem });
     } catch (error: any) {
-      if (error?.code === '23505') {
-        return res.status(409).json({ error: 'Já existe uma ordem de teste para este modelo.', code: 'MODELO_TESTE_DUPLICADO' });
-      }
-      if (error?.code && error?.status) {
-        return res.status(error.status).json({ error: error.message, code: error.code, ...(error.ordemId ? { ordemId: error.ordemId, codigoBarras: error.codigoBarras } : {}) });
+      if (error instanceof LoteServiceError) {
+        return res.status(error.statusCode).json({
+          error: error.message,
+          code: error.code,
+          ...error.extra
+        });
       }
       console.error('[LotesController] Erro ao criar ordem do PCP:', error);
       return res.status(500).json({ error: 'Erro ao criar a ordem do PCP.', code: 'PCP_ORDER_CREATE_FAILED' });
@@ -147,30 +112,19 @@ export class LotesController {
     if (!id.success || !parsed.success) {
       return res.status(400).json({ error: 'Informe peças, sub-setores e decisão de Caixa Teste válidos.', code: 'VALIDATION_ERROR', details: parsed.success ? undefined : parsed.error.flatten().fieldErrors });
     }
-    const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
-    if (!acessoTodasPlantas && !req.user?.plantaId) return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
 
     try {
-      const result = await AppDataSource.transaction(async (manager) => {
-        const repo = manager.getRepository(OrdemTeste);
-        const where = acessoTodasPlantas ? { id: id.data } : { id: id.data, plantaId: req.user!.plantaId };
-        const encontrada = await repo.findOne({ where, select: { id: true, modeloId: true } });
-        if (!encontrada) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
-        await lockModelConfiguration(manager, encontrada.modeloId);
-        const ordem = await repo.findOne({ where });
-        if (!ordem) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
-        if (ordem.status !== OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
-          throw Object.assign(new Error('A configuração da Modelagem só pode ser alterada enquanto a ordem estiver aguardando modelagem.'), { status: 409, code: 'MODELAGEM_ALREADY_COMPLETED' });
-        }
-        const pecas = await saveModelPieces(manager, ordem.modeloId, parsed.data.pecas as ModelPieceInput[]);
-        ordem.possuiCaixaTeste = parsed.data.possuiCaixaTeste;
-        await repo.save(ordem);
-        return { ordem, pecas };
-      });
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      const result = await LoteService.salvarConfiguracaoPecasModelagem(
+        id.data,
+        parsed.data,
+        req.user?.plantaId,
+        acessoTodasPlantas
+      );
       return res.json({ message: 'Peças e decisão de Caixa Teste salvas.', ordem: result.ordem, pecas: result.pecas, totalPecas: result.pecas.length });
     } catch (error: any) {
       if (error instanceof ModelPiecesError) return res.status(400).json({ error: error.message, code: error.code });
-      if (error?.status && error?.code) return res.status(error.status).json({ error: error.message, code: error.code });
+      if (error instanceof LoteServiceError) return res.status(error.statusCode).json({ error: error.message, code: error.code });
       console.error('[LotesController] Erro ao salvar configuração de peças da Modelagem:', error);
       return res.status(500).json({ error: 'Erro ao salvar as peças da Modelagem.', code: 'MODELAGEM_PIECES_SAVE_FAILED' });
     }
@@ -183,57 +137,19 @@ export class LotesController {
     if (!id.success || !parsed.success) {
       return res.status(400).json({ error: 'Dados inválidos para finalizar a configuração da Modelagem.', code: 'VALIDATION_ERROR' });
     }
-    const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
-    if (!acessoTodasPlantas && !req.user?.plantaId) return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
 
     try {
-      const ordem = await AppDataSource.transaction(async (manager) => {
-        const repo = manager.getRepository(OrdemTeste);
-        const where = acessoTodasPlantas ? { id: id.data } : { id: id.data, plantaId: req.user!.plantaId };
-        const encontrada = await repo.findOne({ where, select: { id: true, modeloId: true } });
-        if (!encontrada) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
-        await lockModelConfiguration(manager, encontrada.modeloId);
-        const atual = await repo.findOne({ where });
-        if (!atual) throw Object.assign(new Error('Ordem de teste não encontrada.'), { status: 404, code: 'LOTE_NOT_FOUND' });
-        if (atual.status !== OrdemTesteStatus.AGUARDANDO_MODELAGEM) {
-          throw Object.assign(new Error('A ordem não está aguardando configuração da Modelagem.'), { status: 409, code: 'MODELAGEM_ALREADY_COMPLETED' });
-        }
-        if (atual.possuiCaixaTeste === null) {
-          throw Object.assign(new Error('Defina se o modelo possui Caixa Teste antes de finalizar.'), { status: 400, code: 'CAIXA_TESTE_NOT_DEFINED' });
-        }
-
-        await validatePersistedModelRoute(manager, atual.modeloId, atual.plantaId);
-        const { versao, etapas } = await getPersistedModelRoute(manager, atual.modeloId, atual.plantaId);
-        const slasPorSetor = { ...(parsed.data.slasPorSetor || {}) };
-        for (const etapa of etapas) {
-          slasPorSetor[etapa.setorId] = etapa.slaAlvoMin;
-        }
-
-        atual.rotaVersao = versao;
-        atual.rotaSnapshot = {
-          versao,
-          plantaId: atual.plantaId,
-          etapas: etapas.map((etapa) => ({
-            setorId: etapa.setorId,
-            nome: etapa.setor?.nome || 'Setor',
-            ordem: etapa.ordem,
-            obrigatorio: etapa.obrigatorio,
-            tipoExecucao: etapa.tipoExecucao,
-            bipagemApenasSaida: etapa.bipagemApenasSaida,
-          })),
-          slasPorSetor,
-        };
-        atual.slasPorSetor = slasPorSetor;
-        atual.status = OrdemTesteStatus.AGUARDANDO_MATERIAL;
-        atual.liberadoProducao = true;
-        const ordemSalva = await repo.save(atual);
-        await garantirTicketsSetorDaOrdem(manager, ordemSalva);
-        return ordemSalva;
-      });
+      const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
+      const ordem = await LoteService.finalizarConfiguracaoModelagem(
+        id.data,
+        parsed.data,
+        req.user?.plantaId,
+        acessoTodasPlantas
+      );
       return res.json({ message: 'Modelagem concluída. A ordem foi liberada para produção.', ordem });
     } catch (error: any) {
       if (error instanceof RouteIntegrityError) return res.status(400).json({ error: error.message, code: error.code });
-      if (error?.status && error?.code) return res.status(error.status).json({ error: error.message, code: error.code });
+      if (error instanceof LoteServiceError) return res.status(error.statusCode).json({ error: error.message, code: error.code });
       console.error('[LotesController] Erro ao finalizar configuração da Modelagem:', error);
       return res.status(500).json({ error: 'Erro ao finalizar a configuração da Modelagem.', code: 'MODELAGEM_FINALIZE_FAILED' });
     }
@@ -250,17 +166,58 @@ export class LotesController {
         return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
       }
 
+      const page = req.query.page ? Math.max(1, Number(req.query.page) || 1) : undefined;
+      const limit = req.query.limit ? Math.max(1, Math.min(100, Number(req.query.limit) || 20)) : undefined;
+      const statusFiltro = req.query.status as OrdemTesteStatus | undefined;
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : undefined;
+
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
-      const lotes = await loteRepo.find({
-        where: acessoTodasPlantas ? undefined : { plantaId: req.user!.plantaId },
-        relations: {
-          modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
-          planta: true,
-          criadoPor: true,
-          rastreamentos: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
-        },
-        order: { createdAt: 'DESC' }
-      });
+      const queryBuilder = loteRepo.createQueryBuilder('ordem')
+        .leftJoinAndSelect('ordem.modelo', 'modelo')
+        .leftJoinAndSelect('modelo.pecas', 'pecas')
+        .leftJoinAndSelect('pecas.setorCorteOpcao', 'setorCorteOpcao')
+        .leftJoinAndSelect('modelo.marca', 'marca')
+        .leftJoinAndSelect('modelo.rotas', 'rotas')
+        .leftJoinAndSelect('rotas.setor', 'rotaSetor')
+        .leftJoinAndSelect('ordem.planta', 'planta')
+        .leftJoinAndSelect('ordem.criadoPor', 'criadoPor')
+        .leftJoinAndSelect('ordem.rastreamentos', 'rastreamentos')
+        .leftJoinAndSelect('rastreamentos.setor', 'rastrSetor')
+        .leftJoinAndSelect('rastreamentos.estacao', 'rastrEstacao')
+        .leftJoinAndSelect('rastreamentos.operadorEntrada', 'operadorEntrada')
+        .leftJoinAndSelect('rastreamentos.operadorSaida', 'operadorSaida');
+
+      if (!acessoTodasPlantas && req.user?.plantaId) {
+        queryBuilder.andWhere('ordem.plantaId = :plantaId', { plantaId: req.user.plantaId });
+      }
+
+      if (statusFiltro && Object.values(OrdemTesteStatus).includes(statusFiltro)) {
+        queryBuilder.andWhere('ordem.status = :status', { status: statusFiltro });
+      }
+
+      if (q) {
+        queryBuilder.andWhere(
+          '(LOWER(ordem.codigoBarras) LIKE LOWER(:q) OR LOWER(modelo.nome) LIKE LOWER(:q) OR LOWER(modelo.codigoProduto) LIKE LOWER(:q))',
+          { q: `%${q}%` }
+        );
+      }
+
+      queryBuilder.orderBy('ordem.createdAt', 'DESC');
+
+      let lotes: OrdemTeste[];
+      let total = 0;
+
+      if (page !== undefined || limit !== undefined) {
+        const take = limit || 20;
+        const skip = ((page || 1) - 1) * take;
+        const [items, count] = await queryBuilder.skip(skip).take(take).getManyAndCount();
+        lotes = items;
+        total = count;
+      } else {
+        lotes = await queryBuilder.getMany();
+        total = lotes.length;
+      }
+
       const lotesComSla = lotes.map(l => {
         if (l.modelo?.rotas) {
           const rotasDaPlanta = l.modelo.rotas.filter((rota) => rota.plantaId === l.plantaId);
@@ -269,6 +226,20 @@ export class LotesController {
         }
         return { ...l, slasPorSetor: l.slasPorSetor || null };
       });
+
+      res.setHeader('X-Total-Count', total);
+
+      if (page !== undefined || limit !== undefined) {
+        const take = limit || 20;
+        return res.json({
+          data: lotesComSla,
+          total,
+          page: page || 1,
+          limit: take,
+          totalPages: Math.ceil(total / take)
+        });
+      }
+
       return res.json(lotesComSla);
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordens de teste:', error);
@@ -351,50 +322,13 @@ export class LotesController {
   public getTicketsSetor = async (req: Request, res: Response): Promise<Response> => {
     try {
       const id = req.params.id as string;
-      if (!isUuid(id)) {
-        return res.status(400).json({ error: 'ID da ordem inválido.', code: 'LOTE_ID_INVALIDO' });
-      }
-
       const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
-      if (!acessoTodasPlantas && !req.user?.plantaId) {
-        return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
+      const resultado = await TicketService.obterTicketsOrdem(id, req.user?.plantaId, acessoTodasPlantas);
+      return res.json(resultado);
+    } catch (error: any) {
+      if (error instanceof TicketServiceError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
       }
-
-      const ordem = await AppDataSource.getRepository(OrdemTeste).findOne({
-        where: acessoTodasPlantas ? { id } : { id, plantaId: req.user!.plantaId },
-        relations: { modelo: true },
-      });
-      if (!ordem) {
-        return res.status(404).json({ error: 'Ordem de teste não encontrada.', code: 'LOTE_NOT_FOUND' });
-      }
-
-      const rotaCongelada = Boolean(ordem.rotaSnapshot?.etapas?.length);
-      if (rotaCongelada) {
-        await AppDataSource.transaction(async (manager) => {
-          await garantirTicketsSetorDaOrdem(manager, ordem);
-        });
-      }
-
-      const tickets = await AppDataSource.getRepository(TicketSetor).find({
-        where: { ordemTesteId: id },
-        order: { ordemEtapa: 'ASC', createdAt: 'ASC' },
-      });
-
-      return res.json({
-        ordemTesteId: ordem.id,
-        codigoBarras: ordem.codigoBarras,
-        modeloNome: ordem.modelo?.nome ?? 'Modelo não informado',
-        rotaCongelada,
-        tickets: tickets.map((ticket) => ({
-          id: ticket.id,
-          codigoBarras: ticket.codigoBarras,
-          tipoLote: ticket.tipoLote,
-          ordemEtapa: ticket.ordemEtapa,
-          rotaVersao: ticket.rotaVersao,
-          setorNomeSnapshot: ticket.setorNomeSnapshot,
-        })),
-      });
-    } catch (error) {
       console.error('[LotesController] Erro ao buscar tickets por setor:', error);
       return res.status(500).json({ error: 'Erro ao buscar tickets por setor.' });
     }
@@ -403,42 +337,14 @@ export class LotesController {
   /** Resolve o código de barras de um ticket e retorna seu fluxo e setor. */
   public getTicketSetorPorCodigo = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const codigoBarras = String(req.params.codigoBarras || '').trim().toUpperCase();
-      if (!codigoBarras || codigoBarras.length > 64) {
-        return res.status(400).json({ error: 'Código do ticket inválido.', code: 'TICKET_CODIGO_INVALIDO' });
-      }
-
-      const ticket = await AppDataSource.getRepository(TicketSetor).findOne({
-        where: { codigoBarras },
-        relations: { ordemTeste: true },
-      });
-      if (!ticket) {
-        return res.status(404).json({ error: 'Ticket de setor não encontrado.', code: 'TICKET_SETOR_NOT_FOUND' });
-      }
-
+      const codigoBarras = String(req.params.codigoBarras || '');
       const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
-      if (!acessoTodasPlantas && ticket.ordemTeste.plantaId !== req.user?.plantaId) {
-        return res.status(404).json({ error: 'Ticket de setor não encontrado.', code: 'TICKET_SETOR_NOT_FOUND' });
+      const resultado = await TicketService.obterTicketPorCodigo(codigoBarras, req.user?.plantaId, acessoTodasPlantas);
+      return res.json({ ticket: resultado });
+    } catch (error: any) {
+      if (error instanceof TicketServiceError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
       }
-
-      if (ticket.tipoLote === 'CAIXA_TESTE' && !ticket.ordemTeste.possuiCaixaTeste) {
-        return res.status(409).json({ error: 'A ordem não possui Caixa Teste ativa.', code: 'CAIXA_TESTE_INATIVA' });
-      }
-
-      return res.json({
-        ticket: {
-          id: ticket.id,
-          codigoBarras: ticket.codigoBarras,
-          ordemTesteId: ticket.ordemTesteId,
-          ordemCodigoBarras: ticket.ordemTeste.codigoBarras,
-          ordemStatus: ticket.ordemTeste.status,
-          possuiCaixaTeste: Boolean(ticket.ordemTeste.possuiCaixaTeste),
-          setorId: ticket.setorId,
-          setorNome: ticket.setorNomeSnapshot,
-          tipoLote: ticket.tipoLote,
-        },
-      });
-    } catch (error) {
       console.error('[LotesController] Erro ao resolver ticket por código:', error);
       return res.status(500).json({ error: 'Erro ao localizar o ticket de setor.' });
     }

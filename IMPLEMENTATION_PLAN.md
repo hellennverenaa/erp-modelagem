@@ -90,3 +90,169 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 **Escopo:** classificar erros de autenticação pelos códigos reais do backend; renovar em `AUTH_TOKEN_EXPIRED`; limpar a sessão apenas em rejeição explícita ou invalidez conhecida; manter o perfil em cache e não redirecionar durante falhas transitórias; limitar a validação de `/auth/me` para evitar uma chamada a cada navegação. Quando não houver perfil em cache durante uma indisponibilidade, apresentar uma tela temporária com opção de tentar novamente.
 
 **Validação executada:** `npm run build` no frontend e `git diff --check` passaram. **Validação funcional pendente:** conferir renovação após expiração, falha de rede/`5xx` com navegação e perfil em cache, indisponibilidade sem perfil em cache, rejeição definitiva do refresh token e reconexão da TV. Não presumir o gatilho específico do logout observado sem os códigos de resposta da sessão real.
+
+### TASK-034 — Seeding de dados genéricos operacionais para o ERP de Modelagem
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Correção do seeder para respeitar a constraint `CHK_modelos_codigo_produto_numerico` e expansão de dados genéricos completos para permitir teste e operação de todas as telas (Gestão de Modelos, Catálogo de Peças, Gestão de Ordens, Construtor de Rota, Bipagem Operacional, TV Rastreamento, Torre de Controle e Inspeção de Qualidade).
+
+**Escopo implementado:**
+- Resolução do erro na inserção de modelos garantindo códigos estritamente numéricos (`3080910`, `3080920`, `3060908`, `3060918`, `3060400`, `3060410`, `3060420`, `3060430`).
+- Otimização do seeder do catálogo de peças evitando loops redundantes quando o catálogo técnico já estiver populado (969 registros de `Dados.csv`).
+- Provisionamento idempotente de 21 setores operacionais por planta (Planta Padrão e Planta Principal) alinhados às categorias `setor_tipo` e `subsetor_corte`.
+- Cadastro de estações de trabalho e máquinas físicas para os setores de corte, serigrafia, apoio, costura, montagem e laboratório.
+- Cadastro de colaboradores e crachás para teste de leitura de crachá/RFID agnóstica de hardware.
+- Cadastro de modelos e associação com peças técnicas do catálogo (`CatalogoPeca`) respeitando as exigências de corte da regra de negócio (`validateRouteIntegrity`).
+- Construção de rotas operacionais completas, sequenciais, com versionamento e SLAs definidos.
+- Geração de 6 ordens de teste em múltiplos estados operacionais (`MONTAGEM`, `LIBERADO_PRODUCAO`, `EM_CORTE`, `EM_RETRABALHO`, `INSPECAO_QUALIDADE`, `AGUARDANDO_MATERIAL`), além de modelos livres para criação via Wizard/PCP.
+- Geração idempotente de tickets persistentes por setor para os fluxos Lote Principal e Caixa Teste.
+- Registro de 104 eventos de rastreamento com horários, tempos de permanência, operadores e estações de trabalho para cálculo de Lead Time e WIP.
+- Registro de ocorrências ativas e em análise de chão de fábrica (gargalo de máquina e falta de material).
+- Registro de inspeções de qualidade formais e de saída de setor, com divergência dimensional e ordem de retrabalho cirúrgico.
+
+**Validação técnica executada:**
+- `npm run seed` executado duas vezes com sucesso, confirmando idempotência (0 duplicatas, 0 falhas).
+- Verificação das 18 tabelas operacionais no PostgreSQL confirmando dados consistentes.
+- `npm run build` no backend concluído sem erros de TypeScript.
+- `npm run build` no frontend concluído sem erros de TypeScript/Vue.
+- `git diff --check` aprovado sem pendências.
+
+### TASK-035 — Otimização de Banco de Dados, Índices Estratégicos e Paginação
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 1 do relatório de melhorias: criação de 12 índices estratégicos para tabelas transacionais, habilitação de busca Trigram GIN, suporte a paginação e parametrização do pool de conexões PostgreSQL.
+
+**Escopo implementado:**
+- Criação e aplicação da migration `1792161400000-OtimizacaoIndicesEBuscaTrigram.ts`:
+  - `idx_rastreamentos_ordem_tipo_status` em `(ordem_teste_id, "tipoLote", status)`.
+  - `idx_rastreamentos_setor_datas` em `(setor_id, data_entrada, data_saida)`.
+  - `idx_rastreamentos_peca_id` em `(peca_id) WHERE peca_id IS NOT NULL`.
+  - `idx_inspecoes_ordem_setor` em `(ordem_teste_id, setor_id, resultado)`.
+  - `idx_ocorrencias_ordem_status` em `(ordem_teste_id, status)`.
+  - `idx_ocorrencias_setor_data` em `(setor_id, data_ocorrencia)`.
+  - `idx_etapas_corte_rastreamento` em `(rastreamento_id)`.
+  - `idx_etapa_corte_pecas_etapa` em `(etapa_corte_id)`.
+  - `idx_divergencias_ordem_setor` em `(ordem_teste_id, setor_id, resolvido)`.
+  - `idx_retrabalhos_ordem_divergencia` em `(ordem_teste_id, divergencia_id, status)`.
+  - Habilitação da extensão `pg_trgm` e índice `idx_catalogo_pecas_trgm_nome` USING GIN (`nome gin_trgm_ops`).
+  - `idx_catalogo_pecas_codigo_original` em `(codigo_original) WHERE codigo_original IS NOT NULL`.
+- Parametrização do pool de conexões do PostgreSQL em `backend/src/config/database.ts` (`max: 25`, `idleTimeoutMillis: 30000`, `connectionTimeoutMillis: 5000`).
+- Adição de suporte a paginação (`page`, `limit`) e busca otimizada (`q`) em `GET /api/catalogo-pecas` com fallback retrocompatível de array direto e cabeçalho `X-Total-Count`.
+- Adição de suporte a paginação (`page`, `limit`), filtros de status e busca em `GET /api/lotes` com fallback retrocompatível de array direto e cabeçalho `X-Total-Count`.
+
+**Validação técnica executada:**
+- `npm run migration:run` executado e aplicado com sucesso no PostgreSQL.
+- Verificação dos 15 índices operacionais no PostgreSQL via `pg_indexes`.
+- Teste de `EXPLAIN ANALYZE` confirmando uso do `Index Scan using idx_rastreamentos_ordem_tipo_status`.
+- `npm run seed` executado com 100% de sucesso e integridade preservada.
+- `npm run build` no backend e frontend aprovados sem erros.
+- `git diff --check` sem pendências.
+
+### TASK-036 — Otimização do Puppeteer (Browser Singleton) e Suíte de Testes com Vitest
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2 e Ponto 4 do relatório de melhorias: eliminação de inicialização e destruição contínua do Chromium para geração de PDFs/etiquetas e implantação da suíte de testes automatizados com Vitest cobrindo regras críticas de integridade de rota.
+
+**Escopo implementado:**
+- Criação de `backend/src/services/puppeteer.service.ts`:
+  - Padrão Singleton gerenciado para o Chromium, evitando o custo de *process spawn* a cada documento gerado.
+  - Isolamento seguro por aba (`browser.newPage()`), fechamento garantido no bloco `finally` (`page.close()`) e reciclagem transparente da aba.
+  - Auto-recuperação diante de crash ou desconexão inesperada (`browser.on('disconnected')`).
+  - Suporte a caminho customizado via variável de ambiente `PUPPETEER_EXECUTABLE_PATH`.
+  - Tratamento de *graceful shutdown* nos eventos `SIGTERM` e `SIGINT`.
+- Refatoração de `backend/src/services/etiqueta.service.ts` e `backend/src/services/dossie.service.ts` para consumir `PuppeteerService.renderPdf`, reduzindo o tempo de emissão e consumo de RAM.
+- Instalação e configuração do framework `vitest` no backend (`vitest.config.mts` e scripts `npm test` / `npm run test:watch`).
+- Criação de suíte de testes unitários determinísticos em `backend/src/services/__tests__/`:
+  - `route-integrity.spec.ts`: 8 testes cobrindo rotas vazias, peças sem setor de corte, categorias inválidas, integridade de plantas, exigência de Lectra e Ponte, presença condicional de Telas/Serigrafia e validação de peças vinculadas a subsetores de corte.
+  - `puppeteer.service.spec.ts`: 4 testes cobrindo Singleton, auto-recuperação de processo desconectado, garantia de renderização e liberação garantida de recursos no bloco `finally`.
+
+**Validação técnica executada:**
+- `npm test` executado no backend com 12 testes aprovados em 468ms (0 falhas).
+- `npm run build` no backend compilado com TypeScript 100% livre de erros.
+- `npm run build` no frontend compilado com Vue 3/TypeScript 100% livre de erros.
+- `git diff --check` sem pendências.
+
+### TASK-037 — Desacoplamento de Fat Controllers (TicketService e LoteService)
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2.2 do relatório de melhorias: extração das regras transacionais de ordens e resolução de tickets de dentro de `lotes.controller.ts` para Services de aplicação especializados.
+
+**Escopo implementado:**
+- Criação de `backend/src/services/ticket.service.ts`:
+  - `obterTicketsOrdem`: Validação de autorização multi-planta, reconciliação idempotente de tickets a partir da rota congelada (`garantirTicketsSetorDaOrdem`) e serialização ordenada do DTO de resposta.
+  - `obterTicketPorCodigo`: Resolução e validação de código de barras físico/bipado, consistência de Caixa Teste e retorno de metadados da ordem.
+  - Classe de erro especializada `TicketServiceError` com status HTTP e códigos de erro tipados.
+- Criação de `backend/src/services/lote.service.ts`:
+  - `criarOrdemPcp`: Orquestração transacional de lock de concorrência (`lockModelConfiguration`), validação de unicidade 1:1 Modelo-Ordem, verificação de planta, gravação de data de corte e persistência da ordem em estado inicial.
+  - `salvarConfiguracaoPecasModelagem`: Validação de estado `AGUARDANDO_MODELAGEM`, lock e persistência atômica das peças técnicas vinculadas e decisão de Caixa Teste via `saveModelPieces`.
+  - `finalizarConfiguracaoModelagem`: Validação estrita de integridade de rota congelada (`validatePersistedModelRoute`), congelamento do snapshot com versionamento e SLAs por setor, transição de estado para `AGUARDANDO_MATERIAL`, liberação de produção e emissão idempotente de tickets.
+  - Classe de erro especializada `LoteServiceError`.
+- Refatoração de `backend/src/controllers/lotes.controller.ts`:
+  - Delegação de `criarOrdemPcp`, `salvarConfiguracaoPecasModelagem`, `finalizarConfiguracaoModelagem`, `getTicketsSetor` e `getTicketSetorPorCodigo` para os novos services.
+  - Remoção de queries manuais e blocos de transação aninhados do controller.
+  - Limpeza de imports não utilizados (`randomUUID`, `Modelo`, `Planta`, `TicketSetor`, `ModelPieceInput`, `saveModelPieces`).
+- Criação de suíte de testes unitários para `TicketService` em `backend/src/services/__tests__/ticket.service.spec.ts` (8 testes):
+  - Rejeição de UUIDs malformados, validação de restrição de planta, 404 para ordens ausentes, reconciliação ordenada de tickets, validação de códigos vazios, 404 para tickets inexistentes, 409 para Caixa Teste inativa e retorno estruturado de DTO.
+
+**Validação técnica executada:**
+- `npm run build` no backend concluído com 0 erros de TypeScript.
+- `npm run build` no frontend concluído com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+### TASK-038 — Desacoplamento de admin.controller em AdminRbacService e MarcaService
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2.2 do relatório de melhorias: desacoplamento de segurança, permissões RBAC e regras de marcas para Services especializados, eliminando acoplamento do maior controller da aplicação (de 1.115 para ~770 linhas).
+
+**Escopo implementado:**
+- Criação de `backend/src/services/admin-rbac.service.ts`:
+  - `listarPerfis`: Filtragem sensível com ocultação de perfil `ADMIN_AUTOMACAO` para atores não autorizados.
+  - `criarPerfil`: Validação de duplicidade case-insensitive e bloqueio de nomes reservados do sistema (`ADMIN`, `ADMIN_AUTOMACAO`) com emissão de auditoria (`RBAC_PERFIL_CRIADO`).
+  - `atualizarPerfil`: Proteção intransponível contra renomeação ou inativação de perfis de sistema (`ADMIN`, `VISUALIZADOR`, `ADMIN_AUTOMACAO`), bloqueio de inativação de perfis com usuários associados (`PERFIL_HAS_USERS`) e registro no `AuditLog`.
+  - `atualizarPermissoes`: Validação de dependências de tela (edição requer visualização e remoção de visualização revoga edição), validação em lote (1 a 500 itens), trava de perfil de automação e diff atômico persistido em `AuditLog`.
+  - `atualizarPerfilUsuario`: Validação de privilégios de concessão/revogação de acesso à Matriz de Acessos, trava de permissão para provisionar `ADMIN_AUTOMACAO` e registro auditado.
+  - `atualizarPermissaoPausaSla`: Bloqueio estrito de acesso apenas a atores de automação e proteção permanente da conta `ADMIN_AUTOMACAO`.
+  - Classe de erro `AdminRbacError` com status HTTP e códigos semânticos.
+- Criação de `backend/src/services/marca.service.ts`:
+  - Normalização de espaços e caracteres em português.
+  - Comparação estrita case-insensitive.
+  - `listarMarcas` (ativas ou todas), `criarMarca` e `atualizarMarca` com validação de unicidade.
+  - Classe de erro `MarcaServiceError`.
+- Refatoração de `backend/src/controllers/admin.controller.ts`:
+  - Delegação completa dos fluxos de perfis, permissões, usuários e marcas aos novos services.
+  - Remoção de queries manuais e do helper procedural `auditarRbac` do controller.
+- Suíte de testes unitários criada no Vitest:
+  - `admin-rbac.service.spec.ts` (8 testes): Validação de ocultação de perfil, bloqueio de nomes reservados, duplicidade, proteção de perfis de sistema, bloqueio de desativação com usuários, trava de permissão e proteção da conta de automação.
+  - `marca.service.spec.ts` (6 testes): Normalização de espaços, comparação case-insensitive, duplicidade no cadastro e na atualização.
+
+**Validação técnica executada:**
+- `npm run build` no backend concluído com 0 erros de TypeScript.
+- `npm run build` no frontend concluído com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+### TASK-039 — Observabilidade, Logs Estruturados (Pino) e Correlation ID (X-Request-ID)
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 2.3 do relatório de melhorias: eliminação de saídas síncronas/desestruturadas de console, implantação de Correlation ID em todas as requisições HTTP e logging JSON assíncrono de alta performance.
+
+**Escopo implementado:**
+- Criação de `backend/src/config/logger.ts`:
+  - Configuração do logger `pino` com suporte a níveis de log (`debug`, `info`, `warn`, `error`, `fatal`).
+  - Redaction automático de campos sensíveis (`authorization`, `cookie`, `password`, `token`, `refreshToken`, `senha`).
+  - Pretty-printing colorido e legível para ambiente de desenvolvimento (`pino-pretty`) e JSON puro com timestamp ISO para produção.
+- Criação de `backend/src/middlewares/requestLogger.ts`:
+  - Captura ou geração automática de UUID para o correlation ID `X-Request-ID`.
+  - Injeção de `req.requestId` no contexto da requisição Express.
+  - Exposição do cabeçalho `X-Request-ID` em todas as respostas HTTP para auditoria e rastreamento pelo frontend.
+  - Cálculo de latência de execução com precisão de nanossegundos (`process.hrtime.bigint`) e emissão estruturada de logs (`requestId`, `method`, `url`, `statusCode`, `durationMs`, `ip`, `userId`).
+  - Categorização automática por código de resposta (2xx/3xx -> INFO, 4xx -> WARN, 5xx -> ERROR).
+- Integração em `backend/src/server.ts`:
+  - Inserção do middleware `requestLogger` como Camada 0 da pilha HTTP.
+  - Substituição de logs textuais de inicialização e tratamento de falhas críticas com `logger.info` e `logger.fatal`.
+- Integração em `backend/src/middlewares/errorHandler.ts`:
+  - Substituição de `console.error` por `logger.error` estruturado contendo o correlation ID da requisição falha.
+- Suíte de testes unitários criada no Vitest:
+  - `backend/src/middlewares/__tests__/requestLogger.spec.ts` (5 testes): Geração de UUID aleatório, propagação de correlation ID vindo do cliente, log de sucesso com latência, log de alerta para 4xx e log de erro para 5xx.
+
+**Validação técnica executada:**
+- `npm test` executado com 39/39 testes unitários aprovados em 702ms.
+- `npm run build` no backend concluído com 0 erros de TypeScript.
+- `npm run build` no frontend concluído com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+---
+
+### Registro de Integração — Pull Request #16
+- **Pull Request**: [#16 — feat: seeding operacional, otimizações de banco, desacoplamento em services, vitest e observabilidade (TASK-034 a TASK-039)](https://github.com/hellennverenaa/erp-modelagem/pull/16)
+- **Branch Origem**: `feature/seeding-dados-genericos`
+- **Branch Destino**: `main`
+- **Estado**: Aberto aguardando revisão e merge.
+- **Escopo Integrado**: TASK-034 (População de dados genéricos/operacionais), TASK-035 (Índices e performance de banco), TASK-036 (Puppeteer Singleton e Vitest), TASK-037 (Desacoplamento de lotes/tickets), TASK-038 (Desacoplamento de admin/RBAC e marcas) e TASK-039 (Observabilidade e logs estruturados Pino).
