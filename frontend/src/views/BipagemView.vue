@@ -26,10 +26,6 @@ import {
 interface Setor {
   id: string
   nome: string
-  codigo: string
-  tipoOpcaoId: string
-  tipoOpcaoValor: string | null
-  tipoOpcaoLabel: string | null
 }
 
 interface OrdemTeste {
@@ -50,10 +46,24 @@ interface TicketSetorLookup {
   tipoLote: 'LOTE_PRINCIPAL' | 'CAIXA_TESTE'
 }
 
+interface ResumoTicketOrdem {
+  setorId: string
+  setorNomeSnapshot: string
+  ordemEtapa: number
+}
+
+interface TicketsOrdem {
+  rotaCongelada: boolean
+  tickets: ResumoTicketOrdem[]
+}
+
 
 // ─── 1. Declaração do Estado Reativo (Refs e Reactives - APENAS NO TOPO) ──
 const setores = ref<Setor[]>([])
+const setoresAdmin = ref<Setor[]>([])
 const selecionouSetorId = ref('')
+const rotaOrdemId = ref('')
+const rotaCongelada = ref(false)
 const tipoLote = ref<'LOTE_PRINCIPAL' | 'CAIXA_TESTE'>('LOTE_PRINCIPAL')
 const codigoLeitura = ref('')
 const lotesDisponiveis = ref<OrdemTeste[]>([])
@@ -105,10 +115,21 @@ const fotoPreview = ref<string | null>(null)
 const user = computed(() => authStore.user.value)
 const podeInterromperSla = computed(() => authStore.podeInterromperSla.value)
 
-const podeEditarSetor = computed(() =>
-  authStore.hasPermission('EDITAR_TELA_BIPAGEM') || authStore.hasPermission('ADMINISTRAR_BIPAGEM')
-)
 const isAdmin = computed(() => authStore.hasPermission('ADMINISTRAR_BIPAGEM'))
+const podeBipar = computed(() =>
+  authStore.hasPermission('EDITAR_TELA_BIPAGEM') || isAdmin.value
+)
+const setoresSimulacao = computed(() =>
+  rotaOrdemId.value && rotaOrdemId.value === ordemAtiva.value?.id
+    ? setores.value
+    : setoresAdmin.value
+)
+const setorSelecionado = computed(() =>
+  setores.value.find(setor => setor.id === selecionouSetorId.value) ??
+  setoresAdmin.value.find(setor => setor.id === selecionouSetorId.value) ??
+  null
+)
+const resumoRota = computed(() => setores.value.map(setor => setor.nome).join(' → '))
 const ordemAguardandoModelagem = computed(() => ordemAtiva.value?.status === 'AGUARDANDO_MODELAGEM')
 
 // ─── 3. Funções e Métodos Auxiliares ───────────────────────────────────────
@@ -200,9 +221,12 @@ async function pararCamera() {
 }
 
 function abrirModalOcorrencia() {
-  if (ordemAtiva.value) {
-    ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
+  if (!ordemAtiva.value || !selecionouSetorId.value) {
+    triggerToast('Leia a ordem e identifique o setor pela rota ou pelo ticket antes de registrar uma ocorrência.', 'error')
+    return
   }
+
+  ocorrenciaForm.ordemTesteId = ordemAtiva.value.id
   
   if (selecionouSetorId.value) {
     ocorrenciaForm.setorId = selecionouSetorId.value
@@ -239,7 +263,7 @@ function removerFoto() {
 }
 
 async function submeterOcorrencia() {
-  if (!podeEditarSetor.value) return
+  if (!podeBipar.value) return
   if (!ordemAtiva.value) {
     triggerToast('Nenhum lote ativo selecionado.', 'error')
     return
@@ -379,14 +403,8 @@ function fecharRfidModal() {
 async function processarBipagem(acao: 'entrada' | 'saida') {
   const codigo = codigoLeitura.value.trim().toUpperCase()
 
-  if (!selecionouSetorId.value) {
-    triggerToast('Selecione o setor operacional antes de bipar.', 'error')
-    forcarFocoInput()
-    return
-  }
-
   if (!codigo) {
-    triggerToast('Insira ou bipe o codigo da ordem de teste.', 'error')
+    triggerToast('Insira ou bipe o código da ordem ou do ticket de setor.', 'error')
     forcarFocoInput()
     return
   }
@@ -394,44 +412,112 @@ async function processarBipagem(acao: 'entrada' | 'saida') {
   let loteEncontrado = lotesDisponiveis.value.find(
     l => l.codigoBarras.toUpperCase() === codigo || l.id.toUpperCase() === codigo
   )
+  let ticketLido: TicketSetorLookup | null = null
 
   if (!loteEncontrado) {
     try {
       const { data } = await api.get<{ ticket: TicketSetorLookup }>(
         `/lotes/tickets-setor/codigo/${encodeURIComponent(codigo)}`
       )
-      const ticket = data.ticket
-      if (ticket.setorId !== selecionouSetorId.value) {
-        triggerToast(`Este ticket pertence ao setor ${ticket.setorNome}. Selecione esse setor para bipar.`, 'error')
-        forcarFocoInput()
-        return
-      }
+      ticketLido = data.ticket
 
       loteEncontrado = {
-        id: ticket.ordemTesteId,
-        codigoBarras: ticket.ordemCodigoBarras,
-        status: ticket.ordemStatus,
-        possuiCaixaTeste: ticket.possuiCaixaTeste,
+        id: ticketLido.ordemTesteId,
+        codigoBarras: ticketLido.ordemCodigoBarras,
+        status: ticketLido.ordemStatus,
+        possuiCaixaTeste: ticketLido.possuiCaixaTeste,
       }
-      tipoLote.value = ticket.tipoLote
-      codigoTicketAtivo.value = ticket.codigoBarras
     } catch (err: any) {
       triggerToast(err?.response?.data?.error || `Ticket ou ordem com código "${codigo}" não localizado.`, 'error')
       forcarFocoInput()
       return
     }
-  } else {
-    codigoTicketAtivo.value = null
   }
 
   ordemAtiva.value = loteEncontrado
 
   if (loteEncontrado.status === 'AGUARDANDO_MODELAGEM') {
+    selecionouSetorId.value = ''
+    codigoTicketAtivo.value = null
     acaoPendente.value = null
     showRfidModal.value = false
     triggerToast('Esta ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota. Nenhuma operação foi iniciada.', 'info')
     forcarFocoInput()
     return
+  }
+
+  if (rotaOrdemId.value !== loteEncontrado.id) {
+    try {
+      loadingSetores.value = true
+      const { data } = await api.get<TicketsOrdem>(`/lotes/${encodeURIComponent(loteEncontrado.id)}/tickets-setor`)
+      rotaOrdemId.value = loteEncontrado.id
+      rotaCongelada.value = data.rotaCongelada
+
+      if (data.rotaCongelada) {
+        const setoresPorId = new Map<string, Setor>()
+        for (const ticket of data.tickets) {
+          if (!setoresPorId.has(ticket.setorId)) {
+            setoresPorId.set(ticket.setorId, {
+              id: ticket.setorId,
+              nome: ticket.setorNomeSnapshot,
+            })
+          }
+        }
+        setores.value = [...setoresPorId.values()]
+      } else {
+        setores.value = []
+      }
+    } catch (err: any) {
+      triggerToast(err?.response?.data?.error || 'Não foi possível carregar a rota desta ordem.', 'error')
+      forcarFocoInput()
+      return
+    } finally {
+      loadingSetores.value = false
+    }
+  }
+
+  if (!rotaCongelada.value || setores.value.length === 0) {
+    selecionouSetorId.value = ''
+    codigoTicketAtivo.value = null
+    triggerToast('Esta ordem não possui uma rota congelada disponível para bipagem.', 'error')
+    forcarFocoInput()
+    return
+  }
+
+  if (ticketLido) {
+    if (!setores.value.some(setor => setor.id === ticketLido?.setorId)) {
+      selecionouSetorId.value = ''
+      codigoTicketAtivo.value = null
+      triggerToast('O setor deste ticket não pertence à rota congelada da ordem.', 'error')
+      forcarFocoInput()
+      return
+    }
+
+    selecionouSetorId.value = ticketLido.setorId
+    tipoLote.value = ticketLido.tipoLote
+    codigoTicketAtivo.value = ticketLido.codigoBarras
+  } else {
+    codigoTicketAtivo.value = null
+    tipoLote.value = 'LOTE_PRINCIPAL'
+
+    if (isAdmin.value) {
+      if (!setores.value.some(setor => setor.id === selecionouSetorId.value)) {
+        selecionouSetorId.value = ''
+        triggerToast('Rota carregada. Selecione um setor no controle administrativo e confirme a ordem novamente.', 'info')
+        forcarFocoInput()
+        return
+      }
+    } else {
+      const setorLotacaoId = user.value?.setorId
+      if (setorLotacaoId && setores.value.some(setor => setor.id === setorLotacaoId)) {
+        selecionouSetorId.value = setorLotacaoId
+      } else {
+        selecionouSetorId.value = ''
+        triggerToast('Rota carregada. Leia o ticket do setor para identificar onde registrar a bipagem.', 'info')
+        forcarFocoInput()
+        return
+      }
+    }
   }
 
   // Intermediário: Aproxime o crachá para registrar Entrada / Saída / Handoff
@@ -448,6 +534,11 @@ watch(codigoLeitura, (novoCodigo) => {
   const codigo = novoCodigo.trim().toUpperCase()
   if (!codigo) {
     ordemAtiva.value = null
+    rotaOrdemId.value = ''
+    rotaCongelada.value = false
+    setores.value = isAdmin.value ? setoresAdmin.value : []
+    selecionouSetorId.value = ''
+    tipoLote.value = 'LOTE_PRINCIPAL'
     return
   }
 
@@ -455,23 +546,25 @@ watch(codigoLeitura, (novoCodigo) => {
     l => l.codigoBarras.toUpperCase() === codigo || l.id.toUpperCase() === codigo
   )
   ordemAtiva.value = loteEncontrado ?? null
+  if (!loteEncontrado || rotaOrdemId.value !== loteEncontrado.id) {
+    rotaOrdemId.value = ''
+    rotaCongelada.value = false
+    setores.value = isAdmin.value ? setoresAdmin.value : []
+    selecionouSetorId.value = ''
+    tipoLote.value = 'LOTE_PRINCIPAL'
+  }
 }, { immediate: true })
 
 onMounted(async () => {
   loadingSetores.value = true
   try {
-    const [resSetores, resLotes] = await Promise.all([
-      api.get('/admin/setores'),
-      api.get('/lotes'),
-    ])
-
-    setores.value = resSetores.data
+    const resLotes = await api.get('/lotes')
     lotesDisponiveis.value = resLotes.data
 
-    if (user.value && user.value.setorId && setores.value.some(s => s.id === user.value?.setorId)) {
-      selecionouSetorId.value = user.value.setorId
-    } else if (setores.value.length > 0) {
-      selecionouSetorId.value = setores.value[0].id
+    if (isAdmin.value) {
+      const resSetores = await api.get('/admin/setores')
+      setoresAdmin.value = resSetores.data
+      setores.value = setoresAdmin.value
     }
   } catch (err: any) {
     console.error('[BipagemView] Erro ao carregar dados iniciais:', err)
@@ -537,9 +630,11 @@ onMounted(async () => {
           id="select-god-setor"
           v-model="selecionouSetorId"
           class="god-select"
+          :disabled="loadingSetores || loadingBip || codigoTicketAtivo !== null"
         >
-          <option v-for="setor in setores" :key="setor.id" :value="setor.id">
-            {{ setor.nome }} ({{ setor.codigo }})
+          <option value="">Selecione um setor da rota</option>
+          <option v-for="setor in setoresSimulacao" :key="setor.id" :value="setor.id">
+            {{ setor.nome }}
           </option>
         </select>
       </div>
@@ -557,34 +652,28 @@ onMounted(async () => {
       </header>
 
       <form @submit.prevent class="bp-form">
-        <fieldset :disabled="!podeEditarSetor" style="border: 0; padding: 0; margin: 0; min-width: 0;">
-        <!-- ── SETOR SELECTOR ── -->
+        <fieldset :disabled="!podeBipar" style="border: 0; padding: 0; margin: 0; min-width: 0;">
+        <!-- ── CONTEXTO DO SETOR ── -->
         <div class="field-group">
           <div class="label-row-security">
-            <label for="select-setor" class="field-label">Setor Operacional</label>
-            <span v-if="!podeEditarSetor" class="security-badge-locked">
+            <span class="field-label">Setor Operacional</span>
+            <span v-if="!isAdmin" class="security-badge-locked">
               <Lock :size="10" aria-hidden="true" />
-              Fixo por Lotação
+              Definido pela rota ou ticket
             </span>
           </div>
           <div class="select-wrapper">
             <Settings :size="16" class="select-icon" aria-hidden="true" />
-            <select
-              id="select-setor"
-              v-model="selecionouSetorId"
-              class="select-input"
-              :class="{ 'select-input--disabled': !podeEditarSetor }"
-              :disabled="loadingSetores || loadingBip || !podeEditarSetor"
-            >
-              <option v-if="loadingSetores" value="">Carregando setores...</option>
-              <option v-else-if="setores.length === 0" value="">Nenhum setor disponível</option>
-              <option v-for="setor in setores" :key="setor.id" :value="setor.id">
-                {{ setor.nome }} ({{ setor.codigo }})
-              </option>
-            </select>
+            <div class="select-input select-input--disabled" role="status" aria-live="polite">
+              <template v-if="loadingSetores">Carregando rota da ordem...</template>
+              <template v-else>{{ setorSelecionado?.nome || (ordemAtiva ? 'Leia o ticket do setor' : 'Aguardando ordem ou ticket') }}</template>
+            </div>
           </div>
-          <span v-if="!podeEditarSetor" class="field-hint-security">
-            Para alterar o setor operacional fixo deste terminal, solicite a alteração a um Administrador ou Gerente.
+          <span v-if="ordemAtiva && rotaCongelada && resumoRota" class="field-hint">
+            Rota desta ordem: {{ resumoRota }}
+          </span>
+          <span v-else-if="ordemAtiva && !loadingSetores && !rotaCongelada" class="field-hint-security">
+            Esta ordem não possui uma rota congelada; a bipagem não pode inferir setores.
           </span>
         </div>
 
@@ -662,7 +751,7 @@ onMounted(async () => {
           <button
             type="button"
             class="btn-action btn-action--entrada"
-            :disabled="loadingBip || ordemAguardandoModelagem"
+            :disabled="loadingBip || loadingSetores || ordemAguardandoModelagem"
             @click="processarBipagem('entrada')"
           >
             <Loader2 v-if="loadingBip" :size="20" class="spinner" aria-hidden="true" />
@@ -673,7 +762,7 @@ onMounted(async () => {
           <button
             type="button"
             class="btn-action btn-action--saida"
-            :disabled="loadingBip || ordemAguardandoModelagem"
+            :disabled="loadingBip || loadingSetores || ordemAguardandoModelagem"
             @click="processarBipagem('saida')"
           >
             <Loader2 v-if="loadingBip" :size="20" class="spinner" aria-hidden="true" />
@@ -687,7 +776,7 @@ onMounted(async () => {
         <button
           type="button"
           class="btn-ocorrencia"
-          :disabled="!ordemAtiva || ordemAguardandoModelagem || loadingBip"
+          :disabled="!ordemAtiva || !selecionouSetorId || ordemAguardandoModelagem || loadingBip || loadingSetores"
           @click="abrirModalOcorrencia"
         >
           <AlertOctagon :size="20" class="ocorrencia-icon" aria-hidden="true" />

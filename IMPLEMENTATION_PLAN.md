@@ -50,7 +50,13 @@
 Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.
 
 ### Bipagem orientada à rota da ordem (TASK-015)
-Remover sequências fixas de setores. Ao selecionar uma ordem, exibir apenas setores e processos de sua rota, com posição, estado e ações permitidas.
+**Estado: implementada nesta branch (`fix/pg-trgm-migration-schema`); validação técnica concluída e validação funcional pendente.** Removida a escolha manual do setor para operadores comuns; a tela carrega os setores exclusivamente dos tickets da rota congelada da ordem. A leitura de um ticket identifica automaticamente ordem, setor e fluxo e, em seguida, permite identificar o operador pelo crachá. A leitura de código antigo da ordem continua funcionando quando o setor de lotação da sessão pertence à rota congelada. O controle de simulação permanece restrito a `ADMINISTRAR_BIPAGEM` e limitado à rota da ordem carregada.
+
+**Contrato de autorização:** preservar autenticação, `EDITAR_TELA_BIPAGEM`, autorização da sessão por ação/setor, integridade de rota, ticket, sequência e gates operacionais. O perfil associado ao crachá identifica o responsável e não precisa ter uma permissão setorial própria; crachá não cadastrado continua sendo rejeitado. Não inferir rotas para ordens sem snapshot.
+
+**Arquivos alterados:** `frontend/src/views/BipagemView.vue`, `backend/src/services/ticket.service.ts`, `backend/src/services/__tests__/ticket.service.spec.ts`, `backend/src/controllers/rastreamentos.controller.ts` e este plano. Nenhuma migration criada ou aplicada.
+
+**Validação executada:** `npm run build` no backend e frontend passou; `npm test` no backend passou com 39 testes em 6 arquivos; `git diff --check` passou. **Validação funcional pendente:** testar com leitor de ticket e crachá no ambiente operacional; conferir operador comum, administrador, entrada, saída, ticket fora da rota, crachá não cadastrado e ordem sem snapshot. Próximo passo: validação manual desses cenários.
 
 ### TV de rastreamento usando o snapshot da ordem (TASK-016)
 Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preservando o histórico quando o modelo for editado.
