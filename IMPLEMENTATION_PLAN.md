@@ -333,3 +333,14 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - `npm test` no backend com 39/39 testes unitários aprovados em 755ms.
 - `npm run build` no backend compilado com 0 erros.
 - `git diff --check` aprovado sem pendências.
+
+---
+
+### Registro de Integração — Pull Request #17
+- **Pull Request**: [#17 — feat(frontend): modularizacao de ordens, paginacao server-side e cache reativo (TASK-040 a TASK-042)](https://github.com/hellennverenaa/erp-modelagem/pull/17)
+- **Branch Origem**: `feature/frontend-modularizacao-ordens`
+- **Branch Destino**: `main`
+- **Escopo Integrado**:
+  - **TASK-040**: Modularização e desmantelamento da God View `GestaoOrdensView.vue` (-68% de linhas) em componentes desacoplados (`OrderCreateModal`, `OrderPrintModal`, `OrderHistoryModal`, `OrderMaintenanceModal`, `types.ts`).
+  - **TASK-041**: Paginação server-side e busca rápida indexada por Trigram (GIN) em `CatalogoPecasView.vue` e `GestaoOrdensView.vue` com sincronização de totalizadores e KPIs.
+  - **TASK-042**: Store reativa `config.store.ts` com cache TTL (5 min), deduplicação de requisições concorrentes em voo (Promise pooling), invalidação atômica e limpeza de sessão nos fluxos de Ordens, Modelos, Wizard, Rotas e Marcas.
