@@ -254,5 +254,93 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - **Pull Request**: [#16 — feat: seeding operacional, otimizações de banco, desacoplamento em services, vitest e observabilidade (TASK-034 a TASK-039)](https://github.com/hellennverenaa/erp-modelagem/pull/16)
 - **Branch Origem**: `feature/seeding-dados-genericos`
 - **Branch Destino**: `main`
-- **Estado**: Aberto aguardando revisão e merge.
 - **Escopo Integrado**: TASK-034 (População de dados genéricos/operacionais), TASK-035 (Índices e performance de banco), TASK-036 (Puppeteer Singleton e Vitest), TASK-037 (Desacoplamento de lotes/tickets), TASK-038 (Desacoplamento de admin/RBAC e marcas) e TASK-039 (Observabilidade e logs estruturados Pino).
+
+---
+
+### TASK-040 — Modularização e Fatiamento da God View GestaoOrdensView.vue
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 3.1 do relatório de melhorias: desmantelamento da "God View" monolítica (`GestaoOrdensView.vue`), que possuía 2.892 linhas de código, fatiando modais e drawers pesados em componentes Vue 3 desacoplados e tipados.
+
+**Escopo implementado:**
+- Criação do diretório de componentes `frontend/src/components/ordens/` e interfaces TypeScript em `types.ts`.
+- Extração de `OrderCreateModal.vue`:
+  - Formulário completo de criação de ordem de teste com regras de validação (modelo, planta, prioridade PCP e previsão de corte).
+  - Isolamento de erros específicos (ex.: duplicidade na regra 1:1 `MODELO_TESTE_DUPLICADO`).
+- Extração de `OrderPrintModal.vue`:
+  - Modal de seleção e impressão de tickets por setor e por fluxo (Lote Principal, Caixa Teste e Corte) e impressão agrupada em gabarito A4.
+  - Carregamento assíncrono dos tickets por ordem via `/lotes/:id/tickets-setor`.
+- Extração de `OrderHistoryModal.vue`:
+  - Modal de escolha rápida (Timeline vs Rastreamento Detalhado) e drawer lateral retrátil de Timeline de Rastreamento com histórico, tempos de permanência em minutos/horas, status dots e crachás de operadores.
+- Extração de `OrderMaintenanceModal.vue`:
+  - Abas de SLA por setor (com conversão bidirecional minutos/horas/dias), remanejamento de máquinas técnicas para corte automático e histórico auditado com diff de alterações.
+- Refatoração de `frontend/src/views/GestaoOrdensView.vue`:
+  - Redução massiva de **2.892 linhas** para **932 linhas** (-68% de tamanho de arquivo).
+  - Eliminação de centenas de linhas de CSS de modal e drawer duplicados do escopo da view.
+  - Orquestração limpa e reativa baseada em eventos (`v-model`, `@saved`, `@created`, `@error`, `@success`).
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.25s).
+- `npm test` no backend com 39/39 testes unitários aprovados em 775ms.
+- `npm run build` no backend compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+---
+
+### TASK-041 — Paginação e Busca Server-Side com Otimização Trigram nos Grids Frontend
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 3.2 do relatório de melhorias: eliminação de carregamento de listas completas em memória no frontend, conectando os grids de Catálogo de Peças e Gestão de Ordens aos endpoints de paginação e busca indexada por Trigram (GIN) criados no backend.
+
+**Escopo implementado:**
+- Atualização de `frontend/src/views/CatalogoPecasView.vue`:
+  - Integração aos parâmetros `page`, `limit` e `q` da rota `GET /catalogo-pecas`.
+  - Busca server-side com debounce de 300ms e botão rápido de limpeza da consulta.
+  - Rodapé de paginação com seletor de tamanho de lote (25, 50, 100), navegação entre páginas (`Anterior` / `Próxima`) e indicador dinâmico de intervalo exibido e total de peças.
+  - Empty state contextualizado para buscas sem resultados vs catálogo vazio.
+- Atualização de `frontend/src/views/GestaoOrdensView.vue`:
+  - Integração aos parâmetros `page`, `limit` e `q` da rota `GET /lotes`, consumindo a resposta paginada e o cabeçalho `X-Total-Count`.
+  - Busca debounced (300ms) por código de barras, nome ou referência do modelo com índice server-side.
+  - Rodapé com paginação server-side, seletor de limite (15, 25, 50, 100) e controle de estado reativo.
+  - Sincronização do KPI strip com a contagem total de ordens cadastradas no banco de dados.
+- Estilização consistente:
+  - Adicionados estilos utilitários `.table-footer-pagination`, `.page-size-selector`, `.pagination-controls`, `.pagination-btn` e `.btn-clear-search` preservando o design system clean industrial do projeto.
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.20s).
+- `npm test` no backend com 39/39 testes unitários aprovados em 788ms.
+- `npm run build` no backend compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+---
+
+### TASK-042 — Store Reativa de Configurações, Cache com TTL e Deduplicação In-Flight
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 3.3 do relatório de melhorias: eliminação de requisições HTTP redundantes para metadados e configurações operacionais (plantas, modelos, marcas, setores e máquinas de corte), implementando gerenciamento de cache reativo com TTL e compartilhamento de requisições concorrentes.
+
+**Escopo implementado:**
+- Criação de `frontend/src/api/config.store.ts`:
+  - Cache reativo em memória com TTL configurável (padrão de 5 minutos) para metadados operacionais (`plantas`, `marcas`, `modelos`, `catalogoModelos`, `setores`, `maquinasCorte`).
+  - Deduplicação de requisições em voo (In-flight request pooling): múltiplos componentes que montam simultaneamente compartilham a mesma Promise HTTP sem emitir requisições duplicadas à API.
+  - Invalidação atômica e granular (`invalidateMarcas`, `invalidateModelos`, `invalidatePlantas`, `invalidateSetores`, `invalidateAll`).
+  - Limpeza automática e isolamento de cache ao encerrar sessão (`erp:auth-session-ended`).
+  - Funções de resolução rápida com fallback seguro (`getModeloNome`, `getModeloReferencia`, `getPlantaNome`, `getMarcaNome`).
+- Adoção nos componentes e views do frontend:
+  - `GestaoOrdensView.vue`: Consumo centralizado de modelos, catálogo e plantas com getters cacheados.
+  - `GestaoModelosView.vue`: Consumo de catálogo de modelos, marcas e opções de corte via `configStore`, com invalidação automática ao salvar modelos e marcas.
+  - `WizardCriacaoTesteView.vue`: Consumo de marcas, plantas e modelos disponíveis via `configStore`, com invalidação atômica na criação de rascunhos e ordens.
+  - `RouteBuilder.vue`: Carregamento compartilhado de setores operacionais e plantas ativas.
+  - `BrandManagerModal.vue`: Disparo de `invalidateMarcas()` em operações de cadastro, alteração de status e renomeação.
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.67s).
+- `npm test` no backend com 39/39 testes unitários aprovados em 755ms.
+- `npm run build` no backend compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+---
+
+### Registro de Integração — Pull Request #17
+- **Pull Request**: [#17 — feat(frontend): modularizacao de ordens, paginacao server-side e cache reativo (TASK-040 a TASK-042)](https://github.com/hellennverenaa/erp-modelagem/pull/17)
+- **Branch Origem**: `feature/frontend-modularizacao-ordens`
+- **Branch Destino**: `main`
+- **Escopo Integrado**:
+  - **TASK-040**: Modularização e desmantelamento da God View `GestaoOrdensView.vue` (-68% de linhas) em componentes desacoplados (`OrderCreateModal`, `OrderPrintModal`, `OrderHistoryModal`, `OrderMaintenanceModal`, `types.ts`).
+  - **TASK-041**: Paginação server-side e busca rápida indexada por Trigram (GIN) em `CatalogoPecasView.vue` e `GestaoOrdensView.vue` com sincronização de totalizadores e KPIs.
+  - **TASK-042**: Store reativa `config.store.ts` com cache TTL (5 min), deduplicação de requisições concorrentes em voo (Promise pooling), invalidação atômica e limpeza de sessão nos fluxos de Ordens, Modelos, Wizard, Rotas e Marcas.

@@ -10,7 +10,9 @@ import {
   CheckCircle2,
   XCircle,
   Package,
-  AlertCircle
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -40,6 +42,13 @@ const searchQuery = ref('')
 const toasts = ref<Toast[]>([])
 let toastCounter = 0
 
+// ─── Paginação e Busca ──────────────────────────────────────────
+const currentPage = ref(1)
+const pageSize = ref(25)
+const totalItems = ref(0)
+const totalPages = ref(1)
+let searchDebounceTimeout: any = null
+
 const form = ref({
   numero: '',
   nome: '',
@@ -59,8 +68,26 @@ function addToast(type: 'success' | 'error', message: string) {
 async function fetchPecas() {
   loading.value = true
   try {
-    const { data } = await api.get<CatalogoPeca[]>('/catalogo-pecas')
-    pecas.value = data || []
+    const q = searchQuery.value.trim()
+    const { data, headers } = await api.get('/catalogo-pecas', {
+      params: {
+        page: currentPage.value,
+        limit: pageSize.value,
+        ...(q ? { q } : {})
+      }
+    })
+
+    if (data && typeof data === 'object' && Array.isArray(data.data)) {
+      pecas.value = data.data
+      totalItems.value = data.total || 0
+      totalPages.value = data.totalPages || 1
+      currentPage.value = data.page || 1
+    } else {
+      pecas.value = Array.isArray(data) ? data : []
+      const headerTotal = headers['x-total-count']
+      totalItems.value = headerTotal ? Number(headerTotal) : pecas.value.length
+      totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
+    }
   } catch (err) {
     console.error('[CatalogoPecasView] Erro ao carregar peças:', err)
     addToast('error', 'Erro ao carregar catálogo de peças.')
@@ -69,15 +96,32 @@ async function fetchPecas() {
   }
 }
 
-const filteredPecas = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return pecas.value
-  return pecas.value.filter(p =>
-    p.numero.toLowerCase().includes(q) ||
-    p.nome.toLowerCase().includes(q) ||
-    (p.codigoOriginal && p.codigoOriginal.toLowerCase().includes(q))
-  )
-})
+function onSearchInput() {
+  clearTimeout(searchDebounceTimeout)
+  searchDebounceTimeout = setTimeout(() => {
+    currentPage.value = 1
+    void fetchPecas()
+  }, 300)
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  currentPage.value = 1
+  void fetchPecas()
+}
+
+function goToPage(p: number) {
+  if (p < 1 || p > totalPages.value || p === currentPage.value) return
+  currentPage.value = p
+  void fetchPecas()
+}
+
+function onPageSizeChange(e: Event) {
+  const target = e.target as HTMLSelectElement
+  pageSize.value = Number(target.value) || 25
+  currentPage.value = 1
+  void fetchPecas()
+}
 
 const podeEditarCatalogo = computed(() => authStore.hasPermission('EDITAR_TELA_CATALOGO_PECAS'))
 
@@ -189,11 +233,21 @@ onMounted(() => {
         <Search :size="15" class="search-icon" aria-hidden="true" />
         <input
           v-model="searchQuery"
+          @input="onSearchInput"
           type="search"
           class="search-input"
           placeholder="Buscar por número (ex: 026), nome (ex: GÁSPEA) ou código..."
           aria-label="Buscar peças no catálogo"
         />
+        <button
+          v-if="searchQuery"
+          type="button"
+          class="btn-clear-search"
+          @click="clearSearch"
+          aria-label="Limpar busca"
+        >
+          <X :size="14" />
+        </button>
       </div>
     </div>
 
@@ -207,10 +261,12 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-else-if="filteredPecas.length === 0" class="table-empty">
+      <div v-else-if="pecas.length === 0" class="table-empty">
         <Package :size="40" class="empty-icon" aria-hidden="true" />
         <p class="empty-title">Nenhuma peça encontrada</p>
-        <p class="empty-sub">Cadastre peças técnicas no catálogo para uso no fluxo de corte.</p>
+        <p class="empty-sub">
+          {{ searchQuery ? 'Nenhum resultado para a pesquisa informada.' : 'Cadastre peças técnicas no catálogo para uso no fluxo de corte.' }}
+        </p>
       </div>
 
       <div v-else class="table-outer">
@@ -224,7 +280,7 @@ onMounted(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="peca in filteredPecas" :key="peca.id" class="cat-row">
+            <tr v-for="peca in pecas" :key="peca.id" class="cat-row">
               <td style="text-align: center;">
                 <span class="badge-number">{{ peca.numero }}</span>
               </td>
@@ -242,8 +298,44 @@ onMounted(() => {
         </table>
       </div>
 
-      <div v-if="!loading && filteredPecas.length > 0" class="table-footer">
-        <span>{{ filteredPecas.length }} peça{{ filteredPecas.length !== 1 ? 's' : '' }} cadastrada{{ filteredPecas.length !== 1 ? 's' : '' }}</span>
+      <!-- Rodapé com Paginação -->
+      <div v-if="!loading && pecas.length > 0" class="table-footer-pagination">
+        <div class="pagination-info">
+          <span>Mostrando {{ ((currentPage - 1) * pageSize) + 1 }}–{{ Math.min(currentPage * pageSize, totalItems) }} de {{ totalItems }} peça{{ totalItems !== 1 ? 's' : '' }}</span>
+          <div class="page-size-selector">
+            <label for="sel-page-size">Exibir:</label>
+            <select id="sel-page-size" :value="pageSize" @change="onPageSizeChange">
+              <option :value="25">25</option>
+              <option :value="50">50</option>
+              <option :value="100">100</option>
+            </select>
+          </div>
+        </div>
+        <div class="pagination-controls">
+          <button
+            type="button"
+            class="pagination-btn"
+            :disabled="currentPage <= 1 || loading"
+            @click="goToPage(currentPage - 1)"
+            aria-label="Página anterior"
+          >
+            <ChevronLeft :size="15" />
+            <span>Anterior</span>
+          </button>
+          <span class="pagination-pages">
+            Página {{ currentPage }} de {{ totalPages }}
+          </span>
+          <button
+            type="button"
+            class="pagination-btn"
+            :disabled="currentPage >= totalPages || loading"
+            @click="goToPage(currentPage + 1)"
+            aria-label="Próxima página"
+          >
+            <span>Próxima</span>
+            <ChevronRight :size="15" />
+          </button>
+        </div>
       </div>
     </div>
 
@@ -437,7 +529,7 @@ onMounted(() => {
 }
 .search-input {
   width: 100%;
-  padding: 0.5rem 0.75rem 0.5rem 2.25rem;
+  padding: 0.5rem 2rem 0.5rem 2.25rem;
   font-size: 0.875rem;
   background: #ffffff;
   border: 1px solid #cbd5e1;
@@ -447,6 +539,25 @@ onMounted(() => {
 .search-input:focus {
   border-color: #0f172a;
   box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.1);
+}
+.btn-clear-search {
+  position: absolute;
+  right: 0.625rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+}
+.btn-clear-search:hover {
+  color: #0f172a;
+  background: #f1f5f9;
 }
 
 /* Table */
@@ -511,6 +622,81 @@ onMounted(() => {
   font-size: 0.75rem;
   color: #64748b;
   font-weight: 600;
+}
+
+.table-footer-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.page-size-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.page-size-selector select {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.8125rem;
+  outline: none;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #334155;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.pagination-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination-pages {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #475569;
+  padding: 0 0.5rem;
 }
 
 /* Modal */

@@ -28,6 +28,7 @@ import {
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
+import { configStore } from '../api/config.store'
 
 const props = defineProps<{
   modeloId?: string
@@ -77,14 +78,14 @@ const plantaSelecionadaNome = computed(() => plantas.value.find((planta) => plan
 
 async function carregarSetores() {
   try {
-    const [setoresRes, plantasRes] = await Promise.all([
-      api.get('/admin/setores'),
-      api.get('/admin/plantas'),
+    const [setoresDataList, plantasDataList] = await Promise.all([
+      configStore.getSetores(),
+      configStore.getPlantas(),
     ])
-    setoresData.value = setoresRes.data || []
+    setoresData.value = setoresDataList || []
     const podeAcessarTodas = authStore.hasPermission('ACESSAR_TODAS_PLANTAS')
     const plantaUsuario = authStore.user.value?.plantaId
-    plantas.value = (plantasRes.data || []).filter((planta: any) =>
+    plantas.value = (plantasDataList || []).filter((planta: any) =>
       planta.ativo && (podeAcessarTodas || planta.id === plantaUsuario)
     )
     if (!selectedPlantaId.value && plantas.value.length > 0) selectedPlantaId.value = plantas.value[0].id
