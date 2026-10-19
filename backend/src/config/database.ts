@@ -58,6 +58,9 @@ export const AppDataSource = new DataSource({
   schema: 'erp_modelagem',
   extra: {
     options: '-c search_path=erp_modelagem,public',
+    max: Number(process.env.DB_POOL_MAX || 25),
+    idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT_MS || 30000),
+    connectionTimeoutMillis: Number(process.env.DB_POOL_CONN_TIMEOUT_MS || 5000),
   },
   synchronize: false,
   logging: ["error"],

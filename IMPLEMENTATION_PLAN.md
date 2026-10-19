@@ -114,3 +114,32 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - `npm run build` no backend concluído sem erros de TypeScript.
 - `npm run build` no frontend concluído sem erros de TypeScript/Vue.
 - `git diff --check` aprovado sem pendências.
+
+### TASK-035 — Otimização de Banco de Dados, Índices Estratégicos e Paginação
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 1 do relatório de melhorias: criação de 12 índices estratégicos para tabelas transacionais, habilitação de busca Trigram GIN, suporte a paginação e parametrização do pool de conexões PostgreSQL.
+
+**Escopo implementado:**
+- Criação e aplicação da migration `1792161400000-OtimizacaoIndicesEBuscaTrigram.ts`:
+  - `idx_rastreamentos_ordem_tipo_status` em `(ordem_teste_id, "tipoLote", status)`.
+  - `idx_rastreamentos_setor_datas` em `(setor_id, data_entrada, data_saida)`.
+  - `idx_rastreamentos_peca_id` em `(peca_id) WHERE peca_id IS NOT NULL`.
+  - `idx_inspecoes_ordem_setor` em `(ordem_teste_id, setor_id, resultado)`.
+  - `idx_ocorrencias_ordem_status` em `(ordem_teste_id, status)`.
+  - `idx_ocorrencias_setor_data` em `(setor_id, data_ocorrencia)`.
+  - `idx_etapas_corte_rastreamento` em `(rastreamento_id)`.
+  - `idx_etapa_corte_pecas_etapa` em `(etapa_corte_id)`.
+  - `idx_divergencias_ordem_setor` em `(ordem_teste_id, setor_id, resolvido)`.
+  - `idx_retrabalhos_ordem_divergencia` em `(ordem_teste_id, divergencia_id, status)`.
+  - Habilitação da extensão `pg_trgm` e índice `idx_catalogo_pecas_trgm_nome` USING GIN (`nome gin_trgm_ops`).
+  - `idx_catalogo_pecas_codigo_original` em `(codigo_original) WHERE codigo_original IS NOT NULL`.
+- Parametrização do pool de conexões do PostgreSQL em `backend/src/config/database.ts` (`max: 25`, `idleTimeoutMillis: 30000`, `connectionTimeoutMillis: 5000`).
+- Adição de suporte a paginação (`page`, `limit`) e busca otimizada (`q`) em `GET /api/catalogo-pecas` com fallback retrocompatível de array direto e cabeçalho `X-Total-Count`.
+- Adição de suporte a paginação (`page`, `limit`), filtros de status e busca em `GET /api/lotes` com fallback retrocompatível de array direto e cabeçalho `X-Total-Count`.
+
+**Validação técnica executada:**
+- `npm run migration:run` executado e aplicado com sucesso no PostgreSQL.
+- Verificação dos 15 índices operacionais no PostgreSQL via `pg_indexes`.
+- Teste de `EXPLAIN ANALYZE` confirmando uso do `Index Scan using idx_rastreamentos_ordem_tipo_status`.
+- `npm run seed` executado com 100% de sucesso e integridade preservada.
+- `npm run build` no backend e frontend aprovados sem erros.
+- `git diff --check` sem pendências.

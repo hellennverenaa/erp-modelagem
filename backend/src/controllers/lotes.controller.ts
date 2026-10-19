@@ -250,17 +250,58 @@ export class LotesController {
         return res.status(403).json({ error: 'Usuário sem planta associada.', code: 'PLANTA_REQUIRED' });
       }
 
+      const page = req.query.page ? Math.max(1, Number(req.query.page) || 1) : undefined;
+      const limit = req.query.limit ? Math.max(1, Math.min(100, Number(req.query.limit) || 20)) : undefined;
+      const statusFiltro = req.query.status as OrdemTesteStatus | undefined;
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : undefined;
+
       const loteRepo = AppDataSource.getRepository(OrdemTeste);
-      const lotes = await loteRepo.find({
-        where: acessoTodasPlantas ? undefined : { plantaId: req.user!.plantaId },
-        relations: {
-          modelo: { pecas: { setorCorteOpcao: true }, marca: true, rotas: { setor: true } },
-          planta: true,
-          criadoPor: true,
-          rastreamentos: { setor: true, estacao: true, operadorEntrada: true, operadorSaida: true }
-        },
-        order: { createdAt: 'DESC' }
-      });
+      const queryBuilder = loteRepo.createQueryBuilder('ordem')
+        .leftJoinAndSelect('ordem.modelo', 'modelo')
+        .leftJoinAndSelect('modelo.pecas', 'pecas')
+        .leftJoinAndSelect('pecas.setorCorteOpcao', 'setorCorteOpcao')
+        .leftJoinAndSelect('modelo.marca', 'marca')
+        .leftJoinAndSelect('modelo.rotas', 'rotas')
+        .leftJoinAndSelect('rotas.setor', 'rotaSetor')
+        .leftJoinAndSelect('ordem.planta', 'planta')
+        .leftJoinAndSelect('ordem.criadoPor', 'criadoPor')
+        .leftJoinAndSelect('ordem.rastreamentos', 'rastreamentos')
+        .leftJoinAndSelect('rastreamentos.setor', 'rastrSetor')
+        .leftJoinAndSelect('rastreamentos.estacao', 'rastrEstacao')
+        .leftJoinAndSelect('rastreamentos.operadorEntrada', 'operadorEntrada')
+        .leftJoinAndSelect('rastreamentos.operadorSaida', 'operadorSaida');
+
+      if (!acessoTodasPlantas && req.user?.plantaId) {
+        queryBuilder.andWhere('ordem.plantaId = :plantaId', { plantaId: req.user.plantaId });
+      }
+
+      if (statusFiltro && Object.values(OrdemTesteStatus).includes(statusFiltro)) {
+        queryBuilder.andWhere('ordem.status = :status', { status: statusFiltro });
+      }
+
+      if (q) {
+        queryBuilder.andWhere(
+          '(LOWER(ordem.codigoBarras) LIKE LOWER(:q) OR LOWER(modelo.nome) LIKE LOWER(:q) OR LOWER(modelo.codigoProduto) LIKE LOWER(:q))',
+          { q: `%${q}%` }
+        );
+      }
+
+      queryBuilder.orderBy('ordem.createdAt', 'DESC');
+
+      let lotes: OrdemTeste[];
+      let total = 0;
+
+      if (page !== undefined || limit !== undefined) {
+        const take = limit || 20;
+        const skip = ((page || 1) - 1) * take;
+        const [items, count] = await queryBuilder.skip(skip).take(take).getManyAndCount();
+        lotes = items;
+        total = count;
+      } else {
+        lotes = await queryBuilder.getMany();
+        total = lotes.length;
+      }
+
       const lotesComSla = lotes.map(l => {
         if (l.modelo?.rotas) {
           const rotasDaPlanta = l.modelo.rotas.filter((rota) => rota.plantaId === l.plantaId);
@@ -269,6 +310,20 @@ export class LotesController {
         }
         return { ...l, slasPorSetor: l.slasPorSetor || null };
       });
+
+      res.setHeader('X-Total-Count', total);
+
+      if (page !== undefined || limit !== undefined) {
+        const take = limit || 20;
+        return res.json({
+          data: lotesComSla,
+          total,
+          page: page || 1,
+          limit: take,
+          totalPages: Math.ceil(total / take)
+        });
+      }
+
       return res.json(lotesComSla);
     } catch (error) {
       console.error('[LotesController] Erro ao buscar ordens de teste:', error);
