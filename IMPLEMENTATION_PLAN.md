@@ -248,6 +248,11 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - `npm run build` no frontend concluído com 0 erros.
 - `git diff --check` aprovado sem pendências.
 
+---
 
-
-
+### Registro de Integração — Pull Request #16
+- **Pull Request**: [#16 — feat: seeding operacional, otimizações de banco, desacoplamento em services, vitest e observabilidade (TASK-034 a TASK-039)](https://github.com/hellennverenaa/erp-modelagem/pull/16)
+- **Branch Origem**: `feature/seeding-dados-genericos`
+- **Branch Destino**: `main`
+- **Estado**: Aberto aguardando revisão e merge.
+- **Escopo Integrado**: TASK-034 (População de dados genéricos/operacionais), TASK-035 (Índices e performance de banco), TASK-036 (Puppeteer Singleton e Vitest), TASK-037 (Desacoplamento de lotes/tickets), TASK-038 (Desacoplamento de admin/RBAC e marcas) e TASK-039 (Observabilidade e logs estruturados Pino).
