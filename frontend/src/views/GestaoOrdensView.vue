@@ -20,11 +20,12 @@ import {
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
+import { configStore } from '../api/config.store'
 import OrderCreateModal from '../components/ordens/OrderCreateModal.vue'
 import OrderPrintModal from '../components/ordens/OrderPrintModal.vue'
 import OrderHistoryModal from '../components/ordens/OrderHistoryModal.vue'
 import OrderMaintenanceModal from '../components/ordens/OrderMaintenanceModal.vue'
-import type { Modelo, Planta, OrdemTeste } from '../components/ordens/types'
+import type { OrdemTeste, Modelo, Planta } from '../components/ordens/types'
 
 interface Toast {
   id: number
@@ -35,9 +36,8 @@ interface Toast {
 // ─── Estado Reativo ────────────────────────────────────────────
 const router = useRouter()
 const ordens = ref<OrdemTeste[]>([])
-const modelos = ref<Modelo[]>([])
-const catalogoModelos = ref<Modelo[]>([])
-const plantas = ref<Planta[]>([])
+const modelos = computed<Modelo[]>(() => (configStore.modelos.value || []) as Modelo[])
+const plantas = computed<Planta[]>(() => (configStore.plantas.value || []) as Planta[])
 
 const loading = ref(true)
 const searchQuery = ref('')
@@ -59,15 +59,13 @@ const canPrintOrdens = computed(() =>
   authStore.hasPermission('EDITAR_TELA_BIPAGEM')
 )
 
-// ─── Resolução de Nomes do Catálogo ────────────────────────────
+// ─── Resolução de Nomes do Catálogo via Cache ──────────────────
 function getModeloNome(modeloId: string) {
-  const m = catalogoModelos.value.find(x => x.id === modeloId)
-  return m ? m.nome : `Modelo #${modeloId.substring(0, 8)}`
+  return configStore.getModeloNome(modeloId)
 }
 
 function getModeloReferencia(modeloId: string) {
-  const m = catalogoModelos.value.find(x => x.id === modeloId)
-  return m ? m.codigoProduto : 'N/A'
+  return configStore.getModeloReferencia(modeloId)
 }
 
 let toastCounter = 0
@@ -246,14 +244,11 @@ async function fetchOrdens() {
 
 async function fetchDropdownData() {
   try {
-    const [resModelos, resPlantas, resCatalogo] = await Promise.all([
-      api.get<Modelo[]>('/admin/modelos'),
-      api.get<Planta[]>('/admin/plantas'),
-      api.get<Modelo[]>('/admin/modelos/catalogo'),
+    await Promise.all([
+      configStore.getModelos(),
+      configStore.getPlantas(),
+      configStore.getCatalogoModelos(),
     ])
-    modelos.value = resModelos.data
-    plantas.value = resPlantas.data
-    catalogoModelos.value = resCatalogo.data
   } catch {
     addToast('error', 'Erro ao carregar opções do formulário.')
   }

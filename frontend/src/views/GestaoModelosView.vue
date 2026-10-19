@@ -21,6 +21,7 @@ import {
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
+import { configStore } from '../api/config.store'
 import BrandManagerModal from '../components/BrandManagerModal.vue'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -172,11 +173,11 @@ function sanitizeCodigoProduto(event: Event) {
 }
 
 // ─── Requisicoes ─────────────────────────────────────────────────────────────
-async function fetchModelos() {
+async function fetchModelos(force = false) {
   loading.value = true
   try {
-    const { data } = await api.get<Modelo[]>('/admin/modelos/catalogo')
-    modelos.value = data
+    const data = await configStore.getCatalogoModelos(force)
+    modelos.value = data as any
   } catch {
     addToast('error', 'Erro ao carregar catálogo de modelos.')
   } finally {
@@ -184,23 +185,25 @@ async function fetchModelos() {
   }
 }
 
-async function fetchMarcas() {
+async function fetchMarcas(force = false) {
   try {
-    const { data } = await api.get<Marca[]>('/admin/marcas')
-    marcas.value = data
+    const data = await configStore.getMarcas(force)
+    marcas.value = data as any
   } catch {
     addToast('error', 'Erro ao carregar marcas.')
   }
 }
 
 async function handleMarcaCreated(marca: Marca) {
-  await fetchMarcas()
+  configStore.invalidateMarcas()
+  await fetchMarcas(true)
   form.value.marcaId = marca.id
   addToast('success', `Marca "${marca.nome}" cadastrada e selecionada.`)
 }
 
 async function handleMarcaUpdated(marca: Marca) {
-  await fetchMarcas()
+  configStore.invalidateMarcas()
+  await fetchMarcas(true)
   if (!marca.ativo && form.value.marcaId === marca.id) {
     form.value.marcaId = ''
   }
@@ -208,18 +211,12 @@ async function handleMarcaUpdated(marca: Marca) {
 
 async function fetchStep2Options() {
   try {
-    const [catRes, maqRes] = await Promise.all([
+    const [catRes, maqList] = await Promise.all([
       api.get<CatalogoItem[]>('/catalogo-pecas'),
-      api.get<any[]>('/config/opcoes/subsetor_corte').catch(() =>
-        api.get<any[]>('/admin/config-opcoes', { params: { categoria: 'subsetor_corte' } })
-      )
+      configStore.getMaquinasCorte()
     ])
     catalogoPecas.value = catRes.data || []
-    maquinasCorte.value = (maqRes.data || []).map((m: any) => ({
-      id: m.id,
-      label: m.label || m.valor,
-      valor: m.valor
-    }))
+    maquinasCorte.value = maqList
   } catch (err) {
     console.error('[GestaoModelosView] Erro ao buscar catálogo/máquinas:', err)
   }
@@ -317,7 +314,8 @@ async function handleCreateModelo() {
       })
       addToast('success', `Modelo "${form.value.nome}" cadastrado com sucesso.`)
     }
-    await fetchModelos()
+    configStore.invalidateModelos()
+    await fetchModelos(true)
     closeModal()
   } catch (err: any) {
     const code      = err?.response?.data?.code
@@ -435,7 +433,7 @@ onUnmounted(() => {
           type="button"
           class="btn-ghost"
           :disabled="loading"
-          @click="fetchModelos"
+          @click="() => fetchModelos(true)"
           aria-label="Recarregar modelos"
         >
           <RefreshCw :size="15" :class="{ 'spin-anim': loading }" aria-hidden="true" />

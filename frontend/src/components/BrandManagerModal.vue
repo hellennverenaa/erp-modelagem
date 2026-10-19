@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { Loader2, Plus, RefreshCw, X } from '@lucide/vue'
 import api from '../api/axios'
+import { configStore } from '../api/config.store'
 
 interface Marca {
   id: string
@@ -49,6 +50,7 @@ async function cadastrarMarca() {
   try {
     const { data } = await api.post<Marca>('/admin/marcas', { nome: nomeNormalizado })
     nome.value = ''
+    configStore.invalidateMarcas()
     await carregarMarcas()
     emit('created', data)
   } catch (error: any) {
@@ -65,6 +67,7 @@ async function alternarStatus(marca: Marca) {
   errorMessage.value = ''
   try {
     const { data } = await api.patch<Marca>(`/admin/marcas/${marca.id}`, { ativo: !marca.ativo })
+    configStore.invalidateMarcas()
     await carregarMarcas()
     emit('updated', data)
   } catch (error: any) {
@@ -94,6 +97,7 @@ async function salvarNome(marca: Marca) {
   try {
     const { data } = await api.patch<Marca>(`/admin/marcas/${marca.id}`, { nome: nomeNormalizado })
     cancelarEdicao()
+    configStore.invalidateMarcas()
     await carregarMarcas()
     emit('updated', data)
   } catch (error: any) {

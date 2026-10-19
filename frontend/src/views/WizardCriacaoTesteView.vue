@@ -19,6 +19,7 @@ import {
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
+import { configStore } from '../api/config.store'
 import BrandManagerModal from '../components/BrandManagerModal.vue'
 import RouteBuilder from '../components/RouteBuilder.vue'
 
@@ -215,6 +216,7 @@ function upsertMarcaDisponivel(marca: Marca) {
 }
 
 function marcaCriada(marca: Marca) {
+  configStore.invalidateMarcas()
   upsertMarcaDisponivel(marca)
   if (!activeModelId.value) {
     formModelo.value.marcaId = marca.id
@@ -223,6 +225,7 @@ function marcaCriada(marca: Marca) {
 }
 
 function marcaAtualizada(marca: Marca) {
+  configStore.invalidateMarcas()
   if (marca.ativo) {
     upsertMarcaDisponivel(marca)
     if (formModelo.value.marcaId === marca.id) selectedInactiveBrandName.value = ''
@@ -257,8 +260,8 @@ function dateOnlyForInput(value?: string | null): string {
 async function carregarModelosDisponiveis() {
   if (!podeCriarPcp.value) return
   try {
-    const { data } = await api.get<Modelo[]>('/admin/modelos')
-    modelosDisponiveis.value = data || []
+    const data = await configStore.getModelos()
+    modelosDisponiveis.value = (data as any) || []
   } catch {
     toast('error', 'Não foi possível carregar os modelos sem ordem para retomada.')
   }
@@ -280,12 +283,12 @@ async function carregarDadosIniciais() {
   const tarefas: Promise<void>[] = []
   if (podeCriarPcp.value) {
     tarefas.push((async () => {
-      const { data } = await api.get<Marca[]>('/admin/marcas')
-      marcas.value = data || []
+      const data = await configStore.getMarcas()
+      marcas.value = (data as any) || []
     })())
     tarefas.push((async () => {
-      const { data } = await api.get<Planta[]>('/admin/plantas')
-      plantas.value = data || []
+      const data = await configStore.getPlantas()
+      plantas.value = (data as any) || []
       const primeira = plantasPermitidas.value[0]
       if (!formOrdem.value.plantaId && primeira) formOrdem.value.plantaId = primeira.id
     })())
@@ -347,6 +350,7 @@ async function submitModelo() {
       activeModelId.value = data.modelo.id
     }
     currentStep.value = 2
+    configStore.invalidateModelos()
     await carregarModelosDisponiveis()
     toast('success', 'Modelo salvo. Informe a previsão de corte para criar a ordem de teste.')
   } catch (error: any) {
@@ -401,6 +405,7 @@ async function submitOrdem() {
         dataCorte: formModelo.value.dataCorte,
       },
     }
+    configStore.invalidateModelos()
     await Promise.all([carregarOrdensPendentes(), carregarModelosDisponiveis()])
     toast('success', 'Ordem criada e enviada para a fila da Modelagem.')
   } catch (error: any) {

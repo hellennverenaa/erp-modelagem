@@ -308,3 +308,28 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - `npm test` no backend com 39/39 testes unitários aprovados em 788ms.
 - `npm run build` no backend compilado com 0 erros.
 - `git diff --check` aprovado sem pendências.
+
+---
+
+### TASK-042 — Store Reativa de Configurações, Cache com TTL e Deduplicação In-Flight
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 3.3 do relatório de melhorias: eliminação de requisições HTTP redundantes para metadados e configurações operacionais (plantas, modelos, marcas, setores e máquinas de corte), implementando gerenciamento de cache reativo com TTL e compartilhamento de requisições concorrentes.
+
+**Escopo implementado:**
+- Criação de `frontend/src/api/config.store.ts`:
+  - Cache reativo em memória com TTL configurável (padrão de 5 minutos) para metadados operacionais (`plantas`, `marcas`, `modelos`, `catalogoModelos`, `setores`, `maquinasCorte`).
+  - Deduplicação de requisições em voo (In-flight request pooling): múltiplos componentes que montam simultaneamente compartilham a mesma Promise HTTP sem emitir requisições duplicadas à API.
+  - Invalidação atômica e granular (`invalidateMarcas`, `invalidateModelos`, `invalidatePlantas`, `invalidateSetores`, `invalidateAll`).
+  - Limpeza automática e isolamento de cache ao encerrar sessão (`erp:auth-session-ended`).
+  - Funções de resolução rápida com fallback seguro (`getModeloNome`, `getModeloReferencia`, `getPlantaNome`, `getMarcaNome`).
+- Adoção nos componentes e views do frontend:
+  - `GestaoOrdensView.vue`: Consumo centralizado de modelos, catálogo e plantas com getters cacheados.
+  - `GestaoModelosView.vue`: Consumo de catálogo de modelos, marcas e opções de corte via `configStore`, com invalidação automática ao salvar modelos e marcas.
+  - `WizardCriacaoTesteView.vue`: Consumo de marcas, plantas e modelos disponíveis via `configStore`, com invalidação atômica na criação de rascunhos e ordens.
+  - `RouteBuilder.vue`: Carregamento compartilhado de setores operacionais e plantas ativas.
+  - `BrandManagerModal.vue`: Disparo de `invalidateMarcas()` em operações de cadastro, alteração de status e renomeação.
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.67s).
+- `npm test` no backend com 39/39 testes unitários aprovados em 755ms.
+- `npm run build` no backend compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
