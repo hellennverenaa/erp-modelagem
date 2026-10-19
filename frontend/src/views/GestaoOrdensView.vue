@@ -14,6 +14,9 @@ import {
   Activity,
   Printer,
   Settings,
+  ChevronLeft,
+  ChevronRight,
+  X,
 } from '@lucide/vue'
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
@@ -106,7 +109,15 @@ function abrirManutencao(ordem: OrdemTeste) {
   showManutencaoModal.value = true
 }
 
+// ─── Paginação e Busca ──────────────────────────────────────────
+const currentPage = ref(1)
+const pageSize = ref(15)
+const totalItems = ref(0)
+const totalPages = ref(1)
+let searchDebounceTimeout: any = null
+
 async function onOrdemCreated() {
+  currentPage.value = 1
   await Promise.all([fetchOrdens(), fetchDropdownData()])
 }
 
@@ -156,25 +167,42 @@ function getPrioridade(p: string) {
 }
 
 // ─── Computed ──────────────────────────────────────────────────
-const filteredOrdens = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return ordens.value
-  return ordens.value.filter(
-    (o) =>
-      o.codigoBarras.toLowerCase().includes(q) ||
-      o.status.toLowerCase().includes(q) ||
-      o.prioridadePcp.toLowerCase().includes(q)
-  )
-})
-
 const stats = computed(() => ({
-  total: ordens.value.length,
+  total: totalItems.value,
   emAndamento: ordens.value.filter(
     (o) => !['APROVADO', 'REPROVADO', 'LIBERADO_PRODUCAO'].includes(o.status)
   ).length,
   aprovados: ordens.value.filter((o) => o.status === 'APROVADO' || o.status === 'LIBERADO_PRODUCAO').length,
   alta: ordens.value.filter((o) => o.prioridadePcp === 'ALTA').length,
 }))
+
+// ─── Controles de Busca e Paginação ────────────────────────────
+function onSearchInput() {
+  clearTimeout(searchDebounceTimeout)
+  searchDebounceTimeout = setTimeout(() => {
+    currentPage.value = 1
+    void fetchOrdens()
+  }, 300)
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  currentPage.value = 1
+  void fetchOrdens()
+}
+
+function goToPage(p: number) {
+  if (p < 1 || p > totalPages.value || p === currentPage.value) return
+  currentPage.value = p
+  void fetchOrdens()
+}
+
+function onPageSizeChange(e: Event) {
+  const target = e.target as HTMLSelectElement
+  pageSize.value = Number(target.value) || 15
+  currentPage.value = 1
+  void fetchOrdens()
+}
 
 // ─── Toast ─────────────────────────────────────────────────────
 function addToast(type: 'success' | 'error', message: string) {
@@ -189,8 +217,26 @@ function addToast(type: 'success' | 'error', message: string) {
 async function fetchOrdens() {
   loading.value = true
   try {
-    const { data } = await api.get<OrdemTeste[]>('/lotes')
-    ordens.value = data
+    const q = searchQuery.value.trim()
+    const { data, headers } = await api.get('/lotes', {
+      params: {
+        page: currentPage.value,
+        limit: pageSize.value,
+        ...(q ? { q } : {})
+      }
+    })
+
+    if (data && typeof data === 'object' && Array.isArray((data as any).data)) {
+      ordens.value = (data as any).data
+      totalItems.value = (data as any).total || 0
+      totalPages.value = (data as any).totalPages || 1
+      currentPage.value = (data as any).page || 1
+    } else {
+      ordens.value = Array.isArray(data) ? (data as OrdemTeste[]) : []
+      const headerTotal = headers['x-total-count']
+      totalItems.value = headerTotal ? Number(headerTotal) : ordens.value.length
+      totalPages.value = Math.max(1, Math.ceil(totalItems.value / pageSize.value))
+    }
   } catch {
     addToast('error', 'Erro ao carregar ordens de produção.')
   } finally {
@@ -322,11 +368,21 @@ onMounted(async () => {
         <input
           id="input-search-ordens"
           v-model="searchQuery"
+          @input="onSearchInput"
           type="search"
           class="search-input"
-          placeholder="Buscar por código, status ou prioridade..."
+          placeholder="Buscar por código de barras ou modelo..."
           aria-label="Buscar ordens"
         />
+        <button
+          v-if="searchQuery"
+          type="button"
+          class="btn-clear-search"
+          @click="clearSearch"
+          aria-label="Limpar busca"
+        >
+          <X :size="14" />
+        </button>
       </div>
     </div>
 
@@ -344,10 +400,12 @@ onMounted(async () => {
       </div>
 
       <!-- Empty state -->
-      <div v-else-if="filteredOrdens.length === 0" class="table-empty">
+      <div v-else-if="ordens.length === 0" class="table-empty">
         <Package :size="40" class="empty-icon" aria-hidden="true" />
         <p class="empty-title">Nenhuma ordem encontrada</p>
-        <p class="empty-sub">Crie a primeira ordem de teste clicando em "Nova Ordem de Teste".</p>
+        <p class="empty-sub">
+          {{ searchQuery ? 'Nenhum resultado para a pesquisa informada.' : 'Crie a primeira ordem de teste clicando em "Nova Ordem de Teste".' }}
+        </p>
       </div>
 
       <!-- Data table -->
@@ -365,7 +423,7 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="ordem in filteredOrdens" :key="ordem.id" class="go-row">
+            <tr v-for="ordem in ordens" :key="ordem.id" class="go-row">
               <td>
                 <span class="barcode-cell">{{ ordem.codigoBarras }}</span>
               </td>
@@ -434,9 +492,45 @@ onMounted(async () => {
         </table>
       </div>
 
-      <!-- Footer count -->
-      <div v-if="!loading && filteredOrdens.length > 0" class="table-footer">
-        <span>{{ filteredOrdens.length }} ordem{{ filteredOrdens.length !== 1 ? 's' : '' }} exibida{{ filteredOrdens.length !== 1 ? 's' : '' }}</span>
+      <!-- Rodapé com Paginação -->
+      <div v-if="!loading && ordens.length > 0" class="table-footer-pagination">
+        <div class="pagination-info">
+          <span>Mostrando {{ ((currentPage - 1) * pageSize) + 1 }}–{{ Math.min(currentPage * pageSize, totalItems) }} de {{ totalItems }} ordem{{ totalItems !== 1 ? 's' : '' }}</span>
+          <div class="page-size-selector">
+            <label for="sel-page-size-ordens">Exibir:</label>
+            <select id="sel-page-size-ordens" :value="pageSize" @change="onPageSizeChange">
+              <option :value="15">15</option>
+              <option :value="25">25</option>
+              <option :value="50">50</option>
+              <option :value="100">100</option>
+            </select>
+          </div>
+        </div>
+        <div class="pagination-controls">
+          <button
+            type="button"
+            class="pagination-btn"
+            :disabled="currentPage <= 1 || loading"
+            @click="goToPage(currentPage - 1)"
+            aria-label="Página anterior"
+          >
+            <ChevronLeft :size="15" />
+            <span>Anterior</span>
+          </button>
+          <span class="pagination-pages">
+            Página {{ currentPage }} de {{ totalPages }}
+          </span>
+          <button
+            type="button"
+            class="pagination-btn"
+            :disabled="currentPage >= totalPages || loading"
+            @click="goToPage(currentPage + 1)"
+            aria-label="Próxima página"
+          >
+            <span>Próxima</span>
+            <ChevronRight :size="15" />
+          </button>
+        </div>
       </div>
     </div>
 
@@ -681,7 +775,7 @@ onMounted(async () => {
 
 .search-input {
   width: 100%;
-  padding: 0.5625rem 0.875rem 0.5625rem 2.25rem;
+  padding: 0.5625rem 2rem 0.5625rem 2.25rem;
   font-size: 0.875rem;
   font-family: inherit;
   color: #0f172a;
@@ -694,6 +788,26 @@ onMounted(async () => {
 }
 .search-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
 .search-input::placeholder { color: #94a3b8; }
+
+.btn-clear-search {
+  position: absolute;
+  right: 0.625rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+}
+.btn-clear-search:hover {
+  color: #0f172a;
+  background: #f1f5f9;
+}
 
 /* ─── Table Card ───────────────────────────────────── */
 .table-card {
@@ -846,14 +960,80 @@ onMounted(async () => {
 .liberado-dot--yes { background: #16a34a; box-shadow: 0 0 0 2px #dcfce7; }
 .liberado-dot--no  { background: #cbd5e1; }
 
-/* Table footer */
-.table-footer {
+/* Table footer com paginação */
+.table-footer-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
   padding: 0.75rem 1rem;
-  border-top: 1px solid #f1f5f9;
-  font-size: 0.75rem;
-  color: #94a3b8;
-  font-weight: 500;
-  text-align: right;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.page-size-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.page-size-selector select {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.8125rem;
+  outline: none;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #334155;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.pagination-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination-pages {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #475569;
+  padding: 0 0.5rem;
 }
 
 /* Toast transitions */

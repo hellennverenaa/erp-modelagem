@@ -284,3 +284,27 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 - `npm run build` no backend compilado com 0 erros.
 - `git diff --check` aprovado sem pendências.
 
+---
+
+### TASK-041 — Paginação e Busca Server-Side com Otimização Trigram nos Grids Frontend
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.** Resolução dos gargalos identificados no Ponto 3.2 do relatório de melhorias: eliminação de carregamento de listas completas em memória no frontend, conectando os grids de Catálogo de Peças e Gestão de Ordens aos endpoints de paginação e busca indexada por Trigram (GIN) criados no backend.
+
+**Escopo implementado:**
+- Atualização de `frontend/src/views/CatalogoPecasView.vue`:
+  - Integração aos parâmetros `page`, `limit` e `q` da rota `GET /catalogo-pecas`.
+  - Busca server-side com debounce de 300ms e botão rápido de limpeza da consulta.
+  - Rodapé de paginação com seletor de tamanho de lote (25, 50, 100), navegação entre páginas (`Anterior` / `Próxima`) e indicador dinâmico de intervalo exibido e total de peças.
+  - Empty state contextualizado para buscas sem resultados vs catálogo vazio.
+- Atualização de `frontend/src/views/GestaoOrdensView.vue`:
+  - Integração aos parâmetros `page`, `limit` e `q` da rota `GET /lotes`, consumindo a resposta paginada e o cabeçalho `X-Total-Count`.
+  - Busca debounced (300ms) por código de barras, nome ou referência do modelo com índice server-side.
+  - Rodapé com paginação server-side, seletor de limite (15, 25, 50, 100) e controle de estado reativo.
+  - Sincronização do KPI strip com a contagem total de ordens cadastradas no banco de dados.
+- Estilização consistente:
+  - Adicionados estilos utilitários `.table-footer-pagination`, `.page-size-selector`, `.pagination-controls`, `.pagination-btn` e `.btn-clear-search` preservando o design system clean industrial do projeto.
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.20s).
+- `npm test` no backend com 39/39 testes unitários aprovados em 788ms.
+- `npm run build` no backend compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
