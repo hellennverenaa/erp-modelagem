@@ -22,6 +22,7 @@ import {
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
 import { configStore } from '../api/config.store'
+import { formatDate, formatDateOnly, toDateInputValue } from '../utils/date'
 import BrandManagerModal from '../components/BrandManagerModal.vue'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -356,7 +357,7 @@ async function openEditPecas(modelo: Modelo) {
       marcaId: data.marcaId,
       codigoProduto: data.codigoProduto,
       nome: data.nome,
-      dataCorte: data.dataCorte ? String(data.dataCorte).slice(0, 10) : '',
+      dataCorte: toDateInputValue(data.dataCorte),
     }
     pecasSelecionadas.value = (data.pecas || []).map((peca: any) => ({
       pecaModeloId: peca.id,
@@ -375,12 +376,6 @@ async function openEditPecas(modelo: Modelo) {
 function closeModal() {
   showModal.value = false
   editingModeloId.value = ''
-}
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-  })
 }
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
@@ -547,7 +542,7 @@ onUnmounted(() => {
               <td class="text-center">
                 <span v-if="modelo.dataCorte" class="date-pill">
                   <Calendar :size="11" aria-hidden="true" />
-                  {{ formatDate(modelo.dataCorte) }}
+                  {{ formatDateOnly(modelo.dataCorte) }}
                 </span>
                 <span v-else class="empty-dash">—</span>
               </td>
