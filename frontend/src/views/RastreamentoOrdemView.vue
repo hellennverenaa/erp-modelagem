@@ -10,6 +10,7 @@ import api, {
   refreshAccessToken,
 } from '../api/axios'
 import { gsap } from 'gsap'
+import { formatDateOnly, formatDateTime } from '../utils/date'
 import {
   ArrowLeft,
   RotateCcw,
@@ -189,21 +190,8 @@ const sortedOrdens = computed(() => {
 // --------------------------------------------------
 function formatTimestampFormatado(isoDate: string | null | undefined, label: string): string {
   if (!isoDate) return `${label}: —`
-  try {
-    const d = new Date(isoDate)
-    const dia = d.getDate().toString().padStart(2, '0')
-    const mes = (d.getMonth() + 1).toString().padStart(2, '0')
-    const hora = d.getHours().toString().padStart(2, '0')
-    const min = d.getMinutes().toString().padStart(2, '0')
-    return `${label}: ${dia}/${mes} às ${hora}:${min}`
-  } catch {
-    return `${label}: —`
-  }
-}
-
-function formatDateOnly(value: string | null | undefined): string {
-  const isoDate = value?.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  return isoDate ? `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}` : '—'
+  const formatted = formatDateTime(isoDate)
+  return formatted === '—' ? `${label}: —` : `${label}: ${formatted}`
 }
 
 function formatPermanencia(minutos: number | null | undefined): string {

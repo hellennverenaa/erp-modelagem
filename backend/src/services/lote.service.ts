@@ -6,6 +6,7 @@ import { Planta } from '../entities/Planta';
 import { lockModelConfiguration, validatePersistedModelRoute, getPersistedModelRoute } from './route-integrity.service';
 import { saveModelPieces, ModelPieceInput } from './model-pieces.service';
 import { garantirTicketsSetorDaOrdem } from './ticket-setor.service';
+import { parseDateOnly } from '../utils/date.utils';
 
 export class LoteServiceError extends Error {
   constructor(
@@ -87,7 +88,7 @@ export class LoteService {
           throw new LoteServiceError('Planta não encontrada ou inativa.', 404, 'PLANTA_NOT_FOUND');
         }
 
-        const previsaoCorte = dados.dataCorte ? new Date(dados.dataCorte) : modelo.dataCorte;
+        const previsaoCorte = dados.dataCorte ? parseDateOnly(dados.dataCorte) : modelo.dataCorte;
         if (!previsaoCorte) {
           throw new LoteServiceError('Informe a previsão de corte antes de criar a ordem.', 400, 'DATA_CORTE_REQUIRED');
         }

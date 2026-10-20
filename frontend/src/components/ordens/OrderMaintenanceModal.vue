@@ -12,6 +12,7 @@ import {
   Loader2,
 } from '@lucide/vue'
 import api from '../../api/axios'
+import { formatDateTime } from '../../utils/date'
 import type {
   OrdemTeste,
   SlaSetorFormItem,
@@ -280,17 +281,6 @@ function formatPecaRemanejada(dadosAnt: Record<string, any> | null, dadosNov: Re
   const origem = dadosAnt?.maquinaNome || dadosAnt?.setorCorteOpcaoId || 'Sem máquina'
   const destino = dadosNov?.maquinaNome || dadosNov?.setorCorteOpcaoId || 'Sem máquina'
   return `Peça ${String(pecaNome).toUpperCase()} remanejada do subsetor ${origem} para ${destino}`
-}
-
-function formatDateTime(iso: string | null) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 const rastreamentoStatusConfig: Record<string, { label: string }> = {
@@ -613,7 +603,7 @@ async function salvar() {
                         {{ log.acao }}
                       </span>
                       <span class="text-slate-400 text-xs font-mono">
-                        {{ new Date(log.criadoEm).toLocaleString('pt-BR') }}
+                        {{ formatDateTime(log.criadoEm) }}
                       </span>
                     </div>
 

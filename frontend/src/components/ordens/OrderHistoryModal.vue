@@ -14,6 +14,7 @@ import {
   Info,
 } from '@lucide/vue'
 import api from '../../api/axios'
+import { formatDateTime } from '../../utils/date'
 import type {
   OrdemTeste,
   RastreamentoHistorico,
@@ -94,17 +95,6 @@ const rastreamentoStatusConfig: Record<string, { label: string; cls: string; dot
 
 function getRastreamentoStatus(s: string) {
   return rastreamentoStatusConfig[s] ?? { label: s, cls: 'rstat--slate', dotCls: 'rdot--slate' }
-}
-
-function formatDateTime(iso: string | null) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 function formatPermanencia(min: number | null) {

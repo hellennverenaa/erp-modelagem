@@ -18,6 +18,7 @@ import { ModelPiecesError, ModelPieceInput, saveModelPieces } from '../services/
 import { lockModelConfiguration } from '../services/route-integrity.service';
 import { AdminRbacService, AdminRbacError } from '../services/admin-rbac.service';
 import { MarcaService, MarcaServiceError } from '../services/marca.service';
+import { parseDateOnly } from '../utils/date.utils';
 
 function isAutomationActor(req: Request): boolean {
   const user = req.user;
@@ -95,7 +96,7 @@ export class AdminController {
           marcaId: parsed.data.marcaId,
           codigoProduto: parsed.data.codigoProduto,
           nome: parsed.data.nome,
-          dataCorte: parsed.data.dataCorte ? new Date(parsed.data.dataCorte) : null,
+          dataCorte: parseDateOnly(parsed.data.dataCorte),
           temporada: null,
           mfmReferenciaUrl: null,
           fichaTecnicaUrl: null,
@@ -130,7 +131,7 @@ export class AdminController {
         if (!atual) throw Object.assign(new Error('Modelo não encontrado ou inativo.'), { status: 404, code: 'MODELO_NOT_FOUND' });
         const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: atual.id }, select: { id: true } });
         if (ordem) throw Object.assign(new Error('A previsão de corte não pode ser alterada depois da criação da ordem.'), { status: 409, code: 'MODEL_ALREADY_ORDERED' });
-        atual.dataCorte = new Date(data.data);
+        atual.dataCorte = parseDateOnly(data.data);
         return repo.save(atual);
       });
       return res.json({ message: 'Previsão de corte atualizada.', modelo });
@@ -375,7 +376,7 @@ export class AdminController {
           codigoProduto,
           nome,
           temporada: null,
-          dataCorte: dataCorte ? new Date(dataCorte) : null,
+          dataCorte: parseDateOnly(dataCorte),
           mfmReferenciaUrl: mfmReferenciaUrl || null,
           fichaTecnicaUrl: fichaTecnicaUrl || null,
           ativo: true,
