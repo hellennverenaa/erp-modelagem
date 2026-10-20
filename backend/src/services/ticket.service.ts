@@ -80,8 +80,9 @@ export class TicketService {
 
     const tickets = await AppDataSource.getRepository(TicketSetor).find({
       where: { ordemTesteId: ordemId },
+      relations: { setor: true },
       order: { ordemEtapa: 'ASC', createdAt: 'ASC' },
-    });
+    }).then((registros) => registros.filter((ticket) => ticket.setor?.ativo));
 
     return {
       ordemTesteId: ordem.id,
@@ -114,10 +115,14 @@ export class TicketService {
 
     const ticket = await AppDataSource.getRepository(TicketSetor).findOne({
       where: { codigoBarras },
-      relations: { ordemTeste: true },
+      relations: { ordemTeste: true, setor: true },
     });
 
     if (!ticket) {
+      throw new TicketServiceError('Ticket de setor não encontrado.', 404, 'TICKET_SETOR_NOT_FOUND');
+    }
+
+    if (!ticket.setor?.ativo) {
       throw new TicketServiceError('Ticket de setor não encontrado.', 404, 'TICKET_SETOR_NOT_FOUND');
     }
 

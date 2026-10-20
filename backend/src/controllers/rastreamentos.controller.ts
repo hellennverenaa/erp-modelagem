@@ -108,7 +108,6 @@ const SETORES_HANDOFF_AUTOMATICO_VALORES = [
   'ALMOXARIFADO_MODELAGEM',
   'NAVALHA',
   'TELAS',
-  'CORTE_RECEBIMENTO',
   'CORTE_DUBLAGEM',
 ];
 
@@ -203,6 +202,15 @@ export class RastreamentosController {
 
       const setorRepo = AppDataSource.getRepository(Setor);
       const setorInfo = await setorRepo.findOne({ where: { id: setorId } });
+      if (!setorInfo) {
+        return res.status(404).json({ error: 'Setor não encontrado.', code: 'SETOR_NAO_ENCONTRADO' });
+      }
+      if (!setorInfo.ativo) {
+        return res.status(409).json({
+          error: 'O setor não está ativo para novas bipagens.',
+          code: 'SETOR_INATIVO',
+        });
+      }
 
       // 1.1. Busca a Ordem de Teste correspondente para obter o modeloId
       const ordemRepo = AppDataSource.getRepository(OrdemTeste);
@@ -225,9 +233,12 @@ export class RastreamentosController {
       }
 
       let versaoRota: number;
+      let etapasRotaAtiva: Awaited<ReturnType<typeof getPersistedModelRoute>>['etapas'];
       try {
         await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
-        versaoRota = (await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao)).versao;
+        const rotaPersistida = await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        versaoRota = rotaPersistida.versao;
+        etapasRotaAtiva = rotaPersistida.etapas;
       } catch (error) {
         if (error instanceof RouteIntegrityError) {
           return res.status(409).json({ error: `A ordem ainda não pode entrar na produção: ${error.message}`, code: 'ROTA_INVALIDA' });
@@ -236,19 +247,11 @@ export class RastreamentosController {
       }
 
       // 1.2. Verifica se o setorId pertence à rota de produção mapeada para o modelo
-      const rotaRepo = AppDataSource.getRepository(RotaModelo);
-      const pertenceARota = await rotaRepo.findOne({
-        where: {
-          modeloId: ordem.modeloId,
-          plantaId: ordem.plantaId,
-          versao: versaoRota,
-          setorId: setorId,
-        },
-      });
+      const pertenceARota = etapasRotaAtiva.find((etapa) => etapa.setorId === setorId);
 
       let pertenceAoCorte = false;
       const pecasDaOrdem = ordem.modelo?.pecas || [];
-      if (pecasDaOrdem.length > 0 && setorInfo?.ativo && setorInfo.plantaId === ordem.plantaId) {
+      if (pecasDaOrdem.length > 0 && setorInfo.plantaId === ordem.plantaId) {
         const tiposSetorCorteIds = await getTipoSetorIdsCorteDaOrdem(AppDataSource.manager, ordem, pecasDaOrdem);
         pertenceAoCorte = tiposSetorCorteIds.includes(setorInfo.tipoOpcaoId);
       }
@@ -271,6 +274,7 @@ export class RastreamentosController {
             plantaId: ordem.plantaId,
             versaoRota,
           })
+          .innerJoin(Setor, 'setorRota', 'setorRota.id = rm.setorId AND setorRota.ativo = TRUE')
           .where('r.ordemTesteId = :ordemTesteId', { ordemTesteId })
           .andWhere('r.tipoLote = :tipoLote', { tipoLote })
           .andWhere('r.dataEntrada IS NOT NULL')
@@ -293,15 +297,10 @@ export class RastreamentosController {
 
       // 1.2.1. Trava Estrita de Sequência (Anti-Teletransporte)
       if (ordemSetorAtual > 1) {
-        // Encontra a etapa imediatamente anterior na rota desse mesmo fluxo.
-        const rotaAnterior = await rotaRepo.findOne({
-          where: {
-            modeloId: ordem.modeloId,
-            plantaId: ordem.plantaId,
-            versao: versaoRota,
-            ordem: ordemSetorAtual - 1,
-          },
-        });
+        // Pula posições legadas cujo setor está inativo e busca a etapa ativa anterior.
+        const rotaAnterior = etapasRotaAtiva
+          .filter((etapa) => etapa.ordem < ordemSetorAtual)
+          .sort((a, b) => b.ordem - a.ordem)[0];
 
         if (rotaAnterior) {
           const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);
@@ -508,6 +507,12 @@ export class RastreamentosController {
       if (!setorInfo) {
         return res.status(404).json({ error: 'Setor não encontrado.', code: 'SETOR_NAO_ENCONTRADO' });
       }
+      if (!setorInfo.ativo) {
+        return res.status(409).json({
+          error: 'O setor não está ativo para novas bipagens.',
+          code: 'SETOR_INATIVO',
+        });
+      }
 
       // 2.1. Busca a Ordem de Teste para obter o modeloId e peças
       const ordemRepo = AppDataSource.getRepository(OrdemTeste);
@@ -530,10 +535,11 @@ export class RastreamentosController {
         return res.status(409).json({ error: 'A ordem está aguardando a Modelagem configurar peças, Caixa Teste e rota.', code: 'MODELAGEM_REQUIRED' });
       }
 
-      let versaoRota: number;
+      let etapasRotaAtiva: Awaited<ReturnType<typeof getPersistedModelRoute>>['etapas'];
       try {
         await validatePersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
-        versaoRota = (await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao)).versao;
+        const rotaPersistida = await getPersistedModelRoute(AppDataSource.manager, ordem.modeloId, ordem.plantaId, ordem.rotaVersao);
+        etapasRotaAtiva = rotaPersistida.etapas;
       } catch (error) {
         if (error instanceof RouteIntegrityError) {
           return res.status(409).json({ error: `A ordem ainda não pode entrar na produção: ${error.message}`, code: 'ROTA_INVALIDA' });
@@ -542,15 +548,7 @@ export class RastreamentosController {
       }
 
       // 2.2. Validação da Rota de Produção (HIERARQUIA DA ROTA ANTES DE DATA_ENTRADA)
-      const rotaRepo = AppDataSource.getRepository(RotaModelo);
-      const pertenceARota = await rotaRepo.findOne({
-        where: {
-          modeloId: ordem.modeloId,
-          plantaId: ordem.plantaId,
-          versao: versaoRota,
-          setorId: setorId,
-        },
-      });
+      const pertenceARota = etapasRotaAtiva.find((etapa) => etapa.setorId === setorId);
 
       let pertenceAoCorte = false;
       const pecas = ordem.modelo?.pecas || [];
@@ -742,26 +740,11 @@ export class RastreamentosController {
           const ordemObj = await ordemRepo.findOne({ where: { id: ordemTesteId } });
           
           if (ordemObj) {
-            const rotaRepo = AppDataSource.getRepository(RotaModelo);
-            const rotaAtual = await rotaRepo.findOne({
-              where: {
-                modeloId: ordemObj.modeloId,
-                plantaId: ordemObj.plantaId,
-                versao: ordemObj.rotaVersao || versaoRota,
-                setorId: setorId,
-              },
-            });
+            const rotaAtual = etapasRotaAtiva.find((etapa) => etapa.setorId === setorId);
 
             if (rotaAtual) {
               // 1. Verifica se existem outros setores com a mesma ordem (irmãos paralelos) na rota do modelo
-              const setoresMesmaOrdem = await rotaRepo.find({
-                where: {
-                  modeloId: ordemObj.modeloId,
-                  plantaId: ordemObj.plantaId,
-                  versao: ordemObj.rotaVersao || versaoRota,
-                  ordem: rotaAtual.ordem,
-                },
-              });
+              const setoresMesmaOrdem = etapasRotaAtiva.filter((etapa) => etapa.ordem === rotaAtual.ordem);
 
               if (setoresMesmaOrdem.length > 1) {
                 const setoresIdsParalelos = setoresMesmaOrdem.map(s => s.setorId);
@@ -808,15 +791,16 @@ export class RastreamentosController {
                 }
               }
 
-              // 2. Se todos concluíram (ou só havia 1 setor na ordem atual), prossiga para a próxima ordem (ordem + 1)
-              const proximasRotas = await rotaRepo.find({
-                where: {
-                  modeloId: ordemObj.modeloId,
-                  plantaId: ordemObj.plantaId,
-                  versao: ordemObj.rotaVersao || versaoRota,
-                  ordem: rotaAtual.ordem + 1,
-                },
-              });
+              // 2. Avança para a próxima etapa ativa, mesmo se a rota legada tiver lacunas.
+              const proximaOrdem = etapasRotaAtiva
+                .filter((etapa) => etapa.ordem > rotaAtual.ordem)
+                .reduce<number | null>(
+                  (menor, etapa) => menor === null ? etapa.ordem : Math.min(menor, etapa.ordem),
+                  null,
+                );
+              const proximasRotas = proximaOrdem === null
+                ? []
+                : etapasRotaAtiva.filter((etapa) => etapa.ordem === proximaOrdem);
 
               if (proximasRotas && proximasRotas.length > 0) {
                 const checkRastreamentoRepo = AppDataSource.getRepository(Rastreamento);

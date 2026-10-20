@@ -170,7 +170,7 @@ export class RotasController {
         order: { ordem: 'ASC' }
       });
       const versao = rotas.reduce((maior, etapa) => Math.max(maior, etapa.versao || 1), 0);
-      const rota = rotas.filter((etapa) => (etapa.versao || 1) === versao);
+      const rota = rotas.filter((etapa) => (etapa.versao || 1) === versao && etapa.setor?.ativo);
 
       return res.status(200).json({
         modeloId,

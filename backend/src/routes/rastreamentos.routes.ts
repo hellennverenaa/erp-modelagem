@@ -99,8 +99,8 @@ router.post(
  *       Finaliza o rastreamento ativo calculando SLA dinâmico (descontando pausas
  *       por ocorrências com interrompeSla=true). Aplica o Gate de Qualidade Seletiva:
  *
- *       **Categoria A — Handoff Automático** (Almoxarifado, Navalha, Telas, Recebimento,
- *       Separação, Dublagem): conclui o handoff sem checklist.
+ *       **Categoria A — Handoff Automático** (Almoxarifado, Navalha, Telas e Dublagem):
+ *       conclui o handoff sem checklist.
  *
  *       **Categoria B — Gate Obrigatório** (demais setores): exige inspeção com resultado
  *       APROVADO ou APROVADO_CONCESSAO (tipo SAIDA_SETOR, LABORATORIO ou LABORATORIO_APOIO).

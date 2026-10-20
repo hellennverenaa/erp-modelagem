@@ -10,8 +10,9 @@ import { Retrabalho } from '../entities/Retrabalho';
 import { Rastreamento, RastreamentoStatus, TipoLote } from '../entities/Rastreamento';
 import { OrdemTeste } from '../entities/OrdemTeste';
 import { Peca } from '../entities/Peca';
-import { IsNull } from 'typeorm';
+import { In, IsNull } from 'typeorm';
 import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
+import { Setor } from '../entities/Setor';
 
 // ═══ Schema de Validação Zod para a Inspeção ═══
 const createInspecaoSchema = z.object({
@@ -113,12 +114,7 @@ export class InspecoesController {
         'ALMOXARIFADO_MODELAGEM',
         'NAVALHA',
         'TELAS',
-        'CORTE RECEBIMENTO',
-        'CORTE SEPARAÇÃO',
-        'CORTE SEPARACAO',
         'CORTE DUBLAGEM',
-        'CORTE_RECEBIMENTO',
-        'CORTE_RECEBIMENTO',
         'CORTE_DUBLAGEM',
       ];
 
@@ -146,9 +142,10 @@ export class InspecoesController {
       );
 
       // Filtro estrito:
-      // 1. Exclui setores de Handoff Automático / Recebimento
+      // 1. Exclui setores de Handoff Automático
       // 2. Exclui rastreamentos que já possuem inspeção cadastrada
       const pendentes = rastreamentos.filter((r) => {
+        if (!r.setor?.ativo) return false;
         const setorNome = (r.setor?.nome || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         const isExcluido = SETORES_EXCLUIDOS.some((se) => {
           const seNorm = se.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -214,6 +211,15 @@ export class InspecoesController {
       } catch (error) {
         if (error instanceof RouteIntegrityError) return res.status(409).json({ error: `A ordem não está liberada para inspeção: ${error.message}`, code: 'ROTA_INVALIDA' });
         throw error;
+      }
+
+      const setorIds = [setorId, ...(setorDestinoId ? [setorDestinoId] : [])];
+      const setoresAtivos = await AppDataSource.getRepository(Setor).find({
+        where: { id: In(setorIds), ativo: true },
+        select: { id: true },
+      });
+      if (setoresAtivos.length !== new Set(setorIds).size) {
+        return res.status(409).json({ error: 'O setor não está ativo para inspeção ou retrabalho.', code: 'SETOR_INATIVO' });
       }
 
       // Executa lógica transacional

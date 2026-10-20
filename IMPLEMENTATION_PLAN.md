@@ -344,3 +344,21 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
   - **TASK-040**: Modularização e desmantelamento da God View `GestaoOrdensView.vue` (-68% de linhas) em componentes desacoplados (`OrderCreateModal`, `OrderPrintModal`, `OrderHistoryModal`, `OrderMaintenanceModal`, `types.ts`).
   - **TASK-041**: Paginação server-side e busca rápida indexada por Trigram (GIN) em `CatalogoPecasView.vue` e `GestaoOrdensView.vue` com sincronização de totalizadores e KPIs.
   - **TASK-042**: Store reativa `config.store.ts` com cache TTL (5 min), deduplicação de requisições concorrentes em voo (Promise pooling), invalidação atômica e limpeza de sessão nos fluxos de Ordens, Modelos, Wizard, Rotas e Marcas.
+
+---
+
+### TASK-045 — Remover Corte Recebimento e Corte Separação
+**Estado: implementada e validada tecnicamente nesta branch; PR e integração pendentes.** Os dois setores foram removidos do construtor de rotas, das validações, das regras de bipagem, dos dados de seed e dos fluxos de inspeção/tickets. A migration criada desativa os tipos e setores somente no schema `erp_modelagem`, preservando registros históricos nos ambientes que não forem limpos manualmente. A limpeza física foi executada no banco de testes confirmado pela usuária, com validação do nome do banco e do schema antes da transação.
+
+**Escopo entregue:** filtrar etapas inativas das rotas persistidas e da API para preservar o uso de rotas legadas; impedir bipagens, inspeções, ocorrências e geração/leitura/impressão de tickets em setores inativos; remover os hardcodes da interface, backend e seed; atualizar as fixtures; remover `clean_rotas.ts` sem referência de execução; criar migration restrita ao schema `erp_modelagem` e rotina manual `npm run db:purge-test-cut-sectors` com confirmação do banco/schema, proteção para `NODE_ENV=production`, transação e verificação contra opções de setor compartilhadas.
+
+**Validação técnica executada:**
+- `backend: npm test` — 41 testes aprovados em 6 arquivos.
+- `backend: npm run build` — aprovado.
+- `frontend: npm run build` — aprovado.
+- `backend: node --test tests/route-integrity.test.cjs` — aprovado.
+- `git diff --check` — aprovado.
+- No banco de testes `postgres`, schema `erp_modelagem`, a rotina manual removeu os registros encontrados nas tabelas de setores, rotas, tickets, rastreamentos, inspeções, checklist, divergências/retrabalho, ocorrências, permissões, estações e auditoria; atualizou snapshots de 2 ordens. Verificação posterior confirmou 0 setores, tipos ou referências de rota restantes; nenhum arquivo de upload estava associado.
+- A migration desta entrega **não foi aplicada**. `npm run migration:run` e `npm run dev` não foram executados, pois a dependência PR #18 (TASK-043, correção da migration Trigram) permanece aberta e não integrada. A `main` remota continua no commit base `ebb6499`.
+
+**Dependência e próximo passo:** PR #18 (TASK-043) permanece aberto e deve ser integrado antes de executar as migrations desta branch em um banco de desenvolvimento. Este trabalho permanece em `feature/remocao-setores-corte`; após revisão e integração das dependências, aplicar a migration em ambiente de desenvolvimento e verificar os ambientes de destino antes da implantação. O commit e o PR desta TASK ainda serão registrados após concluir a entrega desta branch.
