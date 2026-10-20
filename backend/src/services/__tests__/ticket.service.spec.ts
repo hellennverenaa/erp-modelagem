@@ -77,6 +77,7 @@ describe('TicketService - Regras de Gestão e Resolução de Tickets por Setor',
         {
           id: 'ticket-1',
           codigoBarras: 'TKT-001',
+          setorId: 'setor-1',
           tipoLote: 'LOTE_PRINCIPAL',
           ordemEtapa: 1,
           rotaVersao: 1,
@@ -96,6 +97,7 @@ describe('TicketService - Regras de Gestão e Resolução de Tickets por Setor',
       expect(resultado.rotaCongelada).toBe(true);
       expect(resultado.tickets).toHaveLength(1);
       expect(resultado.tickets[0].codigoBarras).toBe('TKT-001');
+      expect(resultado.tickets[0].setorId).toBe('setor-1');
     });
   });
 

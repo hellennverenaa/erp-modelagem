@@ -17,6 +17,7 @@ export class TicketServiceError extends Error {
 export interface TicketSetorDTO {
   id: string;
   codigoBarras: string;
+  setorId: string;
   tipoLote: string;
   ordemEtapa: number;
   rotaVersao: number;
@@ -91,6 +92,7 @@ export class TicketService {
       tickets: tickets.map((ticket) => ({
         id: ticket.id,
         codigoBarras: ticket.codigoBarras,
+        setorId: ticket.setorId,
         tipoLote: ticket.tipoLote,
         ordemEtapa: ticket.ordemEtapa,
         rotaVersao: ticket.rotaVersao,

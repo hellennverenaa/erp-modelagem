@@ -50,7 +50,13 @@
 Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.
 
 ### Bipagem orientada à rota da ordem (TASK-015)
-Remover sequências fixas de setores. Ao selecionar uma ordem, exibir apenas setores e processos de sua rota, com posição, estado e ações permitidas.
+**Estado: implementada nesta branch (`fix/pg-trgm-migration-schema`); validação técnica concluída e validação funcional pendente.** Removida a escolha manual do setor para operadores comuns; a tela carrega os setores exclusivamente dos tickets da rota congelada da ordem. A leitura de um ticket identifica automaticamente ordem, setor e fluxo e, em seguida, permite identificar o operador pelo crachá. A leitura de código antigo da ordem continua funcionando quando o setor de lotação da sessão pertence à rota congelada. O controle de simulação permanece restrito a `ADMINISTRAR_BIPAGEM` e limitado à rota da ordem carregada.
+
+**Contrato de autorização:** preservar autenticação, `EDITAR_TELA_BIPAGEM`, autorização da sessão por ação/setor, integridade de rota, ticket, sequência e gates operacionais. O perfil associado ao crachá identifica o responsável e não precisa ter uma permissão setorial própria; crachá não cadastrado continua sendo rejeitado. Não inferir rotas para ordens sem snapshot.
+
+**Arquivos alterados:** `frontend/src/views/BipagemView.vue`, `backend/src/services/ticket.service.ts`, `backend/src/services/__tests__/ticket.service.spec.ts`, `backend/src/controllers/rastreamentos.controller.ts` e este plano. Nenhuma migration criada ou aplicada.
+
+**Validação executada:** `npm run build` no backend e frontend passou; `npm test` no backend passou com 39 testes em 6 arquivos; `git diff --check` passou. **Validação funcional pendente:** testar com leitor de ticket e crachá no ambiente operacional; conferir operador comum, administrador, entrada, saída, ticket fora da rota, crachá não cadastrado e ordem sem snapshot. Próximo passo: validação manual desses cenários.
 
 ### TV de rastreamento usando o snapshot da ordem (TASK-016)
 Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preservando o histórico quando o modelo for editado.
@@ -395,3 +401,23 @@ Padronização da manipulação e exibição de datas em todo o frontend, elimin
 **Validação técnica executada:**
 - `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.67s).
 - `git diff --check` aprovado sem pendências.
+
+---
+
+### TASK-043 — Corrigir resolução de `pg_trgm` na migration de índices
+**Estado: implementação concluída na branch `fix/pg-trgm-migration-schema`; validação de banco pendente.** A execução local de `npm run dev` conecta ao PostgreSQL e prepara o schema, mas a migration `1792161400000-OtimizacaoIndicesEBuscaTrigram` falha ao criar o índice GIN porque `gin_trgm_ops` não é resolvida. Como `dev` encadeia migrations e servidor com `&&`, a falha impede a inicialização da API.
+
+**Evidência e diagnóstico:** o log fornecido registra 26 de 27 migrations carregadas, inicia transação e reverte a migration após o erro PostgreSQL `42704` em `gin_trgm_ops`. A migration cria `pg_trgm` sem schema explícito e referencia a classe de operadores sem qualificação; a conexão configura `search_path=erp_modelagem,public`. A localização da extensão e a visibilidade da classe de operadores nessa instância ainda não foram verificadas no catálogo do PostgreSQL.
+
+**Escopo aprovado:** tornar explícito o schema da extensão quando criada e resolver/qualificar o schema efetivo de `gin_trgm_ops` ao construir o índice, mantendo compatibilidade com bancos em que a extensão já existe. A migration e os demais índices permanecem no escopo; não alterar endpoints, paginação ou componentes de frontend.
+
+**Impacto das mudanças integradas na main:** TASK-041 acrescentou busca server-side com `q`, `page` e `limit` em `CatalogoPecasView.vue`. Nenhum arquivo de backend ou a migration foi alterado nos commits integrados pelo PR #17; a falha observada continua no backend atual.
+
+**Validação realizada:** `npm run build` passou; `npm test` passou (6 arquivos, 39 testes); `git diff --check` passou. `npm ci` foi executado porque as dependências não estavam instaladas; o audit reportou 11 vulnerabilidades (2 moderadas, 8 altas, 1 crítica), sem execução de `npm audit fix`.
+
+**Validação de banco pendente:** `npm run migration:run` não conseguiu conectar ao PostgreSQL local em `127.0.0.1:5432` no sandbox (`EPERM`). Ainda faltam conferir o schema efetivo da extensão por consulta somente de leitura, executar a migration no banco de desenvolvimento, confirmar o registro da migration e a criação dos índices e iniciar o backend até o listener HTTP. Nenhuma migration foi aplicada nesta validação.
+
+**Dependências e riscos:** TASK-035 registra aplicação anterior desta migration em um PostgreSQL local; outros ambientes não foram consultados. A instância do erro ainda não registrou a migration 27. Se algum ambiente compartilhado já tiver aplicado a migration, verificar seu estado antes de alterar o arquivo versionado. A aplicação da migration exige permissão para instalar a extensão quando ela não existir.
+
+### TASK-044 — Verificar aderência do índice trigram à busca do catálogo
+**Estado: análise pendente; fora do escopo de TASK-043.** Na revisão da main, a busca em `GET /catalogo-pecas` foi confirmada usando `LOWER(p.nome)`, `LOWER(p.numero)` e `LOWER(p.codigo_original)`, enquanto a migration declara um índice trigram sobre `nome` sem `LOWER` e não declara índices trigram para os outros dois campos. Confirmar com `EXPLAIN` se a busca server-side integrada pela TASK-041 usa o índice esperado e registrar eventual ajuste em escopo próprio. Depende da TASK-043 para validar sobre uma migration aplicável.

@@ -11,7 +11,6 @@ import { OrdemTeste } from '../entities/OrdemTeste';
 import { TicketSetor } from '../entities/TicketSetor';
 import { RotaModelo } from '../entities/RotaModelo';
 import { Usuario } from '../entities/Usuario';
-import { PerfilPermissao } from '../entities/PerfilPermissao';
 import { webSocketService } from '../services/websocket.service';
 import { getPersistedModelRoute, RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 import { getTipoSetorIdsCorteDaOrdem } from '../services/ordem-pecas.service';
@@ -186,19 +185,6 @@ export class RastreamentosController {
         operadorId = operadorReal.id;
       } else {
         operadorReal = await usuarioRepo.findOne({ where: { id: operadorId } });
-      }
-
-      if (operadorReal && operadorReal.perfilId) {
-        const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
-        const permissao = await perfilPermissaoRepo.findOne({
-          where: { perfilId: operadorReal.perfilId, setorId: setorId, permitido: true }
-        });
-        if (!permissao) {
-          return res.status(403).json({
-            error: 'Acesso Negado: O perfil deste operador não possui autorização de trabalho para o setor selecionado.',
-            code: 'OPERADOR_NAO_AUTORIZADO'
-          });
-        }
       }
 
       const setorRepo = AppDataSource.getRepository(Setor);
@@ -485,18 +471,6 @@ export class RastreamentosController {
         operadorReal = await usuarioRepo.findOne({ where: { id: operadorId } });
       }
 
-      if (operadorReal && operadorReal.perfilId) {
-        const perfilPermissaoRepo = AppDataSource.getRepository(PerfilPermissao);
-        const permissao = await perfilPermissaoRepo.findOne({
-          where: { perfilId: operadorReal.perfilId, setorId: setorId, permitido: true }
-        });
-        if (!permissao) {
-          return res.status(403).json({
-            error: 'Acesso Negado: O perfil deste operador não possui autorização de trabalho para o setor selecionado.',
-            code: 'OPERADOR_NAO_AUTORIZADO'
-          });
-        }
-      }
       const rastreamentoRepo  = AppDataSource.getRepository(Rastreamento);
       const inspecaoRepo      = AppDataSource.getRepository(Inspecao);
       const ocorrenciaRepo    = AppDataSource.getRepository(OcorrenciaProducao);
