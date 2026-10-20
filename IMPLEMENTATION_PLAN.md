@@ -59,10 +59,12 @@ Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preser
 Revisar endpoints, filtros, setores, tempos e agregações para consumir dados reais de ordens, rotas, bipagens, qualidade e ocorrências; identificar mocks e validar indicadores com registros de produção.
 
 ### Padronização de datas no backend e no banco (TASK-019)
-Definir como instantes e prazos são recebidos, persistidos e serializados. Tratar valores históricos conforme sua interpretação atual, sem conversões em massa sem auditoria.
+**Estado: implementada nesta branch (feature/padronizacao-datas-timezones); validação técnica concluída com sucesso.**
+Definir como instantes e prazos são recebidos, persistidos e serializados. Normalização explícita de datas de calendário (`dataCorte`) em meio-dia UTC (`12:00:00.000Z`) para eliminar distorções de fuso horário (ex: recuo para dia anterior no fuso UTC-3 brasileiro), com funções utilitárias canônicas e testes unitários.
 
 ### Apresentação e edição de datas no frontend (TASK-020)
-Apresentar datas no horário local e enviar valores editados com timezone explícito, conforme o contrato da TASK-019. Remover conversões que tratem UTC como hora local ou usem offsets fixos.
+**Estado: implementada nesta branch (feature/padronizacao-datas-timezones); validação técnica concluída com sucesso.**
+Centralização da manipulação de datas no módulo canônico `frontend/src/utils/date.ts`. Apresentação de instantes no horário local (`formatDate`, `formatDateTime`, `formatTimeOnly`) e datas de calendário sem shift de fuso horário (`formatDateOnly`, `toDateInputValue`). Eliminação de conversões ad-hoc, offsets fixos e funções duplicadas nas views e modais do sistema.
 
 ### Auditoria de Corte, Apoio e dados simulados (TASK-022)
 Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
@@ -344,3 +346,52 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
   - **TASK-040**: Modularização e desmantelamento da God View `GestaoOrdensView.vue` (-68% de linhas) em componentes desacoplados (`OrderCreateModal`, `OrderPrintModal`, `OrderHistoryModal`, `OrderMaintenanceModal`, `types.ts`).
   - **TASK-041**: Paginação server-side e busca rápida indexada por Trigram (GIN) em `CatalogoPecasView.vue` e `GestaoOrdensView.vue` com sincronização de totalizadores e KPIs.
   - **TASK-042**: Store reativa `config.store.ts` com cache TTL (5 min), deduplicação de requisições concorrentes em voo (Promise pooling), invalidação atômica e limpeza de sessão nos fluxos de Ordens, Modelos, Wizard, Rotas e Marcas.
+
+---
+
+### TASK-019 — Padronização de Datas no Backend e no Banco
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.**
+Eliminação de discrepâncias e shifts de fuso horário em datas de calendário e timestamps de auditoria, estabelecendo diferenciação semântica clara e rotinas padronizadas de parsing e serialização.
+
+**Escopo implementado:**
+- Criação de `backend/src/utils/date.utils.ts`:
+  - `parseDateOnly`: Normaliza datas de calendário puro (ex: data de corte `YYYY-MM-DD` ou ISO timestamp) fixando o meio-dia UTC (`12:00:00.000Z`). Isso impede o bug clássico de recuo de dia no fuso brasileiro UTC-3 (onde `T00:00:00Z` era convertido para 21:00 do dia anterior).
+  - `parseIsoTimestamp`: Faz parsing seguro e estrito de instantes ISO 8601, rejeitando entradas inválidas.
+  - `formatDateOnlyIso`: Extrai com segurança a porção `YYYY-MM-DD` sem oscilações de fuso horário.
+  - `isValidDateString`: Validador utilitário de strings de data.
+- Integração nos controladores e serviços críticos:
+  - `backend/src/services/lote.service.ts`: Tratamento de `dataCorte` na criação de lotes via `parseDateOnly`.
+  - `backend/src/controllers/admin.controller.ts`: Tratamento de `dataCorte` nos endpoints de criação, edição e manutenção de ordens (`criarOrdem`, `atualizarOrdem` e `atualizarDataCorte`).
+- Criação de suíte de testes unitários:
+  - `backend/src/utils/__tests__/date.utils.spec.ts`: 9 novos testes unitários cobrindo casos válidos, inválidos, null/undefined, datas puras e proteção contra shift de fuso horário brasileiro (UTC-3).
+
+**Validação técnica executada:**
+- `npm test` no backend com 48/48 testes unitários aprovados em 622ms (incluindo os 9 novos testes).
+- `npm run build` no backend (TypeScript `tsc`) compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+---
+
+### TASK-020 — Apresentação e Edição de Datas no Frontend
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.**
+Padronização da manipulação e exibição de datas em todo o frontend, eliminando conversões ad-hoc, slices/regex manuais, offsets manuais e duplicação de funções entre telas.
+
+**Escopo implementado:**
+- Criação do módulo canônico `frontend/src/utils/date.ts`:
+  - `formatDate`: Formatação amigável de instantes em timezone local (`DD/MM/AAAA, HH:mm`).
+  - `formatDateOnly`: Exibição de datas de calendário (`DD/MM/AAAA`) imunes a shifts de timezone (usando parsing estruturado e fallback seguro via UTC).
+  - `formatDateTime`: Formatação extensa de instantes (`DD/MM/AAAA às HH:mm`).
+  - `formatTimeOnly`: Formatação de horário (`HH:mm`).
+  - `toDateInputValue`: Converte com segurança instantes ou strings para formato aceito em campos `<input type="date">` (`YYYY-MM-DD`).
+- Refatoração dos componentes e telas:
+  - `OrderCreateModal.vue`: Remoção de `formatDateLocal` duplicada, adoção de `formatDateOnly`.
+  - `OrderHistoryModal.vue`: Remoção de `formatarData` duplicada, adoção de `formatDateTime`.
+  - `OrderMaintenanceModal.vue`: Adoção de `formatDateTime` para histórico de auditoria.
+  - `GestaoOrdensView.vue`: Adoção de `formatDate` na tabela principal de ordens.
+  - `GestaoModelosView.vue`: Adoção de `formatDateOnly` na tabela de modelos e `toDateInputValue` no modal de edição.
+  - `WizardCriacaoTesteView.vue`: Substituição de lógica manual por `toDateInputValue`.
+  - `RastreamentoOrdemView.vue`: Substituição de lógica ad-hoc em `formatTimestampFormatado` por `formatDateTime` e remoção da função local redundante `formatDateOnly`.
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.67s).
+- `git diff --check` aprovado sem pendências.

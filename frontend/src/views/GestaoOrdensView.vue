@@ -21,6 +21,7 @@ import {
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
 import { configStore } from '../api/config.store'
+import { formatDate } from '../utils/date'
 import OrderCreateModal from '../components/ordens/OrderCreateModal.vue'
 import OrderPrintModal from '../components/ordens/OrderPrintModal.vue'
 import OrderHistoryModal from '../components/ordens/OrderHistoryModal.vue'
@@ -252,13 +253,6 @@ async function fetchDropdownData() {
   } catch {
     addToast('error', 'Erro ao carregar opções do formulário.')
   }
-}
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
 }
 
 // ─── Lifecycle ─────────────────────────────────────────────────

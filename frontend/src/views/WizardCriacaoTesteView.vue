@@ -20,6 +20,7 @@ import {
 import api from '../api/axios'
 import { authStore } from '../api/auth.store'
 import { configStore } from '../api/config.store'
+import { toDateInputValue } from '../utils/date'
 import BrandManagerModal from '../components/BrandManagerModal.vue'
 import RouteBuilder from '../components/RouteBuilder.vue'
 
@@ -245,18 +246,6 @@ function marcaAtualizada(marca: Marca) {
   }
 }
 
-function dateOnlyForInput(value?: string | null): string {
-  if (!value) return ''
-  const isoDate = value.match(/^(\d{4}-\d{2}-\d{2})/)
-  if (isoDate) return isoDate[1]
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return ''
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
 async function carregarModelosDisponiveis() {
   if (!podeCriarPcp.value) return
   try {
@@ -310,7 +299,7 @@ async function selecionarModeloExistente() {
       nome: data.nome,
       codigoProduto: data.codigoProduto,
       marcaId: data.marcaId || data.marca?.id || '',
-      dataCorte: dateOnlyForInput(data.dataCorte),
+      dataCorte: toDateInputValue(data.dataCorte),
     }
     selectedInactiveBrandName.value = data.marca?.nome && !marcas.value.some((marca) => marca.id === data.marca?.id)
       ? data.marca.nome
@@ -479,7 +468,7 @@ async function selecionarOrdemPendente(ordem: OrdemTeste) {
     nome: ordem.modelo?.nome || 'Modelo',
     codigoProduto: ordem.modelo?.codigoProduto || '',
     marcaId: ordem.modelo?.marcaId || '',
-    dataCorte: dateOnlyForInput(ordem.modelo?.dataCorte),
+    dataCorte: toDateInputValue(ordem.modelo?.dataCorte),
   }
   formOrdem.value = {
     plantaId: ordem.plantaId,
