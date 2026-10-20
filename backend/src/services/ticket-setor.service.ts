@@ -1,5 +1,6 @@
-import { EntityManager } from 'typeorm';
+import { EntityManager, In } from 'typeorm';
 import { OrdemTeste } from '../entities/OrdemTeste';
+import { Setor } from '../entities/Setor';
 import { TipoLote } from '../entities/Rastreamento';
 import { TicketSetor } from '../entities/TicketSetor';
 
@@ -11,8 +12,16 @@ export async function garantirTicketsSetorDaOrdem(manager: EntityManager, ordem:
   }
 
   const etapasPorSetor = new Map<string, (typeof snapshot.etapas)[number]>();
+  const setorIds = [...new Set(snapshot.etapas.map((etapa) => etapa.setorId))];
+  const setoresAtivos = await manager.getRepository(Setor).find({
+    where: { id: In(setorIds), ativo: true },
+    select: { id: true },
+  });
+  const setorIdsAtivos = new Set(setoresAtivos.map((setor) => setor.id));
   for (const etapa of snapshot.etapas) {
-    if (!etapasPorSetor.has(etapa.setorId)) etapasPorSetor.set(etapa.setorId, etapa);
+    if (setorIdsAtivos.has(etapa.setorId) && !etapasPorSetor.has(etapa.setorId)) {
+      etapasPorSetor.set(etapa.setorId, etapa);
+    }
   }
 
   const ticketRepo = manager.getRepository(TicketSetor);

@@ -355,6 +355,8 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 
 ---
 
+---
+
 ### TASK-019 — Padronização de Datas no Backend e no Banco
 **Estado: implementada nesta branch; validação técnica concluída com sucesso.**
 Eliminação de discrepâncias e shifts de fuso horário em datas de calendário e timestamps de auditoria, estabelecendo diferenciação semântica clara e rotinas padronizadas de parsing e serialização.
@@ -405,19 +407,26 @@ Padronização da manipulação e exibição de datas em todo o frontend, elimin
 ---
 
 ### TASK-043 — Corrigir resolução de `pg_trgm` na migration de índices
-**Estado: implementação concluída na branch `fix/pg-trgm-migration-schema`; validação de banco pendente.** A execução local de `npm run dev` conecta ao PostgreSQL e prepara o schema, mas a migration `1792161400000-OtimizacaoIndicesEBuscaTrigram` falha ao criar o índice GIN porque `gin_trgm_ops` não é resolvida. Como `dev` encadeia migrations e servidor com `&&`, a falha impede a inicialização da API.
+**Estado: integrada na main via PR #18; validação de banco pendente.** A execução local de `npm run dev` conecta ao PostgreSQL e prepara o schema, mas a migration `1792161400000-OtimizacaoIndicesEBuscaTrigram` falhava ao criar o índice GIN porque `gin_trgm_ops` não era resolvida. Como `dev` encadeia migrations e servidor com `&&`, a falha impedia a inicialização da API.
 
-**Evidência e diagnóstico:** o log fornecido registra 26 de 27 migrations carregadas, inicia transação e reverte a migration após o erro PostgreSQL `42704` em `gin_trgm_ops`. A migration cria `pg_trgm` sem schema explícito e referencia a classe de operadores sem qualificação; a conexão configura `search_path=erp_modelagem,public`. A localização da extensão e a visibilidade da classe de operadores nessa instância ainda não foram verificadas no catálogo do PostgreSQL.
+**Evidência e diagnóstico:** o log fornecido registrava 26 de 27 migrations carregadas, iniciava transação e revertia a migration após o erro PostgreSQL `42704` em `gin_trgm_ops`. A migration criava `pg_trgm` sem schema explícito e referenciava a classe de operadores sem qualificação; a conexão configura `search_path=erp_modelagem,public`.
 
-**Escopo aprovado:** tornar explícito o schema da extensão quando criada e resolver/qualificar o schema efetivo de `gin_trgm_ops` ao construir o índice, mantendo compatibilidade com bancos em que a extensão já existe. A migration e os demais índices permanecem no escopo; não alterar endpoints, paginação ou componentes de frontend.
-
-**Impacto das mudanças integradas na main:** TASK-041 acrescentou busca server-side com `q`, `page` e `limit` em `CatalogoPecasView.vue`. Nenhum arquivo de backend ou a migration foi alterado nos commits integrados pelo PR #17; a falha observada continua no backend atual.
-
-**Validação realizada:** `npm run build` passou; `npm test` passou (6 arquivos, 39 testes); `git diff --check` passou. `npm ci` foi executado porque as dependências não estavam instaladas; o audit reportou 11 vulnerabilidades (2 moderadas, 8 altas, 1 crítica), sem execução de `npm audit fix`.
-
-**Validação de banco pendente:** `npm run migration:run` não conseguiu conectar ao PostgreSQL local em `127.0.0.1:5432` no sandbox (`EPERM`). Ainda faltam conferir o schema efetivo da extensão por consulta somente de leitura, executar a migration no banco de desenvolvimento, confirmar o registro da migration e a criação dos índices e iniciar o backend até o listener HTTP. Nenhuma migration foi aplicada nesta validação.
-
-**Dependências e riscos:** TASK-035 registra aplicação anterior desta migration em um PostgreSQL local; outros ambientes não foram consultados. A instância do erro ainda não registrou a migration 27. Se algum ambiente compartilhado já tiver aplicado a migration, verificar seu estado antes de alterar o arquivo versionado. A aplicação da migration exige permissão para instalar a extensão quando ela não existir.
+**Escopo entregue:** tornou explícito o schema da extensão quando criada e resolveu/qualificou o schema efetivo de `gin_trgm_ops` ao construir o índice, mantendo compatibilidade com bancos em que a extensão já existe. Integrado na main via PR #18.
 
 ### TASK-044 — Verificar aderência do índice trigram à busca do catálogo
 **Estado: análise pendente; fora do escopo de TASK-043.** Na revisão da main, a busca em `GET /catalogo-pecas` foi confirmada usando `LOWER(p.nome)`, `LOWER(p.numero)` e `LOWER(p.codigo_original)`, enquanto a migration declara um índice trigram sobre `nome` sem `LOWER` e não declara índices trigram para os outros dois campos. Confirmar com `EXPLAIN` se a busca server-side integrada pela TASK-041 usa o índice esperado e registrar eventual ajuste em escopo próprio. Depende da TASK-043 para validar sobre uma migration aplicável.
+
+---
+
+### TASK-045 — Remover Corte Recebimento e Corte Separação
+**Estado: implementada e validada tecnicamente nesta branch; PR #19 aberto e sincronizado com a main.** Os dois setores foram removidos do construtor de rotas, das validações, das regras de bipagem, dos dados de seed e dos fluxos de inspeção/tickets. A migration criada desativa os tipos e setores somente no schema `erp_modelagem`, preservando registros históricos nos ambientes que não forem limpos manualmente. A limpeza física foi executada no banco de testes confirmado pela usuária, com validação do nome do banco e do schema antes da transação.
+
+**Escopo entregue:** filtrar etapas inativas das rotas persistidas e da API para preservar o uso de rotas legadas; impedir bipagens, inspeções, ocorrências e geração/leitura/impressão de tickets em setores inativos; remover os hardcodes da interface, backend e seed; atualizar as fixtures; remover `clean_rotas.ts` sem referência de execução; criar migration restrita ao schema `erp_modelagem` e rotina manual `npm run db:purge-test-cut-sectors` com confirmação do banco/schema, proteção para `NODE_ENV=production`, transação e verificação contra opções de setor compartilhadas.
+
+**Validação técnica executada:**
+- `backend: npm test` — 48 testes aprovados em 7 arquivos.
+- `backend: npm run build` — aprovado.
+- `frontend: npm run build` — aprovado.
+- `backend: node --test tests/route-integrity.test.cjs` — aprovado.
+- `git diff --check` — aprovado.
+- No banco de testes `postgres`, schema `erp_modelagem`, a rotina manual removeu os registros encontrados nas tabelas de setores, rotas, tickets, rastreamentos, inspeções, checklist, divergências/retrabalho, ocorrências, permissões, estações e auditoria; atualizou snapshots de 2 ordens. Verificação posterior confirmou 0 setores, tipos ou referências de rota restantes; nenhum arquivo de upload estava associado.

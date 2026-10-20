@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { validateRouteIntegrity, RouteIntegrityError, RotaEtapaInput, PecaCorteInput } from '../route-integrity.service';
+import { getPersistedModelRoute, validateRouteIntegrity, RouteIntegrityError, RotaEtapaInput, PecaCorteInput } from '../route-integrity.service';
 import { EntityManager } from 'typeorm';
 import { ConfigOpcao } from '../../entities/ConfigOpcao';
 import { Setor } from '../../entities/Setor';
@@ -30,6 +30,22 @@ describe('validateRouteIntegrity - Regras de Validação de Rota e Peças de Cor
         throw new Error(`Repositório não mockado para ${entity.name}`);
       }),
     } as unknown as EntityManager;
+  });
+
+  it('omite setores inativos da rota efetiva sem retroceder a versão', async () => {
+    const rotaRepo = {
+      find: vi.fn().mockResolvedValue([
+        { id: 'anterior', setorId: 'setor-anterior', versao: 1, setor: { ativo: true } },
+        { id: 'inativo', setorId: 'setor-inativo', versao: 2, setor: { ativo: false } },
+        { id: 'atual', setorId: 'setor-atual', versao: 2, setor: { ativo: true } },
+      ]),
+    };
+    const manager = { getRepository: vi.fn().mockReturnValue(rotaRepo) } as unknown as EntityManager;
+
+    const resultado = await getPersistedModelRoute(manager, 'modelo-1', 'planta-1');
+
+    expect(resultado.versao).toBe(2);
+    expect(resultado.etapas.map((etapa) => etapa.setorId)).toEqual(['setor-atual']);
   });
 
   it('deve rejeitar rota vazia ou peças vazias', async () => {
@@ -117,8 +133,6 @@ describe('validateRouteIntegrity - Regras de Validação de Rota e Peças de Cor
       .mockResolvedValueOnce([
         { id: 't-almox', valor: 'ALMOXARIFADO_MODELAGEM' },
         { id: 't-navalha', valor: 'NAVALHA' },
-        { id: 't-corte-rec', valor: 'CORTE_RECEBIMENTO' },
-        { id: 't-corte-sep', valor: 'CORTE_SEPARACAO' },
         { id: 't-corte-dub', valor: 'CORTE_DUBLAGEM' },
         { id: 't-corte-ponte', valor: 'CORTE_PONTE' },
         { id: 't-corte-lectra', valor: 'CORTE_LECTRA' },
@@ -131,8 +145,6 @@ describe('validateRouteIntegrity - Regras de Validação de Rota e Peças de Cor
     const setoresMock = [
       { id: 's-1', plantaId: 'planta-1', tipoOpcaoId: 't-almox', ativo: true },
       { id: 's-2', plantaId: 'planta-1', tipoOpcaoId: 't-navalha', ativo: true },
-      { id: 's-3', plantaId: 'planta-1', tipoOpcaoId: 't-corte-rec', ativo: true },
-      { id: 's-4', plantaId: 'planta-1', tipoOpcaoId: 't-corte-sep', ativo: true },
       { id: 's-5', plantaId: 'planta-1', tipoOpcaoId: 't-corte-dub', ativo: true },
       { id: 's-6', plantaId: 'planta-1', tipoOpcaoId: 't-corte-ponte', ativo: true },
       { id: 's-7', plantaId: 'planta-1', tipoOpcaoId: 't-corte-lectra', ativo: true },
@@ -165,8 +177,6 @@ describe('validateRouteIntegrity - Regras de Validação de Rota e Peças de Cor
       .mockResolvedValueOnce([
         { id: 't-almox', valor: 'ALMOXARIFADO_MODELAGEM' },
         { id: 't-navalha', valor: 'NAVALHA' },
-        { id: 't-corte-rec', valor: 'CORTE_RECEBIMENTO' },
-        { id: 't-corte-sep', valor: 'CORTE_SEPARACAO' },
         { id: 't-corte-dub', valor: 'CORTE_DUBLAGEM' },
         { id: 't-corte-ponte', valor: 'CORTE_PONTE' },
         { id: 't-corte-lectra', valor: 'CORTE_LECTRA' },
@@ -180,8 +190,6 @@ describe('validateRouteIntegrity - Regras de Validação de Rota e Peças de Cor
     const setoresMock = [
       { id: 's-1', plantaId: 'planta-1', tipoOpcaoId: 't-almox', ativo: true },
       { id: 's-2', plantaId: 'planta-1', tipoOpcaoId: 't-navalha', ativo: true },
-      { id: 's-3', plantaId: 'planta-1', tipoOpcaoId: 't-corte-rec', ativo: true },
-      { id: 's-4', plantaId: 'planta-1', tipoOpcaoId: 't-corte-sep', ativo: true },
       { id: 's-5', plantaId: 'planta-1', tipoOpcaoId: 't-corte-dub', ativo: true },
       { id: 's-6', plantaId: 'planta-1', tipoOpcaoId: 't-corte-ponte', ativo: true },
       { id: 's-7', plantaId: 'planta-1', tipoOpcaoId: 't-corte-lectra', ativo: true },
@@ -216,8 +224,6 @@ describe('validateRouteIntegrity - Regras de Validação de Rota e Peças de Cor
       .mockResolvedValueOnce([
         { id: 't-almox', valor: 'ALMOXARIFADO_MODELAGEM' },
         { id: 't-navalha', valor: 'NAVALHA' },
-        { id: 't-corte-rec', valor: 'CORTE_RECEBIMENTO' },
-        { id: 't-corte-sep', valor: 'CORTE_SEPARACAO' },
         { id: 't-corte-dub', valor: 'CORTE_DUBLAGEM' },
         { id: 't-corte-ponte', valor: 'CORTE_PONTE' },
         { id: 't-corte-lectra', valor: 'CORTE_LECTRA' },
@@ -231,8 +237,6 @@ describe('validateRouteIntegrity - Regras de Validação de Rota e Peças de Cor
     const setoresMock = [
       { id: 's-1', plantaId: 'planta-1', tipoOpcaoId: 't-almox', ativo: true },
       { id: 's-2', plantaId: 'planta-1', tipoOpcaoId: 't-navalha', ativo: true },
-      { id: 's-3', plantaId: 'planta-1', tipoOpcaoId: 't-corte-rec', ativo: true },
-      { id: 's-4', plantaId: 'planta-1', tipoOpcaoId: 't-corte-sep', ativo: true },
       { id: 's-5', plantaId: 'planta-1', tipoOpcaoId: 't-corte-dub', ativo: true },
       { id: 's-6', plantaId: 'planta-1', tipoOpcaoId: 't-corte-ponte', ativo: true },
       { id: 's-7', plantaId: 'planta-1', tipoOpcaoId: 't-corte-lectra', ativo: true },

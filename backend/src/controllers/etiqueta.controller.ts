@@ -269,10 +269,12 @@ export const gerarTicketsSetor = async (req: Request, res: Response): Promise<Re
       ...(parsedBody.data.ticketIds ? { id: In(parsedBody.data.ticketIds) } : {}),
       ...(parsedBody.data.tipoLote ? { tipoLote: parsedBody.data.tipoLote } : {}),
     };
-    const tickets = await AppDataSource.getRepository(TicketSetor).find({
+    const ticketsEncontrados = await AppDataSource.getRepository(TicketSetor).find({
       where: whereTicket,
+      relations: { setor: true },
       order: { ordemEtapa: 'ASC', createdAt: 'ASC' },
     });
+    const tickets = ticketsEncontrados.filter((ticket) => ticket.setor?.ativo);
 
     if (parsedBody.data.ticketIds && tickets.length !== new Set(parsedBody.data.ticketIds).size) {
       return res.status(404).json({ error: 'Um ou mais tickets não pertencem a esta ordem.', code: 'TICKET_SETOR_NOT_FOUND' });
@@ -343,8 +345,9 @@ export const gerarTicketsCompletosDaOrdem = async (req: Request, res: Response):
     await AppDataSource.transaction((manager) => garantirTicketsSetorDaOrdem(manager, ordem));
     const tickets = await AppDataSource.getRepository(TicketSetor).find({
       where: { ordemTesteId: ordem.id },
+      relations: { setor: true },
       order: { ordemEtapa: 'ASC', createdAt: 'ASC' },
-    });
+    }).then((registros) => registros.filter((ticket) => ticket.setor?.ativo));
     const ticketsOrdenados = tickets.sort((a, b) => {
       const ordemFluxo = (a.tipoLote === TipoLote.LOTE_PRINCIPAL ? 0 : 1) - (b.tipoLote === TipoLote.LOTE_PRINCIPAL ? 0 : 1);
       return ordemFluxo || a.ordemEtapa - b.ordemEtapa;

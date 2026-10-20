@@ -27,8 +27,6 @@ const SETORES_CONFIG = [
   { nome: 'Almoxarifado da Modelagem', tipo: 'ALMOXARIFADO_MODELAGEM', ordem: 1, condicional: false, slaPadrao: 60 },
   { nome: 'Navalha', tipo: 'NAVALHA', ordem: 1, condicional: false, slaPadrao: 60 },
   { nome: 'Telas', tipo: 'TELAS', ordem: 1, condicional: true, slaPadrao: 60 },
-  { nome: 'Corte Recebimento', tipo: 'CORTE_RECEBIMENTO', ordem: 2, condicional: false, slaPadrao: 45 },
-  { nome: 'Corte Separação', tipo: 'CORTE_SEPARACAO', ordem: 3, condicional: false, slaPadrao: 45 },
   { nome: 'Corte Dublagem', tipo: 'CORTE_DUBLAGEM', ordem: 4, condicional: false, slaPadrao: 60 },
   { nome: 'Corte Ponte', tipo: 'CORTE_PONTE', ordem: 5, condicional: false, slaPadrao: 90 },
   { nome: 'Corte Lectra', tipo: 'CORTE_LECTRA', ordem: 5, condicional: false, slaPadrao: 90 },
@@ -197,7 +195,7 @@ async function runSeed() {
         }
       }
     }
-    console.log(`[OK] 21 setores provisionados para cada planta (${plantas.length} plantas).`);
+    console.log(`[OK] 19 setores provisionados para cada planta (${plantas.length} plantas).`);
 
     // ------------------------------------------------------------------
     // PASSO 3: Marcas
@@ -374,7 +372,6 @@ async function runSeed() {
     const templateItemRepo = AppDataSource.getRepository(ChecklistTemplateItem);
 
     const checklistItensSetor = [
-      { tipo: 'CORTE_RECEBIMENTO', desc: 'Conferência de lote de materiais e integridade da embalagem' },
       { tipo: 'CORTE_LECTRA', desc: 'Inspeção do sentido do fio e ausência de desvio angular no corte' },
       { tipo: 'CORTE_PONTE', desc: 'Verificação do corte de biqueiras e contrafortes (sem rebarbas)' },
       { tipo: 'CORTE_DUBLAGEM', desc: 'Aderência perfeita da dublagem sem formação de bolhas' },
@@ -597,19 +594,17 @@ async function runSeed() {
         const etapasRota = [
           { tipo: 'ALMOXARIFADO_MODELAGEM', ordem: 1, sla: 60, apenasSaida: false },
           { tipo: 'NAVALHA', ordem: 2, sla: 60, apenasSaida: false },
-          { tipo: 'CORTE_RECEBIMENTO', ordem: 3, sla: 45, apenasSaida: false },
-          { tipo: 'CORTE_SEPARACAO', ordem: 4, sla: 45, apenasSaida: false },
-          { tipo: 'CORTE_DUBLAGEM', ordem: 5, sla: 60, apenasSaida: false },
-          { tipo: 'CORTE_PONTE', ordem: 6, sla: 90, apenasSaida: false },
-          { tipo: 'CORTE_LECTRA', ordem: 7, sla: 90, apenasSaida: false },
-          { tipo: 'CORTE_ATOM', ordem: 8, sla: 60, apenasSaida: false },
-          { tipo: 'CORTE_LASER', ordem: 9, sla: 60, apenasSaida: false },
-          { tipo: 'TELAS', ordem: 10, sla: 60, apenasSaida: false },
-          { tipo: 'SERIGRAFIA', ordem: 11, sla: 90, apenasSaida: false },
-          { tipo: 'APOIO', ordem: 12, sla: 120, apenasSaida: false },
-          { tipo: 'COSTURA', ordem: 13, sla: 180, apenasSaida: false },
-          { tipo: 'MONTAGEM', ordem: 14, sla: 180, apenasSaida: false },
-          { tipo: 'LABORATORIO', ordem: 15, sla: 120, apenasSaida: false },
+          { tipo: 'CORTE_DUBLAGEM', ordem: 3, sla: 60, apenasSaida: false },
+          { tipo: 'CORTE_PONTE', ordem: 4, sla: 90, apenasSaida: false },
+          { tipo: 'CORTE_LECTRA', ordem: 5, sla: 90, apenasSaida: false },
+          { tipo: 'CORTE_ATOM', ordem: 6, sla: 60, apenasSaida: false },
+          { tipo: 'CORTE_LASER', ordem: 7, sla: 60, apenasSaida: false },
+          { tipo: 'TELAS', ordem: 8, sla: 60, apenasSaida: false },
+          { tipo: 'SERIGRAFIA', ordem: 9, sla: 90, apenasSaida: false },
+          { tipo: 'APOIO', ordem: 10, sla: 120, apenasSaida: false },
+          { tipo: 'COSTURA', ordem: 11, sla: 180, apenasSaida: false },
+          { tipo: 'MONTAGEM', ordem: 12, sla: 180, apenasSaida: false },
+          { tipo: 'LABORATORIO', ordem: 13, sla: 120, apenasSaida: false },
         ];
 
         const rotasSalvas: RotaModelo[] = [];
@@ -659,8 +654,7 @@ async function runSeed() {
         diasAtras: 3,
         setorAtualTipo: 'MONTAGEM',
         setoresCompletos: [
-          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_RECEBIMENTO',
-          'CORTE_SEPARACAO', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
+          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
           'CORTE_LECTRA', 'CORTE_ATOM', 'CORTE_LASER',
           'TELAS', 'SERIGRAFIA', 'APOIO', 'COSTURA',
         ],
@@ -675,8 +669,7 @@ async function runSeed() {
         diasAtras: 5,
         setorAtualTipo: null,
         setoresCompletos: [
-          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_RECEBIMENTO',
-          'CORTE_SEPARACAO', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
+          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
           'CORTE_LECTRA', 'CORTE_ATOM', 'CORTE_LASER',
           'TELAS', 'SERIGRAFIA', 'APOIO', 'COSTURA',
           'MONTAGEM', 'LABORATORIO',
@@ -692,8 +685,7 @@ async function runSeed() {
         diasAtras: 2,
         setorAtualTipo: 'CORTE_LECTRA',
         setoresCompletos: [
-          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_RECEBIMENTO',
-          'CORTE_SEPARACAO', 'CORTE_DUBLAGEM',
+          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_DUBLAGEM',
         ],
         liberado: true,
       },
@@ -706,8 +698,7 @@ async function runSeed() {
         diasAtras: 4,
         setorAtualTipo: 'COSTURA',
         setoresCompletos: [
-          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_RECEBIMENTO',
-          'CORTE_SEPARACAO', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
+          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
           'CORTE_LECTRA', 'APOIO',
         ],
         liberado: true,
@@ -721,8 +712,7 @@ async function runSeed() {
         diasAtras: 3,
         setorAtualTipo: 'LABORATORIO',
         setoresCompletos: [
-          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_RECEBIMENTO',
-          'CORTE_SEPARACAO', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
+          'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
           'CORTE_LECTRA', 'APOIO', 'COSTURA', 'MONTAGEM',
         ],
         liberado: true,

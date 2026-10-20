@@ -82,6 +82,7 @@ describe('TicketService - Regras de Gestão e Resolução de Tickets por Setor',
           ordemEtapa: 1,
           rotaVersao: 1,
           setorNomeSnapshot: 'Corte',
+          setor: { ativo: true },
         },
       ];
 
@@ -121,6 +122,7 @@ describe('TicketService - Regras de Gestão e Resolução de Tickets por Setor',
         id: 'tkt-cx-1',
         codigoBarras: 'TKT-CX-1',
         tipoLote: 'CAIXA_TESTE',
+        setor: { ativo: true },
         ordemTeste: {
           plantaId: 'planta-1',
           possuiCaixaTeste: false,
@@ -138,7 +140,8 @@ describe('TicketService - Regras de Gestão e Resolução de Tickets por Setor',
         codigoBarras: 'TKT-VALIDO-1',
         ordemTesteId: 'ordem-1',
         setorId: 'setor-corte',
-        setorNomeSnapshot: 'Corte Recebimento',
+        setorNomeSnapshot: 'Corte Dublagem',
+        setor: { ativo: true },
         tipoLote: 'LOTE_PRINCIPAL',
         ordemTeste: {
           plantaId: 'planta-1',
@@ -154,7 +157,29 @@ describe('TicketService - Regras de Gestão e Resolução de Tickets por Setor',
       expect(res.codigoBarras).toBe('TKT-VALIDO-1');
       expect(res.ordemCodigoBarras).toBe('OT-123');
       expect(res.tipoLote).toBe('LOTE_PRINCIPAL');
-      expect(res.setorNome).toBe('Corte Recebimento');
+      expect(res.setorNome).toBe('Corte Dublagem');
+    });
+
+    it('deve rejeitar ticket de setor inativo', async () => {
+      mockTicketRepo.findOne.mockResolvedValueOnce({
+        id: 'tkt-inativo',
+        codigoBarras: 'TKT-INATIVO',
+        ordemTesteId: 'ordem-1',
+        setorId: 'setor-inativo',
+        setorNomeSnapshot: 'Setor antigo',
+        setor: { ativo: false },
+        tipoLote: 'LOTE_PRINCIPAL',
+        ordemTeste: {
+          plantaId: 'planta-1',
+          codigoBarras: 'OT-123',
+          status: 'EM_PRODUCAO',
+          possuiCaixaTeste: true,
+        },
+      });
+
+      await expect(TicketService.obterTicketPorCodigo('TKT-INATIVO', 'planta-1'))
+        .rejects
+        .toThrow(new TicketServiceError('Ticket de setor não encontrado.', 404, 'TICKET_SETOR_NOT_FOUND'));
     });
   });
 });

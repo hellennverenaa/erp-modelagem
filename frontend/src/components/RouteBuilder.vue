@@ -191,7 +191,7 @@ const fixedStart: RouteBlock = {
 }
 
 const fixedMiddle: RouteBlock[] = [
-  { id: 'corte-automatico', label: 'Corte Automático', tipo: 'fixo', icon: Scissors, color: '#0f172a', description: 'Máquinas de corte + Revisão' },
+  { id: 'corte-automatico', label: 'Corte Automático', tipo: 'fixo', icon: Scissors, color: '#0f172a', description: 'Máquinas de corte' },
   { id: 'apoio',            label: 'Apoio',            tipo: 'fixo', icon: Wrench,   color: '#0f172a', description: 'Etapas de suporte ao corte' },
   { id: 'costura',          label: 'Costura',          tipo: 'fixo', icon: Shirt,    color: '#0f172a', description: 'Costura Principal' },
   { id: 'montagem',         label: 'Montagem',         tipo: 'fixo', icon: Layers,   color: '#0f172a', description: 'Montagem Final do Produto' },
@@ -508,8 +508,7 @@ async function salvarRota() {
   const nomesEsperados = [
     'Almoxarifado da Modelagem', 'Navalha',
     ...(toggleSerigrafia.value ? ['Telas'] : []),
-    'Corte Recebimento',
-    'Corte Separação', 'Corte Dublagem', 'Corte Ponte', 'Corte Lectra',
+    'Corte Dublagem', 'Corte Ponte', 'Corte Lectra',
     ...(maquinas.atom ? ['Corte Atom'] : []),
     ...(maquinas.cn ? ['Corte CN'] : []),
     ...(maquinas.couro ? ['Corte Couro'] : []),
@@ -536,9 +535,7 @@ async function salvarRota() {
   }
   currentOrdem++
 
-  // 2. Corte Automático (Corte Recebimento, Corte Separação, Corte Dublagem)
-  rotaSalvar.push({ setorId: getId('Corte Recebimento'), ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
-  rotaSalvar.push({ setorId: getId('Corte Separação'), ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
+  // 2. Corte Automático
   rotaSalvar.push({ setorId: getId('Corte Dublagem'), ordem: currentOrdem++, obrigatorio: true, tipoExecucao: 'SEQUENCIAL', bipagemApenasSaida: false })
   
   // Subsetores Corte (Ponte, Lectra, Atom fixos, CN, Couro e Laser opcionais)
@@ -780,8 +777,7 @@ async function carregarRotaDoModelo(modeloId: string) {
       } else if (dbItem.ordem === montagemOrdem && dbItem.tipoExecucao === 'PARALELO') {
         zoneJuntoMontagem.value.push(block)
       } else if (dbItem.ordem < apoioOrdem) {
-        if (dbItem.setorId !== getId('Serigrafia') && 
-            dbItem.setorId !== getId('Corte Recebimento') &&
+        if (dbItem.setorId !== getId('Serigrafia') &&
             dbItem.setorId !== getId('Almoxarifado da Modelagem')) {
           zoneAntesApoio.value.push(block)
         }
@@ -1180,7 +1176,7 @@ defineExpose({
                 </div>
                 <div class="tl-block-text">
                   <span class="tl-block-name">Corte Automático</span>
-                  <span class="tl-block-sub">Máquinas de corte + Revisão</span>
+                  <span class="tl-block-sub">Máquinas de corte</span>
                   <div class="tl-corte-submachines" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.375rem;">
                     <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Ponte</span>
                     <span class="badge badge--fixo" style="font-size: 0.6875rem; background: #f1f5f9; border-color: #cbd5e1; color: #475569;">Lectra</span>
@@ -1192,25 +1188,6 @@ defineExpose({
                 </div>
               </div>
               <div class="tl-block-right flex-row-layout">
-                <div class="flex items-center gap-1 bg-slate-100/90 px-2 py-1 rounded border border-slate-200" title="SLA individual deste setor">
-                  <Clock :size="11" class="text-slate-500 shrink-0" />
-                  <input
-                    type="number"
-                    min="1"
-                    :value="getSlaConfigForBlock('Corte Recebimento').valor"
-                    @input="updateSlaValor('Corte Recebimento', ($event.target as HTMLInputElement).valueAsNumber || Number(($event.target as HTMLInputElement).value))"
-                    class="w-12 text-xs font-mono font-bold text-slate-800 bg-white px-1 py-0.5 rounded border border-slate-300 focus:outline-none"
-                  />
-                  <select
-                    :value="getSlaConfigForBlock('Corte Recebimento').unidade"
-                    @change="updateSlaUnidade('Corte Recebimento', ($event.target as HTMLSelectElement).value as any)"
-                    class="text-[10px] font-semibold text-slate-700 bg-white border border-slate-300 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
-                  >
-                    <option value="min">min</option>
-                    <option value="h">h</option>
-                    <option value="d">d</option>
-                  </select>
-                </div>
                 <span class="badge badge--fixo">
                   <Lock :size="10" aria-hidden="true" />
                   Fixo

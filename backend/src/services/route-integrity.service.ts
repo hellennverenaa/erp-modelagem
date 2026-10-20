@@ -15,8 +15,7 @@ export interface PecaCorteInput {
 }
 
 const REQUIRED_TYPES = [
-  'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_RECEBIMENTO',
-  'CORTE_SEPARACAO', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
+  'ALMOXARIFADO_MODELAGEM', 'NAVALHA', 'CORTE_DUBLAGEM', 'CORTE_PONTE',
   'CORTE_LECTRA', 'APOIO', 'COSTURA', 'MONTAGEM', 'LABORATORIO',
 ];
 const CUT_TYPES = new Set([
@@ -135,6 +134,6 @@ export async function getPersistedModelRoute(
   const versaoEfetiva = versao ?? rotas.reduce((maior, etapa) => Math.max(maior, etapa.versao || 1), 0);
   return {
     versao: versaoEfetiva,
-    etapas: rotas.filter((etapa) => (etapa.versao || 1) === versaoEfetiva),
+    etapas: rotas.filter((etapa) => (etapa.versao || 1) === versaoEfetiva && etapa.setor?.ativo),
   };
 }

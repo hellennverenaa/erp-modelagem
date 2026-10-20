@@ -97,6 +97,9 @@ export class OcorrenciasController {
       if (!setor) {
         return res.status(404).json({ error: 'Setor nao localizado.', code: 'SETOR_NOT_FOUND' });
       }
+      if (!setor.ativo) {
+        return res.status(409).json({ error: 'O setor não está ativo para novos eventos.', code: 'SETOR_INATIVO' });
+      }
 
       const ocorrencia = new OcorrenciaProducao();
       ocorrencia.ordemTesteId = data.ordemTesteId;
