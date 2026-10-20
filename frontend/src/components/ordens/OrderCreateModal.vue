@@ -8,6 +8,7 @@ import {
   Loader2,
 } from '@lucide/vue'
 import api from '../../api/axios'
+import { formatDateOnly } from '../../utils/date'
 import type { Modelo, Planta } from './types'
 
 const props = defineProps<{
@@ -49,11 +50,6 @@ watch(
 
 function closeModal() {
   emit('update:modelValue', false)
-}
-
-function formatDateOnly(value: string | null | undefined) {
-  const isoDate = value?.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  return isoDate ? `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}` : 'não cadastrada'
 }
 
 async function handleCreateOrdem() {

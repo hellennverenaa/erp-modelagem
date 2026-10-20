@@ -50,7 +50,13 @@
 Usar o snapshot da ordem para validar etapas permitidas, sequência e condições; associar cada bipagem à etapa da ordem e manter leitura compatível com ordens antigas.
 
 ### Bipagem orientada à rota da ordem (TASK-015)
-Remover sequências fixas de setores. Ao selecionar uma ordem, exibir apenas setores e processos de sua rota, com posição, estado e ações permitidas.
+**Estado: implementada nesta branch (`fix/pg-trgm-migration-schema`); validação técnica concluída e validação funcional pendente.** Removida a escolha manual do setor para operadores comuns; a tela carrega os setores exclusivamente dos tickets da rota congelada da ordem. A leitura de um ticket identifica automaticamente ordem, setor e fluxo e, em seguida, permite identificar o operador pelo crachá. A leitura de código antigo da ordem continua funcionando quando o setor de lotação da sessão pertence à rota congelada. O controle de simulação permanece restrito a `ADMINISTRAR_BIPAGEM` e limitado à rota da ordem carregada.
+
+**Contrato de autorização:** preservar autenticação, `EDITAR_TELA_BIPAGEM`, autorização da sessão por ação/setor, integridade de rota, ticket, sequência e gates operacionais. O perfil associado ao crachá identifica o responsável e não precisa ter uma permissão setorial própria; crachá não cadastrado continua sendo rejeitado. Não inferir rotas para ordens sem snapshot.
+
+**Arquivos alterados:** `frontend/src/views/BipagemView.vue`, `backend/src/services/ticket.service.ts`, `backend/src/services/__tests__/ticket.service.spec.ts`, `backend/src/controllers/rastreamentos.controller.ts` e este plano. Nenhuma migration criada ou aplicada.
+
+**Validação executada:** `npm run build` no backend e frontend passou; `npm test` no backend passou com 39 testes em 6 arquivos; `git diff --check` passou. **Validação funcional pendente:** testar com leitor de ticket e crachá no ambiente operacional; conferir operador comum, administrador, entrada, saída, ticket fora da rota, crachá não cadastrado e ordem sem snapshot. Próximo passo: validação manual desses cenários.
 
 ### TV de rastreamento usando o snapshot da ordem (TASK-016)
 Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preservando o histórico quando o modelo for editado.
@@ -59,10 +65,12 @@ Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preser
 Revisar endpoints, filtros, setores, tempos e agregações para consumir dados reais de ordens, rotas, bipagens, qualidade e ocorrências; identificar mocks e validar indicadores com registros de produção.
 
 ### Padronização de datas no backend e no banco (TASK-019)
-Definir como instantes e prazos são recebidos, persistidos e serializados. Tratar valores históricos conforme sua interpretação atual, sem conversões em massa sem auditoria.
+**Estado: implementada nesta branch (feature/padronizacao-datas-timezones); validação técnica concluída com sucesso.**
+Definir como instantes e prazos são recebidos, persistidos e serializados. Normalização explícita de datas de calendário (`dataCorte`) em meio-dia UTC (`12:00:00.000Z`) para eliminar distorções de fuso horário (ex: recuo para dia anterior no fuso UTC-3 brasileiro), com funções utilitárias canônicas e testes unitários.
 
 ### Apresentação e edição de datas no frontend (TASK-020)
-Apresentar datas no horário local e enviar valores editados com timezone explícito, conforme o contrato da TASK-019. Remover conversões que tratem UTC como hora local ou usem offsets fixos.
+**Estado: implementada nesta branch (feature/padronizacao-datas-timezones); validação técnica concluída com sucesso.**
+Centralização da manipulação de datas no módulo canônico `frontend/src/utils/date.ts`. Apresentação de instantes no horário local (`formatDate`, `formatDateTime`, `formatTimeOnly`) e datas de calendário sem shift de fuso horário (`formatDateOnly`, `toDateInputValue`). Eliminação de conversões ad-hoc, offsets fixos e funções duplicadas nas views e modais do sistema.
 
 ### Auditoria de Corte, Apoio e dados simulados (TASK-022)
 Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
@@ -347,18 +355,78 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local desta sessão
 
 ---
 
+---
+
+### TASK-019 — Padronização de Datas no Backend e no Banco
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.**
+Eliminação de discrepâncias e shifts de fuso horário em datas de calendário e timestamps de auditoria, estabelecendo diferenciação semântica clara e rotinas padronizadas de parsing e serialização.
+
+**Escopo implementado:**
+- Criação de `backend/src/utils/date.utils.ts`:
+  - `parseDateOnly`: Normaliza datas de calendário puro (ex: data de corte `YYYY-MM-DD` ou ISO timestamp) fixando o meio-dia UTC (`12:00:00.000Z`). Isso impede o bug clássico de recuo de dia no fuso brasileiro UTC-3 (onde `T00:00:00Z` era convertido para 21:00 do dia anterior).
+  - `parseIsoTimestamp`: Faz parsing seguro e estrito de instantes ISO 8601, rejeitando entradas inválidas.
+  - `formatDateOnlyIso`: Extrai com segurança a porção `YYYY-MM-DD` sem oscilações de fuso horário.
+  - `isValidDateString`: Validador utilitário de strings de data.
+- Integração nos controladores e serviços críticos:
+  - `backend/src/services/lote.service.ts`: Tratamento de `dataCorte` na criação de lotes via `parseDateOnly`.
+  - `backend/src/controllers/admin.controller.ts`: Tratamento de `dataCorte` nos endpoints de criação, edição e manutenção de ordens (`criarOrdem`, `atualizarOrdem` e `atualizarDataCorte`).
+- Criação de suíte de testes unitários:
+  - `backend/src/utils/__tests__/date.utils.spec.ts`: 9 novos testes unitários cobrindo casos válidos, inválidos, null/undefined, datas puras e proteção contra shift de fuso horário brasileiro (UTC-3).
+
+**Validação técnica executada:**
+- `npm test` no backend com 48/48 testes unitários aprovados em 622ms (incluindo os 9 novos testes).
+- `npm run build` no backend (TypeScript `tsc`) compilado com 0 erros.
+- `git diff --check` aprovado sem pendências.
+
+---
+
+### TASK-020 — Apresentação e Edição de Datas no Frontend
+**Estado: implementada nesta branch; validação técnica concluída com sucesso.**
+Padronização da manipulação e exibição de datas em todo o frontend, eliminando conversões ad-hoc, slices/regex manuais, offsets manuais e duplicação de funções entre telas.
+
+**Escopo implementado:**
+- Criação do módulo canônico `frontend/src/utils/date.ts`:
+  - `formatDate`: Formatação amigável de instantes em timezone local (`DD/MM/AAAA, HH:mm`).
+  - `formatDateOnly`: Exibição de datas de calendário (`DD/MM/AAAA`) imunes a shifts de timezone (usando parsing estruturado e fallback seguro via UTC).
+  - `formatDateTime`: Formatação extensa de instantes (`DD/MM/AAAA às HH:mm`).
+  - `formatTimeOnly`: Formatação de horário (`HH:mm`).
+  - `toDateInputValue`: Converte com segurança instantes ou strings para formato aceito em campos `<input type="date">` (`YYYY-MM-DD`).
+- Refatoração dos componentes e telas:
+  - `OrderCreateModal.vue`: Remoção de `formatDateLocal` duplicada, adoção de `formatDateOnly`.
+  - `OrderHistoryModal.vue`: Remoção de `formatarData` duplicada, adoção de `formatDateTime`.
+  - `OrderMaintenanceModal.vue`: Adoção de `formatDateTime` para histórico de auditoria.
+  - `GestaoOrdensView.vue`: Adoção de `formatDate` na tabela principal de ordens.
+  - `GestaoModelosView.vue`: Adoção de `formatDateOnly` na tabela de modelos e `toDateInputValue` no modal de edição.
+  - `WizardCriacaoTesteView.vue`: Substituição de lógica manual por `toDateInputValue`.
+  - `RastreamentoOrdemView.vue`: Substituição de lógica ad-hoc em `formatTimestampFormatado` por `formatDateTime` e remoção da função local redundante `formatDateOnly`.
+
+**Validação técnica executada:**
+- `npm run build` no frontend (Vite + vue-tsc) compilado com 0 erros (tempo: 2.67s).
+- `git diff --check` aprovado sem pendências.
+
+---
+
+### TASK-043 — Corrigir resolução de `pg_trgm` na migration de índices
+**Estado: integrada na main via PR #18; validação de banco pendente.** A execução local de `npm run dev` conecta ao PostgreSQL e prepara o schema, mas a migration `1792161400000-OtimizacaoIndicesEBuscaTrigram` falhava ao criar o índice GIN porque `gin_trgm_ops` não era resolvida. Como `dev` encadeia migrations e servidor com `&&`, a falha impedia a inicialização da API.
+
+**Evidência e diagnóstico:** o log fornecido registrava 26 de 27 migrations carregadas, iniciava transação e revertia a migration após o erro PostgreSQL `42704` em `gin_trgm_ops`. A migration criava `pg_trgm` sem schema explícito e referenciava a classe de operadores sem qualificação; a conexão configura `search_path=erp_modelagem,public`.
+
+**Escopo entregue:** tornou explícito o schema da extensão quando criada e resolveu/qualificou o schema efetivo de `gin_trgm_ops` ao construir o índice, mantendo compatibilidade com bancos em que a extensão já existe. Integrado na main via PR #18.
+
+### TASK-044 — Verificar aderência do índice trigram à busca do catálogo
+**Estado: análise pendente; fora do escopo de TASK-043.** Na revisão da main, a busca em `GET /catalogo-pecas` foi confirmada usando `LOWER(p.nome)`, `LOWER(p.numero)` e `LOWER(p.codigo_original)`, enquanto a migration declara um índice trigram sobre `nome` sem `LOWER` e não declara índices trigram para os outros dois campos. Confirmar com `EXPLAIN` se a busca server-side integrada pela TASK-041 usa o índice esperado e registrar eventual ajuste em escopo próprio. Depende da TASK-043 para validar sobre uma migration aplicável.
+
+---
+
 ### TASK-045 — Remover Corte Recebimento e Corte Separação
-**Estado: implementada e validada tecnicamente nesta branch; PR e integração pendentes.** Os dois setores foram removidos do construtor de rotas, das validações, das regras de bipagem, dos dados de seed e dos fluxos de inspeção/tickets. A migration criada desativa os tipos e setores somente no schema `erp_modelagem`, preservando registros históricos nos ambientes que não forem limpos manualmente. A limpeza física foi executada no banco de testes confirmado pela usuária, com validação do nome do banco e do schema antes da transação.
+**Estado: implementada e validada tecnicamente nesta branch; PR #19 aberto e sincronizado com a main.** Os dois setores foram removidos do construtor de rotas, das validações, das regras de bipagem, dos dados de seed e dos fluxos de inspeção/tickets. A migration criada desativa os tipos e setores somente no schema `erp_modelagem`, preservando registros históricos nos ambientes que não forem limpos manualmente. A limpeza física foi executada no banco de testes confirmado pela usuária, com validação do nome do banco e do schema antes da transação.
 
 **Escopo entregue:** filtrar etapas inativas das rotas persistidas e da API para preservar o uso de rotas legadas; impedir bipagens, inspeções, ocorrências e geração/leitura/impressão de tickets em setores inativos; remover os hardcodes da interface, backend e seed; atualizar as fixtures; remover `clean_rotas.ts` sem referência de execução; criar migration restrita ao schema `erp_modelagem` e rotina manual `npm run db:purge-test-cut-sectors` com confirmação do banco/schema, proteção para `NODE_ENV=production`, transação e verificação contra opções de setor compartilhadas.
 
 **Validação técnica executada:**
-- `backend: npm test` — 41 testes aprovados em 6 arquivos.
+- `backend: npm test` — 48 testes aprovados em 7 arquivos.
 - `backend: npm run build` — aprovado.
 - `frontend: npm run build` — aprovado.
 - `backend: node --test tests/route-integrity.test.cjs` — aprovado.
 - `git diff --check` — aprovado.
 - No banco de testes `postgres`, schema `erp_modelagem`, a rotina manual removeu os registros encontrados nas tabelas de setores, rotas, tickets, rastreamentos, inspeções, checklist, divergências/retrabalho, ocorrências, permissões, estações e auditoria; atualizou snapshots de 2 ordens. Verificação posterior confirmou 0 setores, tipos ou referências de rota restantes; nenhum arquivo de upload estava associado.
-- A migration desta entrega **não foi aplicada**. `npm run migration:run` e `npm run dev` não foram executados, pois a dependência PR #18 (TASK-043, correção da migration Trigram) permanece aberta e não integrada. A `main` remota continua no commit base `ebb6499`.
-
-**Dependência e próximo passo:** PR #18 (TASK-043) permanece aberto e deve ser integrado antes de executar as migrations desta branch em um banco de desenvolvimento. Este trabalho permanece em `feature/remocao-setores-corte`; após revisão e integração das dependências, aplicar a migration em ambiente de desenvolvimento e verificar os ambientes de destino antes da implantação. O commit e o PR desta TASK ainda serão registrados após concluir a entrega desta branch.

@@ -13,8 +13,22 @@ export class OtimizacaoIndicesEBuscaTrigram1792161400000 implements MigrationInt
       (queryRunner.connection.options as { schema?: string }).schema || 'erp_modelagem',
     ).replace(/"/g, '""');
 
-    // 1. Habilita extensão pg_trgm para buscas textuais rápidas
-    await queryRunner.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    // 1. Habilita pg_trgm no schema do ERP quando ainda não estiver instalada.
+    // Se já existir em outro schema, IF NOT EXISTS não a move; resolvemos o
+    // schema real abaixo para qualificar a classe de operadores do índice.
+    await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA "${schema}"`);
+    const extensionRows: Array<{ schema: string }> = await queryRunner.query(`
+      SELECT namespace.nspname AS "schema"
+      FROM pg_extension extension
+      JOIN pg_namespace namespace ON namespace.oid = extension.extnamespace
+      WHERE extension.extname = 'pg_trgm'
+    `);
+    const extensionSchema = extensionRows[0]?.schema;
+    if (!extensionSchema) {
+      throw new Error('Não foi possível localizar o schema da extensão pg_trgm.');
+    }
+    const safeExtensionSchema = extensionSchema.replace(/"/g, '""');
+    const ginTrgmOpClass = `"${safeExtensionSchema}"."gin_trgm_ops"`;
 
     // 2. Índices de Rastreamentos (atenção para "tipoLote" em camelCase)
     await queryRunner.query(`
@@ -71,7 +85,7 @@ export class OtimizacaoIndicesEBuscaTrigram1792161400000 implements MigrationInt
     await queryRunner.query(`
       CREATE INDEX IF NOT EXISTS "idx_catalogo_pecas_trgm_nome"
       ON "${schema}"."catalogo_pecas"
-      USING gin ("nome" gin_trgm_ops)
+      USING gin ("nome" ${ginTrgmOpClass})
     `);
     await queryRunner.query(`
       CREATE INDEX IF NOT EXISTS "idx_catalogo_pecas_codigo_original"
