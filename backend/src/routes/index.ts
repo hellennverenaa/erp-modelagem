@@ -13,6 +13,7 @@ import adminRoutes from './admin.routes';
 import rotasRoutes from './rotas.routes';
 import pecasRoutes from './pecas.routes';
 import etiquetasRoutes from './etiquetas.routes';
+import historicoRoutes from './historico.routes';
 import { verificaToken } from '../middlewares/auth.middleware';
 import { exigirAlgumaPermissao, exigirPermissao } from '../middlewares/rbac.middleware';
 
@@ -61,5 +62,6 @@ router.use('/catalogo-pecas', verificaToken, exigirAlgumaPermissao([
 router.use('/etiquetas', verificaToken, exigirAlgumaPermissao([
   'TELA_GESTAO_ORDENS', 'TELA_NOVA_ORDEM_TESTE', 'TELA_BIPAGEM',
 ]), etiquetasRoutes);
+router.use('/historico', verificaToken, exigirPermissao('TELA_HISTORICO_MOVIMENTACOES'), historicoRoutes);
 
 export default router;

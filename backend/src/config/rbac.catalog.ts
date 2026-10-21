@@ -17,6 +17,7 @@ export const RBAC_SCREENS: RbacScreenDefinition[] = [
   { routeName: 'inspecao', routePath: '/dashboard/inspecao', label: 'Inspeção de Qualidade', viewPermission: 'TELA_INSPECAO_QUALIDADE', editPermission: 'EDITAR_TELA_INSPECAO_QUALIDADE' },
   { routeName: 'rastreamento-ordem', routePath: '/dashboard/rastreamento', label: 'Rastreamento', viewPermission: 'TELA_RASTREAMENTO' },
   { routeName: 'novo-teste', routePath: '/dashboard/novo-teste', label: 'Nova Ordem de Teste', viewPermission: 'TELA_NOVA_ORDEM_TESTE', editPermission: 'EDITAR_TELA_NOVA_ORDEM_TESTE' },
+  { routeName: 'historico-movimentacoes', routePath: '/dashboard/historico', label: 'Histórico de Movimentações', viewPermission: 'TELA_HISTORICO_MOVIMENTACOES' },
 ];
 
 export const RBAC_GLOBAL_ACTIONS: Array<{ acao: string; label: string }> = [
