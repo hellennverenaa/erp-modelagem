@@ -37,6 +37,16 @@ O FPY continua calculado por registro de inspeção `SAIDA_SETOR` (não por peç
 ### Filtros compactos da Torre de Controle (TASK-046)
 **Estado: implementação disponível na branch `feature/dados-reais-torre-controle`; validação funcional autenticada pendente.** Depende dos filtros e do escopo autorizativo da TASK-017. O painel foi compactado e recolhido inicialmente, o bloco informativo de planta foi removido para usuários sem acesso global, e o seletor agora apresenta estados de carregamento, erro com nova tentativa e ausência de setores. O banco local de testes contém 19 setores ativos na única planta. A captura da usuária mostrou `404` em `GET /api/erp-modelagem/dashboard/filters`. A configuração atual do Vite encaminha `/api` ao gateway, e o backend publica as rotas em `/api` e `/`. Requisições locais sem token para Vite, gateway e backend responderam `401`, comportamento esperado da camada de autenticação; isso não confirma a resposta do handler autenticado. Como o backend usa `ts-node` sem reinício automático, um processo antigo é a hipótese mais provável para o `404`, ainda sem confirmação autenticada. Reiniciar o backend iniciado deste checkout e conferir a chamada no navegador. Não houve alteração de backend ou de banco.
 
+### Histórico global de auditoria e movimentações (TASK-047)
+**Estado: Etapa 1 implementada e validada tecnicamente nesta branch `feature/historico-global-auditoria`; etapas 2 e 3 pendentes.** Reunir em uma tela as alterações relevantes de cadastros e as movimentações operacionais, mantendo autor, data, entidade, valores alterados e escopo de planta.
+
+**Execução em três etapas:**
+- **Etapa 1 — Fundação e cobertura dos eventos (implementada nesta branch):** adicionar escopo opcional de planta ao `audit_log`; criar serviço de gravação append-only dentro da transação da operação; registrar criação de modelos, alterações de previsão, alterações de peças do modelo e criação/alteração de rotas nos fluxos existentes. Guardar snapshots limitados aos campos de negócio necessários. Backfill somente para auditorias de ordens cuja planta possa ser identificada pela própria ordem. Inclui o preenchimento da planta nos eventos de SLA e remanejamento já existentes.
+- **Etapa 2 — API unificada (pendente):** fornecer consulta paginada e filtrável que una auditoria de configuração com movimentações de produção existentes, imponha RBAC e escopo de planta no backend e ordene os eventos antes de paginar. Definir índices com base no contrato e nos planos de consulta. Não duplicar rastreamentos como novos eventos de auditoria.
+- **Etapa 3 — Tela (pendente):** adicionar view e navegação RBAC com cronologia, filtros, paginação e detalhes dos valores alterados; validar acessos permitidos/negados, separação por planta e os fluxos de modelo, rota, peça e bipagem.
+
+**Limites e riscos:** mudanças anteriores sem auditoria não podem ser reconstruídas com precisão; registros existentes de rastreamento continuarão disponíveis. A política para eventos globais e a visibilidade por perfil/planta deve ser confirmada antes da API. O código atual não possui endpoint de edição manual do catálogo de peças; a cobertura de alteração se refere à composição de peças do modelo e ao remanejamento por ordem. Não registrar leituras HTTP nem dados sensíveis em snapshots.
+
 ### Auditoria de Corte, Apoio e dados simulados (TASK-022)
 **Estado: análise pendente.** Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
 
@@ -100,6 +110,16 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local. O estado em 
 - O script `backend/package.json` executa `ts-node src/server.ts` sem watcher; um processo iniciado antes da atualização não carrega alterações do backend automaticamente. Reiniciar a API e conferir a chamada de rede é necessário para validar a causa em execução.
 - Sem alteração no backend, sem migration e sem escrita no banco. Validações: `frontend: npm run build` aprovado; `git diff --check` aprovado. Builds do backend e testes automatizados não foram executados porque não houve alteração de backend e o projeto não configura testes de frontend.
 - Próximo passo: validar no navegador a resposta de `/api/dashboard/filters` e a lista de setores para usuário restrito e administrador, após reiniciar o backend; se a resposta continuar vazia ou falhar, investigar o status e payload retornados antes de alterar a API.
+
+## Registro da implementação — TASK-047, Etapa 1
+
+- Escopo: estabelecer gravação transacional de auditoria e cobrir os fluxos existentes de criação de modelo, previsão de corte, composição de peças e rotas.
+- Adicionados `planta_id` nullable em `audit_log`, o serviço central `registrarAuditoria` e a migration `1792604703742-AdicionaEscopoDePlantaNaAuditoria`. O backfill associa somente logs de `ordens_teste` às ordens existentes no schema `erp_modelagem`; a migration foi criada, mas não aplicada a nenhum banco.
+- Eventos gravados na mesma transação de negócio: criação simples e completa de modelos, modelo e rota no fluxo de novo teste, alteração da previsão de corte, alteração da composição de peças, criação/atualização versionada de rota e criação de item do catálogo. Eventos de SLA e remanejamento por ordem também recebem o escopo da planta. Alterações globais usam planta nula.
+- Snapshots incluem campos de negócio necessários para identificar a alteração; peças são ordenadas por ID e não geram evento quando não houve mudança. O evento e a operação principal falham juntos se a gravação de auditoria falhar.
+- Validações: `backend npm run build` aprovado; `backend npm test` aprovado (10 arquivos, 54 testes); `git diff --check` aprovado. Nenhuma migration ou escrita de banco foi executada; não houve validação funcional autenticada.
+- Limitação confirmada no código: não existe endpoint de edição manual de itens do catálogo de peças. A etapa cobre edição da composição do modelo, além da criação no catálogo; alterações por importação de catálogo não são registradas como eventos de usuário.
+- Fora desta etapa: endpoint unificado/paginado e tela de histórico. Próximo passo: definir antes da Etapa 2 a política de visibilidade para eventos globais sem planta e a permissão RBAC que controlará consulta por planta; depois integrar os registros de rastreamento e demais movimentações já persistidas.
 
 ## Registro da análise do 404 — TASK-046
 

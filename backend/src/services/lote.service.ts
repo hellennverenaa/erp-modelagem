@@ -7,6 +7,7 @@ import { lockModelConfiguration, validatePersistedModelRoute, getPersistedModelR
 import { saveModelPieces, ModelPieceInput } from './model-pieces.service';
 import { garantirTicketsSetorDaOrdem } from './ticket-setor.service';
 import { parseDateOnly } from '../utils/date.utils';
+import { ContextoAuditoria, registrarAuditoria } from './auditoria.service';
 
 export class LoteServiceError extends Error {
   constructor(
@@ -45,6 +46,7 @@ export interface UsuarioContexto {
   userId: string;
   perfilId: string;
   plantaId?: string;
+  ipAddress?: string | null;
 }
 
 export class LoteService {
@@ -94,8 +96,21 @@ export class LoteService {
         }
 
         if (dados.dataCorte) {
+          const dataCorteAnterior = modelo.dataCorte;
           modelo.dataCorte = previsaoCorte;
           await modeloRepo.save(modelo);
+          if (dataCorteAnterior?.getTime() !== previsaoCorte?.getTime()) {
+            await registrarAuditoria(manager, {
+              usuarioId: usuario.userId,
+              plantaId: dados.plantaId,
+              ipAddress: usuario.ipAddress ?? null,
+              acao: 'MODELO_PREVISAO_CORTE_ALTERADA',
+              entidadeTipo: 'modelos',
+              entidadeId: modelo.id,
+              dadosAnteriores: { dataCorte: dataCorteAnterior },
+              dadosNovos: { dataCorte: previsaoCorte },
+            });
+          }
         }
 
         const repo = manager.getRepository(OrdemTeste);
@@ -131,7 +146,8 @@ export class LoteService {
     ordemId: string,
     dados: SalvarConfiguracaoPecasDTO,
     usuarioPlantaId?: string,
-    acessoTodasPlantas = false
+    acessoTodasPlantas = false,
+    contextoAuditoria?: ContextoAuditoria,
   ): Promise<{ ordem: OrdemTeste; pecas: any[] }> {
     if (!acessoTodasPlantas && !usuarioPlantaId) {
       throw new LoteServiceError('Usuário sem planta associada.', 403, 'PLANTA_REQUIRED');
@@ -161,7 +177,10 @@ export class LoteService {
         );
       }
 
-      const pecas = await saveModelPieces(manager, ordem.modeloId, dados.pecas as ModelPieceInput[]);
+      const pecas = await saveModelPieces(manager, ordem.modeloId, dados.pecas as ModelPieceInput[], {
+        ...contextoAuditoria,
+        plantaId: ordem.plantaId,
+      });
       ordem.possuiCaixaTeste = dados.possuiCaixaTeste;
       await repo.save(ordem);
 

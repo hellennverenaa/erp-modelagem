@@ -88,7 +88,12 @@ export class LotesController {
       const acessoTodasPlantas = await possuiAcessoTodasPlantas(req);
       const ordem = await LoteService.criarOrdemPcp(
         parsed.data,
-        { userId: req.user.userId, perfilId: req.user.perfilId, plantaId: req.user.plantaId },
+        {
+          userId: req.user.userId,
+          perfilId: req.user.perfilId,
+          plantaId: req.user.plantaId,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+        },
         acessoTodasPlantas
       );
       return res.status(201).json({ message: 'Ordem criada e enviada para a fila da Modelagem.', ordem, lote: ordem });
@@ -119,7 +124,11 @@ export class LotesController {
         id.data,
         parsed.data,
         req.user?.plantaId,
-        acessoTodasPlantas
+        acessoTodasPlantas,
+        {
+          usuarioId: req.user?.userId ?? null,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+        },
       );
       return res.json({ message: 'Peças e decisão de Caixa Teste salvas.', ordem: result.ordem, pecas: result.pecas, totalPecas: result.pecas.length });
     } catch (error: any) {
@@ -378,7 +387,11 @@ export class LotesController {
     }
 
     try {
-      const resultado = await finalizarNovoTeste(parseResult.data, req.user.userId);
+      const resultado = await finalizarNovoTeste(
+        parseResult.data,
+        req.user.userId,
+        req.ip || req.socket.remoteAddress || null,
+      );
       return res.status(201).json({
         message: 'Novo teste finalizado com sucesso.',
         modelo: resultado.modelo,
@@ -716,6 +729,7 @@ export class LotesController {
             lote.slasPorSetor = novosSlas;
             logsParaSalvar.push(auditRepo.create({
               usuarioId: auditUsuarioId,
+              plantaId: lote.plantaId,
               acao: 'SLA_ALTERADO',
               entidadeTipo: 'ordens_teste',
               entidadeId: lote.id,
@@ -821,6 +835,7 @@ export class LotesController {
 
             logsParaSalvar.push(auditRepo.create({
               usuarioId: auditUsuarioId,
+              plantaId: lote.plantaId,
               acao: 'PECA_REMANEJADA',
               entidadeTipo: 'ordens_teste',
               entidadeId: lote.id,

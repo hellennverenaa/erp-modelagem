@@ -2,6 +2,7 @@ import { EntityManager, In } from 'typeorm';
 import { CatalogoPeca } from '../entities/CatalogoPeca';
 import { ConfigOpcao } from '../entities/ConfigOpcao';
 import { Peca } from '../entities/Peca';
+import { ContextoAuditoria, registrarAuditoria } from './auditoria.service';
 
 export interface ModelPieceInput {
   id?: string;
@@ -40,10 +41,28 @@ export async function validateModelPieces(manager: EntityManager, pecas: ModelPi
 }
 
 /** Mantém os IDs das peças existentes, que podem ser citados em rastreamentos. */
-export async function saveModelPieces(manager: EntityManager, modeloId: string, pecas: ModelPieceInput[]) {
+function snapshotPecas(pecas: Peca[]) {
+  return pecas
+    .map((peca) => ({
+      id: peca.id,
+      catalogoPecaId: peca.catalogoPecaId,
+      nome: peca.nome,
+      descricao: peca.descricao,
+      setorCorteOpcaoId: peca.setorCorteOpcaoId,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function saveModelPieces(
+  manager: EntityManager,
+  modeloId: string,
+  pecas: ModelPieceInput[],
+  contextoAuditoria?: ContextoAuditoria,
+) {
   const catalogo = await validateModelPieces(manager, pecas);
   const repo = manager.getRepository(Peca);
   const existentes = await repo.find({ where: { modeloId } });
+  const snapshotAnterior = snapshotPecas(existentes);
   const idsExistentes = new Set(existentes.map((peca) => peca.id));
   const idsPecasRecebidos = pecas.map((peca) => peca.id).filter((id): id is string => Boolean(id));
   const idsRecebidos = new Set(idsPecasRecebidos);
@@ -67,5 +86,21 @@ export async function saveModelPieces(manager: EntityManager, modeloId: string, 
     peca.setorCorteOpcaoId = item.setorCorteOpcaoId;
     return peca;
   });
-  return repo.save(atualizadas);
+  const pecasSalvas = await repo.save(atualizadas);
+
+  if (contextoAuditoria) {
+    const novas = snapshotPecas(pecasSalvas);
+    if (JSON.stringify(snapshotAnterior) !== JSON.stringify(novas)) {
+      await registrarAuditoria(manager, {
+        ...contextoAuditoria,
+        acao: existentes.length ? 'PECAS_MODELO_ALTERADAS' : 'PECAS_MODELO_CRIADAS',
+        entidadeTipo: 'modelos',
+        entidadeId: modeloId,
+        dadosAnteriores: existentes.length ? { pecas: snapshotAnterior } : null,
+        dadosNovos: { pecas: novas },
+      });
+    }
+  }
+
+  return pecasSalvas;
 }

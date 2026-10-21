@@ -8,6 +8,7 @@ import { In } from 'typeorm';
 import { Peca } from '../entities/Peca';
 import { lockModelConfiguration, RouteIntegrityError, validateRouteIntegrity } from '../services/route-integrity.service';
 import { perfilPossuiPermissao } from '../services/rbac.service';
+import { registrarAuditoria } from '../services/auditoria.service';
 
 const itemRotaSchema = z.object({
   setorId: z.string().uuid({ message: 'setorId deve ser um UUID válido.' }),
@@ -104,7 +105,15 @@ export class RotasController {
           .select('COALESCE(MAX(rota.versao), 0)', 'versao')
           .where('rota.modeloId = :modeloId AND rota.plantaId = :plantaId', { modeloId, plantaId })
           .getRawOne();
-        const versao = Number(versaoAnterior?.versao || 0) + 1;
+        const versaoExistente = Number(versaoAnterior?.versao || 0);
+        const rotaAnterior = versaoExistente > 0
+          ? await rotaRepo.find({
+              where: { modeloId, plantaId, versao: versaoExistente },
+              relations: { setor: true },
+              order: { ordem: 'ASC' },
+            })
+          : [];
+        const versao = versaoExistente + 1;
         const novosItens = rota.map((item) => {
           return rotaRepo.create({
             modeloId,
@@ -118,7 +127,30 @@ export class RotasController {
             versao,
           });
         });
-        return { itensSalvos: await rotaRepo.save(novosItens), versao };
+        const itensSalvos = await rotaRepo.save(novosItens);
+        const nomeSetorPorId = new Map(setoresExistentes.map((setor) => [setor.id, setor.nome]));
+        const snapshotRota = (itens: RotaModelo[]) => itens.map((item) => ({
+          setorId: item.setorId,
+          setorNome: item.setor?.nome || nomeSetorPorId.get(item.setorId) || null,
+          ordem: item.ordem,
+          slaAlvoMin: item.slaAlvoMin,
+          obrigatorio: item.obrigatorio,
+          tipoExecucao: item.tipoExecucao,
+          bipagemApenasSaida: item.bipagemApenasSaida,
+        }));
+        await registrarAuditoria(transactionalEntityManager, {
+          usuarioId: req.user?.userId ?? null,
+          plantaId,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+          acao: versaoExistente > 0 ? 'ROTA_ATUALIZADA' : 'ROTA_CRIADA',
+          entidadeTipo: 'modelos',
+          entidadeId: modeloId,
+          dadosAnteriores: versaoExistente > 0
+            ? { versao: versaoExistente, etapas: snapshotRota(rotaAnterior) }
+            : null,
+          dadosNovos: { versao, etapas: snapshotRota(itensSalvos) },
+        });
+        return { itensSalvos, versao };
       });
 
       return res.status(200).json({

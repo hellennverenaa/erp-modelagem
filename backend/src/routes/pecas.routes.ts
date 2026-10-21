@@ -7,6 +7,7 @@ import { OrdemTeste } from '../entities/OrdemTeste';
 import { exigirAlgumaPermissao, exigirPermissao } from '../middlewares/rbac.middleware';
 import { ModelPiecesError, saveModelPieces } from '../services/model-pieces.service';
 import { lockModelConfiguration } from '../services/route-integrity.service';
+import { registrarAuditoria } from '../services/auditoria.service';
 
 const router = Router();
 
@@ -58,7 +59,11 @@ router.post('/modelo/:modeloId', exigirAlgumaPermissao([
       if (!modelo) throw Object.assign(new Error('Modelo não encontrado.'), { code: 'MODELO_NOT_FOUND' });
       const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: modelo.id }, select: { id: true } });
       if (ordem) throw Object.assign(new Error('As peças deste modelo devem ser alteradas pela configuração da ordem na fila da Modelagem.'), { code: 'MODEL_PIECES_MANAGED_BY_ORDER' });
-      return saveModelPieces(manager, modelo.id, parsed.data.pecas);
+      return saveModelPieces(manager, modelo.id, parsed.data.pecas, {
+        usuarioId: req.user?.userId ?? null,
+        plantaId: null,
+        ipAddress: req.ip || req.socket.remoteAddress || null,
+      });
     });
     return res.status(201).json(saved);
   } catch (error: any) {
@@ -139,16 +144,35 @@ router.post('/', exigirPermissao('EDITAR_TELA_CATALOGO_PECAS'), async (req: Requ
       return res.status(400).json({ error: 'Campos "numero" e "nome" são obrigatórios.' });
     }
 
-    const repo = AppDataSource.getRepository(CatalogoPeca);
-    const novaPeca = repo.create({
-      numero: String(numero).trim(),
-      nome: String(nome).trim().toUpperCase(),
-      codigoOriginal: codigoOriginal ? String(codigoOriginal).trim() : null,
-      descricao: descricao ? String(descricao).trim() : null,
-      ativo: true
-    });
+    const saved = await AppDataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(CatalogoPeca);
+      const novaPeca = repo.create({
+        numero: String(numero).trim(),
+        nome: String(nome).trim().toUpperCase(),
+        codigoOriginal: codigoOriginal ? String(codigoOriginal).trim() : null,
+        descricao: descricao ? String(descricao).trim() : null,
+        ativo: true
+      });
 
-    const saved = await repo.save(novaPeca);
+      const pecaSalva = await repo.save(novaPeca);
+      await registrarAuditoria(manager, {
+        usuarioId: req.user?.userId ?? null,
+        plantaId: null,
+        ipAddress: req.ip || req.socket.remoteAddress || null,
+        acao: 'PECA_CATALOGO_CRIADA',
+        entidadeTipo: 'catalogo_pecas',
+        entidadeId: pecaSalva.id,
+        dadosAnteriores: null,
+        dadosNovos: {
+          numero: pecaSalva.numero,
+          nome: pecaSalva.nome,
+          codigoOriginal: pecaSalva.codigoOriginal,
+          descricao: pecaSalva.descricao,
+          ativo: pecaSalva.ativo,
+        },
+      });
+      return pecaSalva;
+    });
     return res.status(201).json(saved);
   } catch (error: any) {
     console.error('[PecasRouter] Erro ao criar peça no catálogo:', error);
