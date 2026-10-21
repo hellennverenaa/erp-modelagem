@@ -1,6 +1,6 @@
 # Plano de implementação — ERP Modelagem
 
-**Atualizado em 20/10/2026.** Esta lista mantém trabalho que ainda requer decisão, implementação, integração ou validação. Tarefas já integradas e validadas foram removidas. Quando o código está na `main`, mas falta validação funcional ou de banco, a pendência aparece explicitamente.
+**Atualizado em 21/10/2026.** Esta lista mantém trabalho que ainda requer decisão, implementação, integração ou validação. Tarefas já integradas e validadas foram removidas. Quando o código está na `main`, mas falta validação funcional ou de banco, a pendência aparece explicitamente.
 
 ## Regras de negócio pendentes
 
@@ -28,7 +28,11 @@
 **Estado: implementação pendente.** Exibir snapshot e progresso real da ordem em vez da rota atual do modelo, preservando o histórico quando o modelo for editado.
 
 ### Dados reais da Torre de Controle (TASK-017)
-**Estado: análise e implementação pendentes.** Revisar endpoints, filtros, setores, tempos e agregações para consumir dados reais de ordens, rotas, bipagens, qualidade e ocorrências; identificar mocks e validar indicadores com registros de produção.
+**Estado: implementação disponível na branch `feature/dados-reais-torre-controle`; validação com dados de produção pendente.** A análise confirmou que `GET /api/dashboard/kpis` consulta entidades reais, sem fixtures, mas ignorava a planta do usuário, não recebia filtros, agrupava setores somente pelo nome, preenchia Lead Time sem bipagens com um tipo de lote presumido, devolvia `totalRastreamentos` igual a `totalInspecoes`, representava duração ausente como zero e não correspondia ao contrato Swagger. O frontend também registrava o payload integral no console e não atualizava os KPIs após inspeções/retrabalhos.
+
+Escopo aprovado: aplicar o escopo de planta conforme `ACESSAR_TODAS_PLANTAS`; oferecer filtros de planta, setor e período com consulta sem filtros preservando o comportamento geral; manter identidade do setor nas agregações; não inferir tipo de lote para ordem ainda sem bipagem; representar duração indisponível sem convertê-la em zero; corrigir o contrato documentado, remover o log de payload e atualizar os KPIs após gravações relevantes. Manter as regras atuais de status do WIP e de aprovação por concessão até confirmação de negócio. A validação disponível é no banco local de testes; validação com dados de produção depende de uma fonte de leitura ou extrato aprovado, ainda não fornecido.
+
+O FPY continua calculado por registro de inspeção `SAIDA_SETOR` (não por peça), e `APROVADO_CONCESSAO` continua no numerador. O WIP mantém a regra existente de incluir todos os status exceto `REPROVADO`. Não houve confirmação para alterar essas definições. O Lead Time continua baseado na soma dos tempos das bipagens existentes; ordens sem bipagem permanecem no total de WIP, mas não são classificadas artificialmente como lote principal ou caixa teste.
 
 ### Auditoria de Corte, Apoio e dados simulados (TASK-022)
 **Estado: análise pendente.** Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
@@ -74,3 +78,13 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local. O estado em 
 - Nenhuma migration foi executada e nenhum arquivo de aplicação foi alterado. O registro em `TASK-045` foi removido da lista ativa; a migration permanece registrada acima como aplicada somente no ambiente local de testes, com demais ambientes pendentes de verificação.
 - `git diff --check` aprovado. Builds e testes não foram executados por se tratar de uma alteração documental.
 - Próximo passo: antes de aplicar a migration em outro ambiente, confirmar o banco e o schema de destino; seguir as demais pendências do plano.
+
+## Registro da implementação — TASK-017
+
+- Escopo: adicionar escopo por planta, filtros de planta/setor/período e corrigir a leitura/agregação dos indicadores da Torre de Controle.
+- `GET /api/dashboard/kpis` aplica `ACESSAR_TODAS_PLANTAS` ou a planta do usuário, aceita filtros validados, usa o snapshot de rota quando disponível para o filtro de setor e mantém os dados agrupados por identidade de setor e planta. `GET /api/dashboard/filters` fornece opções dentro do mesmo escopo.
+- Inspeções continuam medidas por registro de inspeção; reworks sem duração completa são apresentados como indisponíveis; ordens sem bipagens continuam no WIP, mas não entram nos Lead Times por lote. Status de WIP e aprovação por concessão preservam as fórmulas existentes.
+- O frontend não registra mais o payload integral e recebe atualização via WebSocket após salvar inspeções/retrabalhos. A documentação Swagger foi alinhada ao contrato retornado.
+- Sem migrations e sem alteração do banco. Não houve consulta ao banco de produção. O banco local de testes analisado tem poucos registros de qualidade e nenhum volume suficiente de ocorrências/retrabalhos para validar esses indicadores de produção.
+- Validações técnicas: builds backend e frontend; `npm test` (8 arquivos, 51 testes); `git diff --check`. A validação funcional em navegador e a conferência dos resultados com registros de produção permanecem pendentes.
+- Próximo passo: disponibilizar extrato anonimizado ou conexão somente leitura aprovada para validar os indicadores de produção; revisar a definição de status do WIP e tratamento de concessão se o negócio desejar alterar as regras atuais.

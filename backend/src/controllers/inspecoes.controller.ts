@@ -13,6 +13,7 @@ import { Peca } from '../entities/Peca';
 import { In, IsNull } from 'typeorm';
 import { RouteIntegrityError, validatePersistedModelRoute } from '../services/route-integrity.service';
 import { Setor } from '../entities/Setor';
+import { webSocketService } from '../services/websocket.service';
 
 // ═══ Schema de Validação Zod para a Inspeção ═══
 const createInspecaoSchema = z.object({
@@ -334,6 +335,7 @@ export class InspecoesController {
         return savedInspecao;
       });
 
+      webSocketService.emit('dashboard:update', {});
       return res.status(201).json({
         message: 'Inspeção de qualidade registrada com sucesso.',
         inspecao: inspecaoSalva
@@ -456,6 +458,7 @@ export class InspecoesController {
         return await transactionalEntityManager.save(Retrabalho, retrabalho);
       });
 
+      webSocketService.emit('dashboard:update', {});
       return res.status(201).json({
         message: 'Retrabalho cirúrgico aberto com sucesso.',
         retrabalho: retrabalhoSalvo

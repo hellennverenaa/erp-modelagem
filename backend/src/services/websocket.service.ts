@@ -11,6 +11,7 @@ const ROOMS_BY_EVENT: Record<string, string[]> = {
   'peca:avanco': ['screen:gerencial', 'screen:rastreamento'],
   'rastreamento:atualizado': ['screen:gerencial', 'screen:rastreamento'],
   'gargalo:update': ['screen:gerencial'],
+  'dashboard:update': ['screen:gerencial'],
 };
 import { isAllowedOrigin } from '../config/cors';
 
