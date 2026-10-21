@@ -34,6 +34,9 @@ Escopo aprovado: aplicar o escopo de planta conforme `ACESSAR_TODAS_PLANTAS`; of
 
 O FPY continua calculado por registro de inspeção `SAIDA_SETOR` (não por peça), e `APROVADO_CONCESSAO` continua no numerador. O WIP mantém a regra existente de incluir todos os status exceto `REPROVADO`. Não houve confirmação para alterar essas definições. O Lead Time continua baseado na soma dos tempos das bipagens existentes; ordens sem bipagem permanecem no total de WIP, mas não são classificadas artificialmente como lote principal ou caixa teste.
 
+### Filtros compactos da Torre de Controle (TASK-046)
+**Estado: implementação disponível na branch `feature/dados-reais-torre-controle`; validação funcional pendente.** Depende dos filtros e do escopo autorizativo da TASK-017. O painel foi compactado e recolhido inicialmente, o bloco informativo de planta foi removido para usuários sem acesso global, e o seletor agora apresenta estados de carregamento, erro com nova tentativa e ausência de setores. O banco local de testes contém 19 setores ativos na única planta. A resposta HTTP real de `GET /api/dashboard/filters` ainda precisa ser conferida no navegador. O backend usa `ts-node` sem reinício automático; reiniciá-lo antes da validação para carregar a rota atual. Não houve alteração de backend ou de banco.
+
 ### Auditoria de Corte, Apoio e dados simulados (TASK-022)
 **Estado: análise pendente.** Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
 
@@ -88,3 +91,12 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local. O estado em 
 - Sem migrations e sem alteração do banco. Não houve consulta ao banco de produção. O banco local de testes analisado tem poucos registros de qualidade e nenhum volume suficiente de ocorrências/retrabalhos para validar esses indicadores de produção.
 - Validações técnicas: builds backend e frontend; `npm test` (8 arquivos, 51 testes); `git diff --check`. A validação funcional em navegador e a conferência dos resultados com registros de produção permanecem pendentes.
 - Próximo passo: disponibilizar extrato anonimizado ou conexão somente leitura aprovada para validar os indicadores de produção; revisar a definição de status do WIP e tratamento de concessão se o negócio desejar alterar as regras atuais.
+
+## Registro da implementação — TASK-046
+
+- Escopo: reduzir o espaço ocupado pelos filtros da Torre de Controle e esclarecer por que o seletor de setor não apresenta opções.
+- Em `frontend/src/views/DashboardGerencialView.vue`, os filtros passaram a iniciar recolhidos com um resumo das seleções ativas. A área expandida usa espaçamento menor e não exibe o bloco de planta não interativo para usuários restritos. O seletor apresenta carregamento, falha com ação para tentar novamente e lista vazia no escopo autorizado.
+- Consulta somente leitura ao banco de testes: banco `postgres`, schema `erp_modelagem`, uma planta e 19 setores ativos. O código atual de `GET /dashboard/filters` consulta setores vinculados às plantas autorizadas; a resposta HTTP da sessão da usuária não pôde ser inspecionada porque não havia navegador disponível nesta sessão. Portanto, falha do endpoint/processo antigo permanece hipótese, não confirmação.
+- O script `backend/package.json` executa `ts-node src/server.ts` sem watcher; um processo iniciado antes da atualização não carrega alterações do backend automaticamente. Reiniciar a API e conferir a chamada de rede é necessário para validar a causa em execução.
+- Sem alteração no backend, sem migration e sem escrita no banco. Validações: `frontend: npm run build` aprovado; `git diff --check` aprovado. Builds do backend e testes automatizados não foram executados porque não houve alteração de backend e o projeto não configura testes de frontend.
+- Próximo passo: validar no navegador a resposta de `/api/dashboard/filters` e a lista de setores para usuário restrito e administrador, após reiniciar o backend; se a resposta continuar vazia ou falhar, investigar o status e payload retornados antes de alterar a API.
