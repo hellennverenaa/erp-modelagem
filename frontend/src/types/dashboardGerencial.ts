@@ -22,16 +22,21 @@ export interface GargaloItem {
   gravidade: string
   status: string
   dataOcorrencia: string
+  setorId: string
   setor: string
+  plantaId: string | null
+  planta: string
   reportadoPor: string
   totalFotos: number
   fotos: string[]
 }
 
 export interface FpySetor {
+  setorId: string
   setor: string
+  plantaId: string
+  planta: string
   totalInspecoes: number
-  totalRastreamentos: number
   aprovadasPrimeira: number
   fpyPercentual: number
 }
@@ -43,9 +48,12 @@ export interface KpiCData {
 }
 
 export interface RetrabalhoSetor {
+  setorId: string
   setorOrigem: string
+  plantaId: string
+  planta: string
   totalRetrabalhos: number
-  tempoMedioMin: number
+  tempoMedioMin: number | null
   tiposDivergencia: string
   percentualDoTotal: number
 }
@@ -53,4 +61,25 @@ export interface RetrabalhoSetor {
 export interface KpiDData {
   totalRetrabalhos: number
   setores: RetrabalhoSetor[]
+}
+
+export interface DashboardPlantaOption {
+  id: string
+  nome: string
+  ativo: boolean
+}
+
+export interface DashboardSetorOption {
+  id: string
+  nome: string
+  plantaId: string
+  planta: string
+  ativo: boolean
+}
+
+export interface DashboardFilterOptions {
+  acessoTodasPlantas: boolean
+  plantaId: string | null
+  plantas: DashboardPlantaOption[]
+  setores: DashboardSetorOption[]
 }

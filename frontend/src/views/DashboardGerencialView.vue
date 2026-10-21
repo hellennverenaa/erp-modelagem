@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { io } from 'socket.io-client'
 import api, { getApiOrigin, getApiSocketPath } from '../api/axios'
 import DashboardGerencialMetrics from '../components/DashboardGerencialMetrics.vue'
-import type { FpySetor, GargaloItem, KpiAData, KpiCData, KpiDData, RetrabalhoSetor } from '../types/dashboardGerencial'
+import type { DashboardFilterOptions, FpySetor, GargaloItem, KpiAData, KpiCData, KpiDData, RetrabalhoSetor } from '../types/dashboardGerencial'
 import {
   Image as ImageIcon,
   X,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   RefreshCw,
   Wifi,
   WifiOff,
@@ -23,6 +24,55 @@ const fetchError = ref(false)
 const hasSuccessfulFetch = ref(false)
 const liveStatus = ref<'CONNECTED' | 'DISCONNECTED'>('DISCONNECTED')
 let socket: any = null
+
+const filtros = ref({
+  plantaId: '',
+  setorId: '',
+  dataInicio: '',
+  dataFim: ''
+})
+const filtrosExpandidos = ref(false)
+const opcoesFiltroCarregando = ref(false)
+const erroOpcoesFiltro = ref(false)
+const opcoesFiltro = ref<DashboardFilterOptions>({
+  acessoTodasPlantas: false,
+  plantaId: null,
+  plantas: [],
+  setores: []
+})
+const setoresDisponiveis = computed(() => opcoesFiltro.value.setores.filter(
+  setor => !filtros.value.plantaId || setor.plantaId === filtros.value.plantaId
+))
+const periodoInvalido = computed(() => Boolean(
+  filtros.value.dataInicio && filtros.value.dataFim && filtros.value.dataInicio > filtros.value.dataFim
+))
+const quantidadeFiltrosAtivos = computed(() => [
+  opcoesFiltro.value.acessoTodasPlantas && filtros.value.plantaId,
+  filtros.value.setorId,
+  filtros.value.dataInicio,
+  filtros.value.dataFim
+].filter(Boolean).length)
+const resumoFiltros = computed(() => {
+  const resumo: string[] = []
+
+  if (opcoesFiltro.value.acessoTodasPlantas && filtros.value.plantaId) {
+    const planta = opcoesFiltro.value.plantas.find(item => item.id === filtros.value.plantaId)
+    resumo.push(`Planta: ${planta?.nome ?? 'selecionada'}`)
+  }
+
+  if (filtros.value.setorId) {
+    const setor = opcoesFiltro.value.setores.find(item => item.id === filtros.value.setorId)
+    resumo.push(`Setor: ${setor?.nome ?? 'selecionado'}`)
+  }
+
+  if (filtros.value.dataInicio || filtros.value.dataFim) {
+    const inicio = filtros.value.dataInicio ? filtros.value.dataInicio.split('-').reverse().join('/') : 'início'
+    const fim = filtros.value.dataFim ? filtros.value.dataFim.split('-').reverse().join('/') : 'fim'
+    resumo.push(`Período: ${inicio} a ${fim}`)
+  }
+
+  return resumo.join(' · ') || 'Sem filtros adicionais'
+})
 
 const kpiA = ref<KpiAData>({
   totalOrdensAtivas: 0,
@@ -51,14 +101,50 @@ const fotoIndexAtiva = ref(0)
 // ==========================================
 // BUSCA DE DADOS (PRESERVADA 100%)
 // ==========================================
+async function fetchFilterOptions() {
+  opcoesFiltroCarregando.value = true
+  erroOpcoesFiltro.value = false
+
+  try {
+    const res = await api.get('/dashboard/filters')
+    opcoesFiltro.value = {
+      acessoTodasPlantas: res.data.acessoTodasPlantas === true,
+      plantaId: res.data.plantaId ?? null,
+      plantas: (res.data.plantas ?? []).map((planta: any) => ({
+        id: planta.id ?? '',
+        nome: planta.nome ?? 'Planta sem nome',
+        ativo: planta.ativo !== false
+      })),
+      setores: (res.data.setores ?? []).map((setor: any) => ({
+        id: setor.id ?? '',
+        nome: setor.nome ?? 'Setor sem nome',
+        plantaId: setor.plantaId ?? '',
+        planta: setor.planta ?? 'Planta não informada',
+        ativo: setor.ativo !== false
+      }))
+    }
+  } catch (error) {
+    erroOpcoesFiltro.value = true
+    console.error('[Dashboard] Erro ao carregar opções de filtro:', error)
+  } finally {
+    opcoesFiltroCarregando.value = false
+  }
+}
+
 async function fetchKpis() {
+  if (periodoInvalido.value) return
   fetchError.value = false
   if (!hasSuccessfulFetch.value) loading.value = true
 
   try {
-    const res = await api.get('/dashboard/kpis')
+    const params: Record<string, string> = {}
+    if (opcoesFiltro.value.acessoTodasPlantas && filtros.value.plantaId) params.plantaId = filtros.value.plantaId
+    if (filtros.value.setorId) params.setorId = filtros.value.setorId
+    if (filtros.value.dataInicio) params.dataInicio = filtros.value.dataInicio
+    if (filtros.value.dataFim) params.dataFim = filtros.value.dataFim
+
+    const res = await api.get('/dashboard/kpis', { params })
     const raw = res.data
-    console.log('[Dashboard] Payload completo da API recebido:', JSON.stringify(raw, null, 2))
 
     kpiA.value = {
       totalOrdensAtivas: raw.kpiA?.totalOrdensAtivas ?? 0,
@@ -82,7 +168,10 @@ async function fetchKpis() {
       gravidade: b.gravidade ?? 'BAIXA',
       status: b.status ?? '',
       dataOcorrencia: b.dataOcorrencia ?? '',
+      setorId: b.setorId ?? '',
       setor: b.setor ?? 'N/A',
+      plantaId: b.plantaId ?? null,
+      planta: b.planta ?? 'N/A',
       reportadoPor: b.reportadoPor ?? 'N/A',
       totalFotos: b.totalFotos ?? 0,
       fotos: b.fotos ?? []
@@ -92,9 +181,11 @@ async function fetchKpis() {
       fpyGlobal: raw.kpiC?.fpyGlobal ?? null,
       totalInspecoes: raw.kpiC?.totalInspecoes ?? 0,
       setores: (raw.kpiC?.setores ?? []).map((s: any): FpySetor => ({
+        setorId: s.setorId ?? '',
         setor: s.setor ?? 'N/A',
+        plantaId: s.plantaId ?? '',
+        planta: s.planta ?? 'N/A',
         totalInspecoes: s.totalInspecoes ?? 0,
-        totalRastreamentos: s.totalRastreamentos ?? 0,
         aprovadasPrimeira: s.aprovadasPrimeira ?? 0,
         fpyPercentual: s.fpyPercentual ?? 0
       }))
@@ -103,9 +194,12 @@ async function fetchKpis() {
     kpiD.value = {
       totalRetrabalhos: raw.kpiD?.totalRetrabalhos ?? 0,
       setores: (raw.kpiD?.setores ?? []).map((d: any): RetrabalhoSetor => ({
+        setorId: d.setorId ?? '',
         setorOrigem: d.setorOrigem ?? 'N/A',
+        plantaId: d.plantaId ?? '',
+        planta: d.planta ?? 'N/A',
         totalRetrabalhos: d.totalRetrabalhos ?? 0,
-        tempoMedioMin: d.tempoMedioMin ?? 0,
+        tempoMedioMin: d.tempoMedioMin == null ? null : Number(d.tempoMedioMin),
         tiposDivergencia: d.tiposDivergencia ?? '',
         percentualDoTotal: d.percentualDoTotal ?? 0
       }))
@@ -117,6 +211,17 @@ async function fetchKpis() {
   } finally {
     loading.value = false
   }
+}
+
+function atualizarSetorSelecionado() {
+  if (filtros.value.setorId && !setoresDisponiveis.value.some(setor => setor.id === filtros.value.setorId)) {
+    filtros.value.setorId = ''
+  }
+}
+
+function limparFiltros() {
+  filtros.value = { plantaId: '', setorId: '', dataInicio: '', dataFim: '' }
+  fetchKpis()
 }
 
 // ==========================================
@@ -147,7 +252,8 @@ function initWebSocket() {
   const refreshEvents = [
     'peca:avanco', 'rastreamento:atualizado',
     'gargalo:update', 'ocorrencia:criada',
-    'ocorrencia:atualizada', 'ocorrencia:resolvida'
+    'ocorrencia:atualizada', 'ocorrencia:resolvida',
+    'dashboard:update'
   ]
   refreshEvents.forEach(evt => socket.on(evt, () => fetchKpis()))
 }
@@ -203,8 +309,9 @@ function formatDate(d: string) {
 // ==========================================
 // LIFECYCLE (PRESERVADO 100%)
 // ==========================================
-onMounted(() => {
-  fetchKpis()
+onMounted(async () => {
+  await fetchFilterOptions()
+  await fetchKpis()
   initWebSocket()
 })
 
@@ -262,6 +369,101 @@ onUnmounted(() => {
           </button>
         </div>
       </header>
+
+      <section class="rounded-xl border border-slate-200/80 bg-white p-2 shadow-[0_1px_3px_rgba(15,23,42,0.04)]" aria-label="Filtros da Torre de Controle">
+        <div class="flex min-h-9 items-center justify-between gap-3">
+          <button
+            type="button"
+            class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-slate-50"
+            :aria-expanded="filtrosExpandidos"
+            aria-controls="dashboard-filtros-opcoes"
+            @click="filtrosExpandidos = !filtrosExpandidos"
+          >
+            <span class="shrink-0 text-[11px] font-semibold text-slate-700">Filtros</span>
+            <span
+              v-if="quantidadeFiltrosAtivos > 0"
+              class="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700"
+            >{{ quantidadeFiltrosAtivos }} ativos</span>
+            <span class="truncate text-[10px] text-slate-400">{{ resumoFiltros }}</span>
+            <ChevronDown :size="14" class="ml-auto shrink-0 text-slate-500 transition-transform" :class="{ 'rotate-180': filtrosExpandidos }" />
+          </button>
+          <button
+            v-if="quantidadeFiltrosAtivos > 0 && !filtrosExpandidos"
+            type="button"
+            class="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50"
+            :disabled="loading"
+            @click="limparFiltros"
+          >Limpar</button>
+        </div>
+
+        <div v-show="filtrosExpandidos" id="dashboard-filtros-opcoes" class="mt-2 border-t border-slate-100 px-2 pb-1 pt-3">
+          <div
+            class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:items-end"
+            :class="opcoesFiltro.acessoTodasPlantas ? 'lg:grid-cols-5' : 'lg:grid-cols-4'"
+          >
+            <label v-if="opcoesFiltro.acessoTodasPlantas" class="flex flex-col gap-1 text-[10px] font-semibold text-slate-600">
+              Planta
+              <select v-model="filtros.plantaId" class="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700" @change="atualizarSetorSelecionado">
+                <option value="">Todas as plantas</option>
+                <option v-for="planta in opcoesFiltro.plantas" :key="planta.id" :value="planta.id">
+                  {{ planta.nome }}{{ planta.ativo ? '' : ' (inativa)' }}
+                </option>
+              </select>
+            </label>
+
+            <label class="flex flex-col gap-1 text-[10px] font-semibold text-slate-600">
+              Setor
+              <select v-model="filtros.setorId" class="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700">
+                <option value="">
+                  {{ opcoesFiltroCarregando ? 'Carregando setores...' : erroOpcoesFiltro ? 'Falha ao carregar setores' : 'Todos os setores' }}
+                </option>
+                <option v-if="!opcoesFiltroCarregando && !erroOpcoesFiltro && setoresDisponiveis.length === 0" disabled value="__sem_setores">
+                  Nenhum setor disponível
+                </option>
+                <option v-for="setor in setoresDisponiveis" :key="setor.id" :value="setor.id">
+                  {{ setor.nome }}{{ opcoesFiltro.acessoTodasPlantas && !filtros.plantaId ? ` — ${setor.planta}` : '' }}{{ setor.ativo ? '' : ' (inativo)' }}
+                </option>
+              </select>
+            </label>
+
+            <label class="flex flex-col gap-1 text-[10px] font-semibold text-slate-600">
+              Data inicial
+              <input v-model="filtros.dataInicio" type="date" class="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700" />
+            </label>
+            <label class="flex flex-col gap-1 text-[10px] font-semibold text-slate-600">
+              Data final
+              <input v-model="filtros.dataFim" type="date" class="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700" />
+            </label>
+
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="h-9 flex-1 rounded-lg bg-slate-900 px-3 text-[11px] font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="periodoInvalido || loading"
+                @click="fetchKpis"
+              >Aplicar filtros</button>
+              <button
+                type="button"
+                class="h-9 rounded-lg border border-slate-200 px-3 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                :disabled="loading"
+                @click="limparFiltros"
+              >Limpar</button>
+            </div>
+          </div>
+
+          <div v-if="erroOpcoesFiltro" role="alert" class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-rose-600">
+            <span>Não foi possível carregar os setores. Confira a conexão com a API.</span>
+            <button type="button" class="font-semibold underline underline-offset-2" :disabled="opcoesFiltroCarregando" @click="fetchFilterOptions">
+              Tentar novamente
+            </button>
+          </div>
+          <p v-else-if="!opcoesFiltroCarregando && setoresDisponiveis.length === 0" class="mt-2 text-[10px] text-slate-400">
+            Nenhum setor disponível para este escopo.
+          </p>
+          <p v-if="periodoInvalido" class="mt-2 text-[10px] font-medium text-rose-600">A data inicial deve ser anterior ou igual à data final.</p>
+          <p v-else class="mt-2 text-[10px] text-slate-400">Período inclusivo; o setor filtra os registros conforme a regra de cada indicador.</p>
+        </div>
+      </section>
 
       <!-- Erro de comunicação -->
       <div

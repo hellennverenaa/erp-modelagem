@@ -69,16 +69,17 @@ function rotuloTipoLote(tipoLote: string) {
 }
 
 function resumoGargalosPorSetorEGravidade() {
-  const agrupados = new Map<string, { setor: string; gravidade: string; quantidade: number }>()
+  const agrupados = new Map<string, { setorId: string; setor: string; planta: string; gravidade: string; quantidade: number }>()
 
   props.kpiB.forEach(item => {
     const setor = item.setor || 'N/A'
+    const planta = item.planta || 'N/A'
     const gravidade = (item.gravidade || 'BAIXA').toUpperCase()
-    const chave = setor + '|' + gravidade
+    const chave = (item.setorId || setor) + '|' + (item.plantaId || '') + '|' + gravidade
     const atual = agrupados.get(chave)
 
     if (atual) atual.quantidade += 1
-    else agrupados.set(chave, { setor, gravidade, quantidade: 1 })
+    else agrupados.set(chave, { setorId: item.setorId, setor, planta, gravidade, quantidade: 1 })
   })
 
   return [...agrupados.values()].sort((a, b) => b.quantidade - a.quantidade)
@@ -108,13 +109,13 @@ function classeGravidade(gravidade: string) {
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-xs font-semibold text-slate-500">WIP Total</p>
-          <p class="mt-1 text-[11px] text-slate-400">Ordens ativas no fluxo de produção</p>
+          <p class="mt-1 text-[11px] text-slate-400">Ordens ativas no filtro selecionado</p>
         </div>
         <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600">Em acompanhamento</span>
       </div>
       <div class="mt-5 text-4xl font-bold tracking-tight text-slate-900 tabular-nums">{{ kpiA.totalOrdensAtivas }}</div>
       <div class="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-        <p class="text-[10px] leading-snug text-slate-500">Total de ordens ativas em acompanhamento</p>
+        <p class="text-[10px] leading-snug text-slate-500">Ordens ativas nas plantas, setores e datas selecionados</p>
         <span class="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-medium text-indigo-700">
           <span class="relative flex h-2 w-2">
             <span v-if="kpiA.totalOrdensAtivas > 0" class="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-60"></span>
@@ -280,13 +281,13 @@ function classeGravidade(gravidade: string) {
 
           <p v-if="kpiB.length === 0" class="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] font-medium text-emerald-800">
             <Check :size="14" class="shrink-0" />
-            Setores livres — nenhum lote travado aguardando liberação
+            Nenhuma ocorrência aberta no período e escopo selecionados.
           </p>
           <div v-else>
             <div class="mb-3 space-y-2">
-              <div v-for="grupo in resumoGargalosPorSetorEGravidade()" :key="grupo.setor + grupo.gravidade" class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
+              <div v-for="grupo in resumoGargalosPorSetorEGravidade()" :key="grupo.setorId + grupo.planta + grupo.gravidade" class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
                 <div class="flex min-w-0 items-center gap-2">
-                  <span class="truncate text-[10px] font-medium text-slate-600">{{ grupo.setor }}</span>
+                  <span class="truncate text-[10px] font-medium text-slate-600">{{ grupo.setor }} · {{ grupo.planta }}</span>
                   <span class="shrink-0 rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase" :class="classeGravidade(grupo.gravidade)">{{ grupo.gravidade }}</span>
                 </div>
                 <span class="text-[10px] font-semibold text-slate-600 tabular-nums">{{ grupo.quantidade }}</span>
@@ -302,7 +303,7 @@ function classeGravidade(gravidade: string) {
                   <div class="min-w-0">
                     <div class="flex flex-wrap items-center gap-1.5">
                       <span class="rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase" :class="classeGravidade(oc.gravidade)">{{ oc.gravidade }}</span>
-                      <span class="truncate text-[9px] font-semibold uppercase text-slate-500">{{ oc.setor }}</span>
+                      <span class="truncate text-[9px] font-semibold uppercase text-slate-500">{{ oc.setor }} · {{ oc.planta }}</span>
                       <span class="text-[9px] text-slate-400">{{ formatDate(oc.dataOcorrencia) }}</span>
                     </div>
                     <h4 class="mt-1 truncate text-xs font-semibold text-slate-800" :title="oc.titulo">{{ oc.titulo }}</h4>
@@ -339,7 +340,7 @@ function classeGravidade(gravidade: string) {
           <div>
             <p class="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Qualidade fabril</p>
             <h2 class="mt-1 text-base font-semibold tracking-tight text-slate-900">First Pass Yield (FPY)</h2>
-            <p class="mt-1 max-w-xs text-[10px] leading-snug text-slate-500">Percentual de peças aprovadas de primeira (sem precisar de conserto)</p>
+            <p class="mt-1 max-w-xs text-[10px] leading-snug text-slate-500">Percentual de inspeções de saída com resultado aprovado</p>
           </div>
         </div>
         <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[9px] text-slate-500">Ciclo monitorado</span>
@@ -399,23 +400,23 @@ function classeGravidade(gravidade: string) {
             <p class="text-[10px] leading-snug text-slate-500">{{ kpiC.totalInspecoes === 1 ? 'inspeção de saída registrada' : 'inspeções de saída registradas' }}</p>
           </div>
           <p class="text-[10px] leading-snug text-slate-400">
-            {{ fpySemDados ? 'Ainda não há inspeções de saída de setor registradas.' : 'Aprovação na primeira inspeção de saída.' }}
+            {{ fpySemDados ? 'Ainda não há inspeções de saída de setor registradas.' : 'Unidade: inspeção. A regra atual também contabiliza APROVADO_CONCESSAO como aprovado.' }}
           </p>
         </div>
       </div>
 
       <div class="border-t border-slate-100 pt-4">
         <div v-if="kpiC.setores.length > 0" class="max-h-24 space-y-2.5 overflow-y-auto pr-1">
-          <div v-for="item in kpiC.setores" :key="item.setor">
+          <div v-for="item in kpiC.setores" :key="item.setorId || item.setor">
             <div class="flex items-center justify-between gap-3">
-              <span class="truncate text-[10px] font-semibold text-slate-700">{{ item.setor }}</span>
+              <span class="truncate text-[10px] font-semibold text-slate-700">{{ item.setor }} · {{ item.planta }}</span>
               <span class="shrink-0 text-[10px] font-semibold text-slate-700 tabular-nums">{{ item.fpyPercentual }}%</span>
             </div>
             <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
               <div class="h-full rounded-full bg-emerald-500" :style="{ width: Math.min(100, Math.max(0, item.fpyPercentual)) + '%' }"></div>
             </div>
             <p class="mt-1 text-[9px] text-slate-400 tabular-nums">
-              {{ item.aprovadasPrimeira }} aprovadas · {{ item.totalInspecoes > 0 ? item.totalInspecoes : item.totalRastreamentos }} consideradas
+              {{ item.aprovadasPrimeira }} aprovadas · {{ item.totalInspecoes }} inspeções consideradas
             </p>
           </div>
         </div>
@@ -432,7 +433,7 @@ function classeGravidade(gravidade: string) {
           </div>
           <div>
             <p class="text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700">Histórico acumulado</p>
-            <h2 class="mt-1 text-base font-semibold tracking-tight text-slate-900">Índice de Retrabalho por Setor de Origem</h2>
+            <h2 class="mt-1 text-base font-semibold tracking-tight text-slate-900">Distribuição dos retrabalhos por setor de origem</h2>
             <p class="mt-1 max-w-xl text-[10px] leading-snug text-slate-500">Setores que originaram defeitos ou necessidade de refazer a peça</p>
           </div>
         </div>
@@ -468,9 +469,9 @@ function classeGravidade(gravidade: string) {
         </div>
       </div>
       <div v-else-if="kpiD.setores.length > 0" class="mt-4 max-h-[340px] flex-1 space-y-4 overflow-y-auto pr-1">
-        <div v-for="item in kpiD.setores" :key="item.setorOrigem">
+        <div v-for="item in kpiD.setores" :key="item.setorId || item.setorOrigem">
           <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <span class="text-xs font-semibold text-slate-800">{{ item.setorOrigem }}</span>
+            <span class="text-xs font-semibold text-slate-800">{{ item.setorOrigem }} · {{ item.planta }}</span>
             <span class="text-[10px] font-semibold text-orange-700 tabular-nums">
               {{ item.totalRetrabalhos }} {{ item.totalRetrabalhos === 1 ? 'caso' : 'casos' }} · {{ item.percentualDoTotal }}% do total
             </span>
@@ -479,7 +480,11 @@ function classeGravidade(gravidade: string) {
             <div class="h-full rounded-full bg-orange-400 transition-all" :style="{ width: Math.min(100, Math.max(0, item.percentualDoTotal)) + '%' }"></div>
           </div>
           <div class="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[9px] text-slate-500">
-            <span class="tabular-nums">Tempo médio: {{ item.tempoMedioMin }} min</span>
+            <span class="tabular-nums">
+              Tempo médio:
+              <template v-if="item.tempoMedioMin === null">indisponível</template>
+              <template v-else>{{ item.tempoMedioMin }} min</template>
+            </span>
             <span v-if="item.tiposDivergencia" class="max-w-[70%] truncate text-right" :title="item.tiposDivergencia">{{ item.tiposDivergencia }}</span>
           </div>
         </div>
