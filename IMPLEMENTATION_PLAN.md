@@ -44,6 +44,7 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local. O estado em 
 - TASK-027: 1791980800000.
 - TASK-028: 1791981000000.
 - TASK-030: 1791981100000 e 1791981200000.
+- TASK-045: 1792161500000, aplicada no banco local de testes (`postgres`, schema `erp_modelagem`). O estado em outros ambientes não foi consultado; confirmar banco e schema antes de aplicar.
 
 ### Renovação da sessão DASS (TASK-031)
 **Estado: integrada via PR #15; validação funcional pendente.** Confirmar no navegador e em HTTPS o comportamento dos cookies; testar renovação após expiração, retry HTTP único, reconexão do WebSocket após interrupção de rede e logout. Não houve teste de integração com o DASS.
@@ -57,12 +58,19 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local. O estado em 
 ### Verificar aderência do índice trigram à busca do catálogo (TASK-044)
 **Estado: análise pendente; depende da validação de TASK-043.** A busca de `GET /catalogo-pecas` usa `LOWER(p.nome)`, `LOWER(p.numero)` e `LOWER(p.codigo_original)`, enquanto a migration declara índice trigram sobre `nome` sem `LOWER` e não declara índices trigram nos outros dois campos. Usar `EXPLAIN` para confirmar se a busca server-side usa o índice esperado e registrar eventual ajuste em escopo próprio.
 
-### Remover Corte Recebimento e Corte Separação (TASK-045)
-**Estado: integrada via PR #19; aplicação da migration pendente.** A migration `1792161500000-RemoveSetoresCorteRecebimentoSeparacao` limita as alterações ao schema `erp_modelagem`, desativando as opções e os setores correspondentes. O registro disponível indica que ainda não foi aplicada; esta revisão não consultou o banco. A limpeza manual foi executada somente no banco de testes confirmado pela usuária; a verificação posterior encontrou zero setores, tipos ou referências de rota restantes. Antes de aplicar a migration em outro ambiente, confirmar banco e schema.
-
-## Registro desta revisão
+## Registro da revisão anterior — PR #21
 
 - Escopo desta entrega: remover da lista ativa os trabalhos concluídos e manter decisões, implementações, integrações e validações ainda pendentes.
 - Nenhum código de aplicação, configuração ou migration foi alterado; nenhuma migration foi criada ou aplicada nesta revisão.
 - `git diff --check` aprovado. Builds e testes da aplicação não foram executados por se tratar de uma alteração documental.
 - Próximo passo: seguir as pendências acima, sem tratar validação manual ou de banco como já executada.
+
+## Registro desta revisão
+
+- Escopo: verificar a aplicação da migration da TASK-045 no banco de testes e corrigir o status desatualizado no plano.
+- A conexão configurada identificou o banco `postgres`, schema atual `erp_modelagem` e `search_path` `erp_modelagem,public`; a usuária já havia confirmado este alvo como banco de testes.
+- A tabela `erp_modelagem.migrations` contém `RemoveSetoresCorteRecebimentoSeparacao1792161500000`. A consulta somente de leitura encontrou zero opções correspondentes em `config_opcoes` e zero setores correspondentes em `setores`.
+- A verificação anterior à revisão registrou zero referências de rota após a limpeza; referências de rota não foram reconsultadas nesta revisão.
+- Nenhuma migration foi executada e nenhum arquivo de aplicação foi alterado. O registro em `TASK-045` foi removido da lista ativa; a migration permanece registrada acima como aplicada somente no ambiente local de testes, com demais ambientes pendentes de verificação.
+- `git diff --check` aprovado. Builds e testes não foram executados por se tratar de uma alteração documental.
+- Próximo passo: antes de aplicar a migration em outro ambiente, confirmar o banco e o schema de destino; seguir as demais pendências do plano.
