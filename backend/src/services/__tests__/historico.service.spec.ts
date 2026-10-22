@@ -65,6 +65,12 @@ describe('buscarMovimentacoes', () => {
     expect(consultaPaginada).toContain('evento.planta_id = $1');
     expect(consultaPaginada).toContain("evento.entidade_tipo IN ('modelos', 'catalogo_pecas')");
     expect(consultaPaginada).toContain('evento.setor_id = $2');
+    expect(consultaPaginada).toContain('rastreamento."tipoLote"');
+    expect(consultaPaginada).toContain('inspecao."tipoInspecao"');
+    expect(consultaPaginada).toContain('inspecao."tipoLote"');
+    expect(consultaPaginada).toContain('COALESCE(estacao.descricao, estacao.codigo)');
+    expect(consultaPaginada.match(/COALESCE\(estacao\.descricao, estacao\.codigo\)/g)).toHaveLength(3);
+    expect(consultaPaginada.match(/lower\(etapa\.etapa::text\)/g)).toHaveLength(3);
     expect(consultaPaginada).toContain('ORDER BY evento.data_hora DESC, evento.id DESC');
     expect(consultaPaginada).toContain('LIMIT $6 OFFSET $7');
     expect(chamadas[0][1]).toEqual([

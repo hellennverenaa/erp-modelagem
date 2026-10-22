@@ -141,8 +141,8 @@ WITH eventos AS (
     NULL::jsonb,
     NULL::jsonb,
     jsonb_strip_nulls(jsonb_build_object(
-      'tipoLote', rastreamento.tipo_lote,
-      'estacao', estacao.nome,
+      'tipoLote', rastreamento."tipoLote",
+      'estacao', COALESCE(estacao.descricao, estacao.codigo),
       'pecaId', rastreamento.peca_id
     )),
     NULL::text
@@ -175,8 +175,8 @@ WITH eventos AS (
     NULL::jsonb,
     NULL::jsonb,
     jsonb_strip_nulls(jsonb_build_object(
-      'tipoLote', rastreamento.tipo_lote,
-      'estacao', estacao.nome,
+      'tipoLote', rastreamento."tipoLote",
+      'estacao', COALESCE(estacao.descricao, estacao.codigo),
       'pecaId', rastreamento.peca_id
     )),
     NULL::text
@@ -209,8 +209,8 @@ WITH eventos AS (
     NULL::jsonb,
     NULL::jsonb,
     jsonb_strip_nulls(jsonb_build_object(
-      'tipo', inspecao.tipo_inspecao,
-      'tipoLote', inspecao.tipo_lote,
+      'tipo', inspecao."tipoInspecao",
+      'tipoLote', inspecao."tipoLote",
       'resultado', inspecao.resultado,
       'observacoes', inspecao.observacoes,
       'pecas', (
@@ -569,7 +569,7 @@ WITH eventos AS (
     etapa.data_bip,
     'CORTE_APOIO'::text,
     etapa.etapa::text,
-    'Etapa de Corte registrada: ' || replace(lower(etapa.etapa), '_', ' '),
+    'Etapa de Corte registrada: ' || replace(lower(etapa.etapa::text), '_', ' '),
     etapa.operador_id::text,
     COALESCE(NULLIF(BTRIM(usuario.nome_completo), ''), usuario.usuario),
     ordem.planta_id::text,
@@ -583,7 +583,7 @@ WITH eventos AS (
     NULL::jsonb,
     NULL::jsonb,
     jsonb_strip_nulls(jsonb_build_object(
-      'estacao', estacao.nome,
+      'estacao', COALESCE(estacao.descricao, estacao.codigo),
       'resultadoConformidade', etapa.resultado_conformidade,
       'observacao', etapa.observacao,
       'pecas', (
@@ -613,7 +613,7 @@ WITH eventos AS (
     etapa.data_inicio,
     'CORTE_APOIO'::text,
     'ETAPA_APOIO_INICIADA'::text,
-    'Etapa de Apoio iniciada: ' || replace(lower(etapa.etapa), '_', ' '),
+    'Etapa de Apoio iniciada: ' || replace(lower(etapa.etapa::text), '_', ' '),
     etapa.operador_id::text,
     COALESCE(NULLIF(BTRIM(usuario.nome_completo), ''), usuario.usuario),
     ordem.planta_id::text,
@@ -646,7 +646,7 @@ WITH eventos AS (
     etapa.data_fim,
     'CORTE_APOIO'::text,
     'ETAPA_APOIO_CONCLUIDA'::text,
-    'Etapa de Apoio concluída: ' || replace(lower(etapa.etapa), '_', ' '),
+    'Etapa de Apoio concluída: ' || replace(lower(etapa.etapa::text), '_', ' '),
     etapa.operador_id::text,
     COALESCE(NULLIF(BTRIM(usuario.nome_completo), ''), usuario.usuario),
     ordem.planta_id::text,
