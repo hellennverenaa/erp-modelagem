@@ -12,6 +12,7 @@ import { Setor } from '../entities/Setor';
 import { garantirTicketsSetorDaOrdem } from './ticket-setor.service';
 import { FinalizarNovoTesteInput } from '../schemas/novo-teste.schema';
 import { validateRouteIntegrity } from './route-integrity.service';
+import { registrarAuditoria } from './auditoria.service';
 
 export class NovoTesteServiceError extends Error {
   constructor(
@@ -25,7 +26,7 @@ export class NovoTesteServiceError extends Error {
   }
 }
 
-export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuarioId: string) {
+export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuarioId: string, ipAddress?: string | null) {
   return AppDataSource.transaction(async (manager) => {
     const marca = await manager.getRepository(Marca).findOne({
       where: { id: input.modelo.marcaId, ativo: true },
@@ -128,7 +129,29 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
         descricao: itemCatalogo.descricao,
       });
     });
-    await pecasRepo.save(pecas);
+    const pecasSalvas = await pecasRepo.save(pecas);
+    await registrarAuditoria(manager, {
+      usuarioId,
+      plantaId: input.ordem.plantaId,
+      ipAddress: ipAddress ?? null,
+      acao: 'MODELO_CRIADO',
+      entidadeTipo: 'modelos',
+      entidadeId: modelo.id,
+      dadosAnteriores: null,
+      dadosNovos: {
+        marcaId: modelo.marcaId,
+        codigoProduto: modelo.codigoProduto,
+        nome: modelo.nome,
+        dataCorte: modelo.dataCorte,
+        ativo: modelo.ativo,
+        pecas: pecasSalvas.map((peca) => ({
+          id: peca.id,
+          catalogoPecaId: peca.catalogoPecaId,
+          nome: peca.nome,
+          setorCorteOpcaoId: peca.setorCorteOpcaoId,
+        })),
+      },
+    });
 
     const rotaRepo = manager.getRepository(RotaModelo);
     const rota = input.rota.map((etapa) => rotaRepo.create({
@@ -163,6 +186,21 @@ export async function finalizarNovoTeste(input: FinalizarNovoTesteInput, usuario
       })),
       slasPorSetor,
     };
+
+    await registrarAuditoria(manager, {
+      usuarioId,
+      plantaId: input.ordem.plantaId,
+      ipAddress: ipAddress ?? null,
+      acao: 'ROTA_CRIADA',
+      entidadeTipo: 'modelos',
+      entidadeId: modelo.id,
+      dadosAnteriores: null,
+      dadosNovos: {
+        versao: rotaVersao,
+        etapas: rotaSnapshot.etapas,
+        slasPorSetor,
+      },
+    });
 
     const ordemRepo = manager.getRepository(OrdemTeste);
     const ordem = await ordemRepo.save(ordemRepo.create({

@@ -31,6 +31,10 @@ export class AuditLog {
   @Column({ name: 'usuario_id', type: 'uuid', nullable: true })
   usuarioId: string | null;
 
+  // Planta afetada pelo evento; null representa alterações globais ou registros legados sem escopo conhecido.
+  @Column({ name: 'planta_id', type: 'uuid', nullable: true })
+  plantaId: string | null;
+
   @Column({ type: 'varchar', length: 150 })
   acao: string; // Ex: 'BIPAR_SAIDA', 'CRIAR_OP'
 

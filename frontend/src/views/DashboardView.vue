@@ -15,6 +15,7 @@ import {
   Layers,
   PlusCircle,
   MonitorPlay,
+  Activity,
   Search,
   X
 } from '@lucide/vue'
@@ -43,13 +44,14 @@ const navItems = [
   { to: '/dashboard/bipagem', label: 'Bipagem Operacional', icon: Barcode, permission: 'TELA_BIPAGEM' },
   { to: '/dashboard/inspecao', label: 'Inspeção de Qualidade', icon: ShieldCheck, permission: 'TELA_INSPECAO_QUALIDADE' },
   { to: '/dashboard/rbac', label: 'Permissões RBAC', icon: ShieldCheck, permission: 'TELA_GESTAO_RBAC' },
+  { to: '/dashboard/historico', label: 'Histórico de Movimentações', icon: Activity, permission: 'TELA_HISTORICO_MOVIMENTACOES' },
 ]
 
 const navSections = [
   { id: 'overview', label: 'Acesso rápido', items: [navItems[0], navItems[1]] },
   { id: 'modelagem', label: 'Modelagem', items: [navItems[2], navItems[3], navItems[4]] },
   { id: 'producao', label: 'Produção', items: [navItems[5], navItems[6], navItems[7]] },
-  { id: 'administracao', label: 'Administração', items: [navItems[8]] },
+  { id: 'administracao', label: 'Administração', items: [navItems[8], navItems[9]] },
 ]
 
 const visibleNavSections = computed(() => {

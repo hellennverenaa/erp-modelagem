@@ -1,6 +1,6 @@
 # Plano de implementação — ERP Modelagem
 
-**Atualizado em 21/10/2026.** Esta lista mantém trabalho que ainda requer decisão, implementação, integração ou validação. Tarefas já integradas e validadas foram removidas. Quando o código está na `main`, mas falta validação funcional ou de banco, a pendência aparece explicitamente.
+**Atualizado em 22/10/2026.** Esta lista mantém trabalho que ainda requer decisão, implementação, integração ou validação. Tarefas já integradas e validadas foram removidas. Quando o código está na `main`, mas falta validação funcional ou de banco, a pendência aparece explicitamente.
 
 ## Regras de negócio pendentes
 
@@ -36,6 +36,20 @@ O FPY continua calculado por registro de inspeção `SAIDA_SETOR` (não por peç
 
 ### Filtros compactos da Torre de Controle (TASK-046)
 **Estado: implementação disponível na branch `feature/dados-reais-torre-controle`; validação funcional autenticada pendente.** Depende dos filtros e do escopo autorizativo da TASK-017. O painel foi compactado e recolhido inicialmente, o bloco informativo de planta foi removido para usuários sem acesso global, e o seletor agora apresenta estados de carregamento, erro com nova tentativa e ausência de setores. O banco local de testes contém 19 setores ativos na única planta. A captura da usuária mostrou `404` em `GET /api/erp-modelagem/dashboard/filters`. A configuração atual do Vite encaminha `/api` ao gateway, e o backend publica as rotas em `/api` e `/`. Requisições locais sem token para Vite, gateway e backend responderam `401`, comportamento esperado da camada de autenticação; isso não confirma a resposta do handler autenticado. Como o backend usa `ts-node` sem reinício automático, um processo antigo é a hipótese mais provável para o `404`, ainda sem confirmação autenticada. Reiniciar o backend iniciado deste checkout e conferir a chamada no navegador. Não houve alteração de backend ou de banco.
+
+### Histórico global de auditoria e movimentações (TASK-047)
+**Estado: etapas 1, 2 e 3 implementadas nesta branch `feature/historico-global-auditoria`; migrations aplicadas somente no banco local de testes; ajuste de espaçamento implementado; SQL do histórico corrigido e executado com sucesso em leitura no banco local; validação visual/autenticada pela interface ainda pendente.** Reunir em uma tela as alterações relevantes de cadastros e as movimentações operacionais, mantendo autor, data, entidade, valores alterados e escopo de planta.
+
+**Execução em três etapas:**
+- **Etapa 1 — Fundação e cobertura dos eventos (implementada nesta branch):** adicionar escopo opcional de planta ao `audit_log`; criar serviço de gravação append-only dentro da transação da operação; registrar criação de modelos, alterações de previsão, alterações de peças do modelo e criação/alteração de rotas nos fluxos existentes. Guardar snapshots limitados aos campos de negócio necessários. Backfill somente para auditorias de ordens cuja planta possa ser identificada pela própria ordem. Inclui o preenchimento da planta nos eventos de SLA e remanejamento já existentes.
+- **Etapa 2 — API unificada (implementada):** `GET /historico/movimentacoes` consolida e ordena eventos antes de paginar, com filtros de período inclusivo, planta, setor, categoria e busca; `GET /historico/filtros` entrega opções autorizadas. Fontes: `audit_log`, criação de ordens, entradas/saídas de rastreamento, inspeções, ocorrências/resoluções, checklists, validações, aprovações, divergências/resoluções, retrabalhos e etapas datadas de Corte/Apoio. Detalhes de inspeção, checklist e fechamento de Corte incluem itens e avaliações de peças persistidos. A permissão `TELA_HISTORICO_MOVIMENTACOES` protege a API; usuários com `ACESSAR_TODAS_PLANTAS` podem consultar todas ou filtrar uma planta, e os demais ficam limitados à própria planta. Não duplicar rastreamentos no `audit_log`.
+- **Etapa 3 — Tela (implementada):** view `/dashboard/historico` e navegação RBAC com cronologia, filtros, paginação, estados de carregamento/erro/vazio e detalhes dos snapshots antes/depois. Validação funcional autenticada ainda pendente.
+
+**Política confirmada pela usuária:** criar permissão de leitura dedicada; concedê-la inicialmente aos perfis `ADMIN` e `ADMIN_AUTOMACAO`, permitindo delegação pela gestão RBAC. Usuários sem acesso global veem apenas eventos da própria planta e eventos globais de modelos/catálogo de peças; eventos operacionais sem planta identificada não são tratados como globais. Usuários com `ACESSAR_TODAS_PLANTAS` podem consultar todas as plantas ou selecionar uma.
+
+**Migrations e desempenho:** as migrations `1792604703742-AdicionaEscopoDePlantaNaAuditoria` e `1792604800000-AdicionaPermissaoHistoricoMovimentacoes` foram aplicadas em 21/10/2026 no banco local de testes, schema `erp_modelagem`. `migration:show` confirmou ambas aplicadas; consulta RBAC confirmou `TELA_HISTORICO_MOVIMENTACOES` permitido para `ADMIN` e `ADMIN_AUTOMACAO`. A consulta usa contagem de janela para evitar uma segunda varredura na paginação comum. Nenhum índice novo foi criado sem plano de consulta e volume representativo; medir com `EXPLAIN` antes de decidir novos índices.
+
+**Limites e riscos:** mudanças anteriores sem auditoria não podem ser reconstruídas com precisão; registros existentes de rastreamento continuam sendo a fonte das bipagens e não são copiados ao `audit_log`. Algumas fontes guardam apenas o estado atual, então a tela não pode reconstruir transições antigas; marcos só são exibidos quando há timestamp persistido. O código atual não possui endpoint de edição manual do catálogo de peças; a cobertura se refere à composição de peças do modelo e ao remanejamento por ordem. Não registrar leituras HTTP, IPs nem dados sensíveis em snapshots.
 
 ### Auditoria de Corte, Apoio e dados simulados (TASK-022)
 **Estado: análise pendente.** Identificar como telas e endpoints de Corte e Apoio são usados, localizar respostas fictícias e dados hardcoded, e registrar mudanças necessárias sem ampliar a auditoria para uma refatoração geral.
@@ -101,9 +115,58 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local. O estado em 
 - Sem alteração no backend, sem migration e sem escrita no banco. Validações: `frontend: npm run build` aprovado; `git diff --check` aprovado. Builds do backend e testes automatizados não foram executados porque não houve alteração de backend e o projeto não configura testes de frontend.
 - Próximo passo: validar no navegador a resposta de `/api/dashboard/filters` e a lista de setores para usuário restrito e administrador, após reiniciar o backend; se a resposta continuar vazia ou falhar, investigar o status e payload retornados antes de alterar a API.
 
+## Registro da implementação — TASK-047, Etapa 1
+
+- Escopo: estabelecer gravação transacional de auditoria e cobrir os fluxos existentes de criação de modelo, previsão de corte, composição de peças e rotas.
+- Adicionados `planta_id` nullable em `audit_log`, o serviço central `registrarAuditoria` e a migration `1792604703742-AdicionaEscopoDePlantaNaAuditoria`. O backfill associa somente logs de `ordens_teste` às ordens existentes no schema `erp_modelagem`; a migration foi criada, mas não aplicada a nenhum banco.
+- Eventos gravados na mesma transação de negócio: criação simples e completa de modelos, modelo e rota no fluxo de novo teste, alteração da previsão de corte, alteração da composição de peças, criação/atualização versionada de rota e criação de item do catálogo. Eventos de SLA e remanejamento por ordem também recebem o escopo da planta. Alterações globais usam planta nula.
+- Snapshots incluem campos de negócio necessários para identificar a alteração; peças são ordenadas por ID e não geram evento quando não houve mudança. O evento e a operação principal falham juntos se a gravação de auditoria falhar.
+- Validações: `backend npm run build` aprovado; `backend npm test` aprovado (10 arquivos, 54 testes); `git diff --check` aprovado. Nenhuma migration ou escrita de banco foi executada; não houve validação funcional autenticada.
+- Limitação confirmada no código: não existe endpoint de edição manual de itens do catálogo de peças. A etapa cobre edição da composição do modelo, além da criação no catálogo; alterações por importação de catálogo não são registradas como eventos de usuário.
+- Fora desta etapa: endpoint unificado/paginado e tela de histórico. A política de visibilidade e a permissão RBAC foram confirmadas pela usuária; etapas 2 e 3 estão em implementação nesta branch.
+
+## Registro da implementação — TASK-047, Etapas 2 e 3
+
+- A usuária confirmou a política de acesso: permissão de leitura dedicada, escopo por planta e visibilidade de eventos globais de modelos/catálogo para usuários sem acesso global. A permissão será concedida inicialmente aos perfis `ADMIN` e `ADMIN_AUTOMACAO` e poderá ser delegada pela gestão RBAC.
+- Entregues `GET /historico/filtros`, `GET /historico/movimentacoes`, a view cronológica e navegação protegidas por `TELA_HISTORICO_MOVIMENTACOES`; o escopo de planta e a visibilidade de eventos globais são aplicados no backend. O SQL une as tabelas operacionais existentes e pagina por data/id; entradas e saídas do rastreamento são mostradas como eventos sem criar registros duplicados de auditoria. Os detalhes incluem avaliações individuais de peças e respostas dos itens de checklist.
+- Migrations criadas: `1792604703742-AdicionaEscopoDePlantaNaAuditoria` e `1792604800000-AdicionaPermissaoHistoricoMovimentacoes`. No momento desta implementação, ainda não haviam sido aplicadas.
+- Validações técnicas: backend `npm test` aprovado (12 arquivos, 59 testes); backend `npm run build` aprovado; frontend `npm run build` aprovado; `git diff --check` aprovado. Os testes de autorização e query usam mocks; não foi executada consulta autenticada ao PostgreSQL nem validação visual no navegador.
+- Limitação de desempenho: não há `EXPLAIN` ou volume representativo nesta revisão; índices adicionais ficam para depois da medição, pois criá-los sem conhecer tamanho/carga das tabelas pode adicionar custo de escrita e de migration.
+- Próximo passo: validar usuários restritos/admin, filtros, paginação e os eventos de modelo, rota, peça, bipagem, qualidade e ocorrência. Conferir `EXPLAIN` com dados representativos para decidir índices.
+
+## Registro da habilitação do histórico no banco de testes — 21/10/2026
+
+- Branch confirmada: `feature/historico-global-auditoria`; o item **Histórico de Movimentações** já está no menu lateral sob o cabeçalho **Administração** e usa a permissão `TELA_HISTORICO_MOVIMENTACOES`.
+- A consulta somente leitura `migration:show` identificou as duas migrations como pendentes. Depois de aplicadas no banco local de testes confirmado pela usuária (banco `postgres`, schema `erp_modelagem`), a mesma consulta listou ambas como executadas: `1792604703742-AdicionaEscopoDePlantaNaAuditoria` e `1792604800000-AdicionaPermissaoHistoricoMovimentacoes`.
+- Consulta RBAC pós-migration confirmou a permissão global `TELA_HISTORICO_MOVIMENTACOES` como `permitido = true` para os perfis `ADMIN` e `ADMIN_AUTOMACAO`.
+- Nenhum build ou teste automatizado foi repetido nesta operação, pois o código não foi alterado. A validação autenticada e visual da tela permanece pendente; ao reabrir a aplicação, atualizar a sessão para carregar as permissões atuais.
+- Não foram executadas migrations em produção nem em outros schemas.
+- Próximo passo: acessar `/dashboard/historico` com perfil autorizado e validar renderização, filtros, paginação e consulta autenticada; medir `EXPLAIN` com volume representativo antes de avaliar índices.
+
+## Registro do 404 e ajuste visual — TASK-047, 22/10/2026
+
+- A captura mostrou `404 Not Found` em `GET /api/erp-modelagem/historico/filtros`. O frontend usa esse prefixo; o Vite encaminha `/api` ao `GATEWAY_URL` (padrão local `http://localhost:2399`), e o backend desta branch monta as rotas em `/api` e `/` e registra `/historico/filtros`.
+- A branch atual é `feature/historico-global-auditoria`; `origin/main` não contém a rota e o PR #24 continua aberto. O processo que atendia a porta `3001` era `node .../ts-node src/server.ts` no diretório deste backend; antes do reinício, GET sem token a `/historico/filtros` retornou `404`. Isso confirmou que o processo em memória não havia carregado a rota da branch atual. A falta de permissão não era a causa: o middleware retorna `403` quando nega acesso.
+- O espaçamento visual excessivo vinha do padding do container geral somado ao padding próprio da tela, além da margem do cabeçalho. Ajustado o container da tela para reutilizar as gutters do layout e reduzida a distância entre cabeçalho e filtros.
+- Nenhuma rota de API, proxy ou permissão foi alterada, pois o contrato do código atual é consistente. O backend foi reiniciado com `npm run dev`; o comando informou que não havia migrations pendentes e a API iniciou na porta `3001`.
+- Após o reinício, GETs sem token a `/historico/filtros` no backend, a `/api/erp-modelagem/historico/filtros` no gateway e a `/api/erp-modelagem/historico/filtros` no Vite retornaram `401`, comportamento esperado sem credenciais e evidência de que a rota agora é encontrada em toda a cadeia. Nenhuma migration foi executada nesta correção.
+- Validação de código: `frontend npm run build` aprovado e `git diff --check` aprovado. Nenhuma rota de backend foi alterada e não foram repetidos build/testes do backend. A validação com sessão autenticada e revisão visual no navegador ainda não foi executada.
+- Próximo passo: recarregar `/dashboard/historico` com a sessão autenticada e conferir os filtros e a lista de movimentações.
+
 ## Registro da análise do 404 — TASK-046
 
 - A captura reportou `404 Not Found` para `http://localhost:5173/api/erp-modelagem/dashboard/filters`. O frontend usa esse prefixo; o Vite encaminha `/api` para `GATEWAY_URL` (padrão local `localhost:2399`), e o Express monta as rotas em `/api` e `/`.
 - O código fonte da branch registra `/dashboard/filters` protegido por autenticação e permissão `TELA_TORRE_CONTROLE`. Consultas locais GET sem token ao Vite (`:5173`), gateway (`:2399`) e backend (`:3001`) retornaram `401`, não `404`. A autenticação executa no prefixo `/dashboard` antes do roteamento da ação; portanto, esse resultado só confirma que as requisições alcançam a camada protegida e não prova o retorno autenticado do handler.
 - A ausência de reinício automático no script `backend: npm run dev` torna um processo iniciado antes da atualização a hipótese mais provável para a captura, mas a resposta da sessão autenticada ainda não foi verificada. Não alterei código neste diagnóstico.
 - Próximo passo: reiniciar a API a partir deste checkout e conferir no navegador a resposta autenticada e o array `setores`; se persistir o `404`, confirmar qual `GATEWAY_URL` está carregado pelo Vite e qual instância/branch do backend atende a porta `3001`.
+
+## Registro da correção do 500 — TASK-047, 22/10/2026
+
+- A chamada autenticada a `GET /historico/movimentacoes?pagina=1&limite=25` retornou `500`; o backend registrou SQLSTATE `42703` porque o SQL referenciava `rastreamento.tipo_lote`, enquanto o schema define a coluna como `"tipoLote"`. O endpoint de filtros respondeu `200` na mesma sessão.
+- A inspeção da migration inicial e das entidades confirmou mais referências com nome incompatível no mesmo SQL: `inspecao.tipo_inspecao` e `inspecao.tipo_lote`; as colunas são `"tipoInspecao"` e `"tipoLote"`.
+- A primeira execução de validação somente leitura, após corrigir essas quatro referências, revelou outra coluna inexistente: `estacao.nome`. A entidade/migration definem `descricao` opcional e `codigo` obrigatório; os três usos agora empregam `COALESCE(estacao.descricao, estacao.codigo)`.
+- Uma nova execução revelou que `LOWER(etapa.etapa)` recebe um enum (`etapas_corte_etapa_enum`) e não texto; os três rótulos de Corte/Apoio agora convertem `etapa.etapa::text` antes de normalizar.
+- Sem alteração de rotas, autorização ou banco; nenhuma migration necessária. `npm test` direcionado aos testes de serviço e controller: 2 arquivos e 5 testes aprovados. `npm run build` do backend aprovado.
+- Consulta somente leitura via `buscarMovimentacoes` no banco local executou sem erro; retornou 1 item na amostra e total de 141 registros. O processo da API foi reiniciado com `ts-node src/server.ts` sem executar migrations e iniciou na porta `3001`.
+- `git diff --check` aprovado. Não foi feita chamada autenticada à interface após o reinício; validação visual/autenticada continua pendente. Nenhum registro ou migration foi alterado nesta correção.
+- Próximo passo: conferir `/dashboard/historico` com uma sessão renovada e atualizar a descrição do PR #24.

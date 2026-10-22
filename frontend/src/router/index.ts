@@ -12,6 +12,7 @@ function dashboardStartPath(): string {
 
   const preferredScreens = [
     ['TELA_GESTAO_ORDENS', '/dashboard/ordens'],
+    ['TELA_HISTORICO_MOVIMENTACOES', '/dashboard/historico'],
     ['TELA_BIPAGEM', '/dashboard/bipagem'],
     ['TELA_CATALOGO_MODELOS', '/dashboard/modelos'],
     ['TELA_CATALOGO_PECAS', '/dashboard/catalogo-pecas'],
@@ -95,6 +96,12 @@ const router = createRouter({
           name: 'gerencial',
           component: () => import('../views/DashboardGerencialView.vue'),
           meta: { requiresAuth: true, permission: 'TELA_TORRE_CONTROLE' },
+        },
+        {
+          path: 'historico',
+          name: 'historico-movimentacoes',
+          component: () => import('../views/HistoricoMovimentacoesView.vue'),
+          meta: { requiresAuth: true, permission: 'TELA_HISTORICO_MOVIMENTACOES' },
         },
         {
           path: 'novo-teste',

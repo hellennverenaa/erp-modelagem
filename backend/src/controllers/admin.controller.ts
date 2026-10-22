@@ -19,6 +19,7 @@ import { lockModelConfiguration } from '../services/route-integrity.service';
 import { AdminRbacService, AdminRbacError } from '../services/admin-rbac.service';
 import { MarcaService, MarcaServiceError } from '../services/marca.service';
 import { parseDateOnly } from '../utils/date.utils';
+import { registrarAuditoria } from '../services/auditoria.service';
 
 function isAutomationActor(req: Request): boolean {
   const user = req.user;
@@ -92,7 +93,8 @@ export class AdminController {
         const existe = await manager.getRepository(Modelo).findOne({ where: { codigoProduto: parsed.data.codigoProduto }, select: { id: true } });
         if (existe) throw Object.assign(new Error('Já existe um modelo com este código de produto.'), { code: 'MODELO_DUPLICATE_CODE', status: 409 });
 
-        return manager.getRepository(Modelo).save(manager.getRepository(Modelo).create({
+        const modeloRepo = manager.getRepository(Modelo);
+        const modelo = await modeloRepo.save(modeloRepo.create({
           marcaId: parsed.data.marcaId,
           codigoProduto: parsed.data.codigoProduto,
           nome: parsed.data.nome,
@@ -102,6 +104,23 @@ export class AdminController {
           fichaTecnicaUrl: null,
           ativo: true,
         }));
+        await registrarAuditoria(manager, {
+          usuarioId: req.user?.userId ?? null,
+          plantaId: null,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+          acao: 'MODELO_CRIADO',
+          entidadeTipo: 'modelos',
+          entidadeId: modelo.id,
+          dadosAnteriores: null,
+          dadosNovos: {
+            marcaId: modelo.marcaId,
+            codigoProduto: modelo.codigoProduto,
+            nome: modelo.nome,
+            dataCorte: modelo.dataCorte,
+            ativo: modelo.ativo,
+          },
+        });
+        return modelo;
       });
       return res.status(201).json({ message: 'Modelo cadastrado. A ordem pode ser criada pelo PCP.', modelo });
     } catch (error: any) {
@@ -131,8 +150,23 @@ export class AdminController {
         if (!atual) throw Object.assign(new Error('Modelo não encontrado ou inativo.'), { status: 404, code: 'MODELO_NOT_FOUND' });
         const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: atual.id }, select: { id: true } });
         if (ordem) throw Object.assign(new Error('A previsão de corte não pode ser alterada depois da criação da ordem.'), { status: 409, code: 'MODEL_ALREADY_ORDERED' });
-        atual.dataCorte = parseDateOnly(data.data);
-        return repo.save(atual);
+        const dataCorteAnterior = atual.dataCorte;
+        const novaDataCorte = parseDateOnly(data.data);
+        atual.dataCorte = novaDataCorte;
+        const atualizado = await repo.save(atual);
+        if (dataCorteAnterior?.getTime() !== novaDataCorte?.getTime()) {
+          await registrarAuditoria(manager, {
+            usuarioId: req.user?.userId ?? null,
+            plantaId: null,
+            ipAddress: req.ip || req.socket.remoteAddress || null,
+            acao: 'MODELO_PREVISAO_CORTE_ALTERADA',
+            entidadeTipo: 'modelos',
+            entidadeId: atualizado.id,
+            dadosAnteriores: { dataCorte: dataCorteAnterior },
+            dadosNovos: { dataCorte: novaDataCorte },
+          });
+        }
+        return atualizado;
       });
       return res.json({ message: 'Previsão de corte atualizada.', modelo });
     } catch (error: any) {
@@ -381,7 +415,29 @@ export class AdminController {
           fichaTecnicaUrl: fichaTecnicaUrl || null,
           ativo: true,
         }));
-        await saveModelPieces(manager, modelo.id, pecas as ModelPieceInput[]);
+        const pecasSalvas = await saveModelPieces(manager, modelo.id, pecas as ModelPieceInput[]);
+        await registrarAuditoria(manager, {
+          usuarioId: req.user?.userId ?? null,
+          plantaId: null,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+          acao: 'MODELO_CRIADO',
+          entidadeTipo: 'modelos',
+          entidadeId: modelo.id,
+          dadosAnteriores: null,
+          dadosNovos: {
+            marcaId: modelo.marcaId,
+            codigoProduto: modelo.codigoProduto,
+            nome: modelo.nome,
+            dataCorte: modelo.dataCorte,
+            ativo: modelo.ativo,
+            pecas: pecasSalvas.map((peca) => ({
+              id: peca.id,
+              catalogoPecaId: peca.catalogoPecaId,
+              nome: peca.nome,
+              setorCorteOpcaoId: peca.setorCorteOpcaoId,
+            })),
+          },
+        });
         return modelo;
       });
 
@@ -414,7 +470,11 @@ export class AdminController {
         if (!modelo) throw Object.assign(new Error('Modelo não encontrado.'), { code: 'MODELO_NOT_FOUND', status: 404 });
         const ordem = await manager.getRepository(OrdemTeste).findOne({ where: { modeloId: modelo.id }, select: { id: true } });
         if (ordem) throw Object.assign(new Error('As peças deste modelo devem ser alteradas pela configuração da ordem na fila da Modelagem.'), { code: 'MODEL_PIECES_MANAGED_BY_ORDER', status: 409 });
-        return saveModelPieces(manager, modelo.id, parsed.data.pecas);
+        return saveModelPieces(manager, modelo.id, parsed.data.pecas, {
+          usuarioId: req.user?.userId ?? null,
+          plantaId: null,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+        });
       });
       return res.json({ message: 'Peças do modelo atualizadas com sucesso.', pecas });
     } catch (error: any) {
