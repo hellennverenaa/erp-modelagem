@@ -378,7 +378,7 @@ onMounted(async () => {
 .history-page {
   width: min(100%, 88rem);
   margin: 0 auto;
-  padding: 1.5rem clamp(1rem, 2vw, 2rem) 2.25rem;
+  padding: 0 0 1.5rem;
   color: #172033;
 }
 
@@ -397,7 +397,7 @@ onMounted(async () => {
 .page-header {
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
 }
 
 .header-title-wrap { min-width: 0; gap: 0.85rem; }
@@ -530,7 +530,7 @@ h1 { margin: 0; color: #111827; font-size: clamp(1.35rem, 2.4vw, 1.8rem); font-w
 }
 
 @media (max-width: 640px) {
-  .history-page { padding: 1rem 0.8rem 1.5rem; }
+  .history-page { padding: 0 0 1rem; }
   .page-header { align-items: flex-start; }
   .header-title-wrap { align-items: flex-start; }
   .header-subtitle { max-width: 35ch; font-size: 0.8rem; }

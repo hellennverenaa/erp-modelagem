@@ -1,6 +1,6 @@
 # Plano de implementação — ERP Modelagem
 
-**Atualizado em 21/10/2026.** Esta lista mantém trabalho que ainda requer decisão, implementação, integração ou validação. Tarefas já integradas e validadas foram removidas. Quando o código está na `main`, mas falta validação funcional ou de banco, a pendência aparece explicitamente.
+**Atualizado em 22/10/2026.** Esta lista mantém trabalho que ainda requer decisão, implementação, integração ou validação. Tarefas já integradas e validadas foram removidas. Quando o código está na `main`, mas falta validação funcional ou de banco, a pendência aparece explicitamente.
 
 ## Regras de negócio pendentes
 
@@ -38,7 +38,7 @@ O FPY continua calculado por registro de inspeção `SAIDA_SETOR` (não por peç
 **Estado: implementação disponível na branch `feature/dados-reais-torre-controle`; validação funcional autenticada pendente.** Depende dos filtros e do escopo autorizativo da TASK-017. O painel foi compactado e recolhido inicialmente, o bloco informativo de planta foi removido para usuários sem acesso global, e o seletor agora apresenta estados de carregamento, erro com nova tentativa e ausência de setores. O banco local de testes contém 19 setores ativos na única planta. A captura da usuária mostrou `404` em `GET /api/erp-modelagem/dashboard/filters`. A configuração atual do Vite encaminha `/api` ao gateway, e o backend publica as rotas em `/api` e `/`. Requisições locais sem token para Vite, gateway e backend responderam `401`, comportamento esperado da camada de autenticação; isso não confirma a resposta do handler autenticado. Como o backend usa `ts-node` sem reinício automático, um processo antigo é a hipótese mais provável para o `404`, ainda sem confirmação autenticada. Reiniciar o backend iniciado deste checkout e conferir a chamada no navegador. Não houve alteração de backend ou de banco.
 
 ### Histórico global de auditoria e movimentações (TASK-047)
-**Estado: etapas 1, 2 e 3 implementadas nesta branch `feature/historico-global-auditoria`; builds e testes automatizados aprovados; migrations aplicadas no banco local de testes; validação funcional autenticada pendente.** Reunir em uma tela as alterações relevantes de cadastros e as movimentações operacionais, mantendo autor, data, entidade, valores alterados e escopo de planta.
+**Estado: etapas 1, 2 e 3 implementadas nesta branch `feature/historico-global-auditoria`; builds e testes automatizados aprovados; migrations aplicadas no banco local de testes; ajuste de espaçamento implementado; endpoint e proxy confirmados após reiniciar o backend; validação autenticada e visual pendente.** Reunir em uma tela as alterações relevantes de cadastros e as movimentações operacionais, mantendo autor, data, entidade, valores alterados e escopo de planta.
 
 **Execução em três etapas:**
 - **Etapa 1 — Fundação e cobertura dos eventos (implementada nesta branch):** adicionar escopo opcional de planta ao `audit_log`; criar serviço de gravação append-only dentro da transação da operação; registrar criação de modelos, alterações de previsão, alterações de peças do modelo e criação/alteração de rotas nos fluxos existentes. Guardar snapshots limitados aos campos de negócio necessários. Backfill somente para auditorias de ordens cuja planta possa ser identificada pela própria ordem. Inclui o preenchimento da planta nos eventos de SLA e remanejamento já existentes.
@@ -142,6 +142,16 @@ As migrations abaixo foram confirmadas somente no PostgreSQL local. O estado em 
 - Nenhum build ou teste automatizado foi repetido nesta operação, pois o código não foi alterado. A validação autenticada e visual da tela permanece pendente; ao reabrir a aplicação, atualizar a sessão para carregar as permissões atuais.
 - Não foram executadas migrations em produção nem em outros schemas.
 - Próximo passo: acessar `/dashboard/historico` com perfil autorizado e validar renderização, filtros, paginação e consulta autenticada; medir `EXPLAIN` com volume representativo antes de avaliar índices.
+
+## Registro do 404 e ajuste visual — TASK-047, 22/10/2026
+
+- A captura mostrou `404 Not Found` em `GET /api/erp-modelagem/historico/filtros`. O frontend usa esse prefixo; o Vite encaminha `/api` ao `GATEWAY_URL` (padrão local `http://localhost:2399`), e o backend desta branch monta as rotas em `/api` e `/` e registra `/historico/filtros`.
+- A branch atual é `feature/historico-global-auditoria`; `origin/main` não contém a rota e o PR #24 continua aberto. O processo que atendia a porta `3001` era `node .../ts-node src/server.ts` no diretório deste backend; antes do reinício, GET sem token a `/historico/filtros` retornou `404`. Isso confirmou que o processo em memória não havia carregado a rota da branch atual. A falta de permissão não era a causa: o middleware retorna `403` quando nega acesso.
+- O espaçamento visual excessivo vinha do padding do container geral somado ao padding próprio da tela, além da margem do cabeçalho. Ajustado o container da tela para reutilizar as gutters do layout e reduzida a distância entre cabeçalho e filtros.
+- Nenhuma rota de API, proxy ou permissão foi alterada, pois o contrato do código atual é consistente. O backend foi reiniciado com `npm run dev`; o comando informou que não havia migrations pendentes e a API iniciou na porta `3001`.
+- Após o reinício, GETs sem token a `/historico/filtros` no backend, a `/api/erp-modelagem/historico/filtros` no gateway e a `/api/erp-modelagem/historico/filtros` no Vite retornaram `401`, comportamento esperado sem credenciais e evidência de que a rota agora é encontrada em toda a cadeia. Nenhuma migration foi executada nesta correção.
+- Validação de código: `frontend npm run build` aprovado e `git diff --check` aprovado. Nenhuma rota de backend foi alterada e não foram repetidos build/testes do backend. A validação com sessão autenticada e revisão visual no navegador ainda não foi executada.
+- Próximo passo: recarregar `/dashboard/historico` com a sessão autenticada e conferir os filtros e a lista de movimentações.
 
 ## Registro da análise do 404 — TASK-046
 
